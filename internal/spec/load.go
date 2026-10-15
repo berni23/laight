@@ -391,10 +391,13 @@ func applyDefaults(w *Workflow) {
 	}
 }
 
-// shellExits is ok plus every name in `exits:`, in a stable order.
+// shellExits is every name in `exits:`, in a stable order, after ok unless `exits:` maps code 0.
 func shellExits(st *Step) []string {
-	exits := []string{ExitOK}
-	seen := map[string]bool{ExitOK: true, ExitFailed: true}
+	var exits []string
+	seen := map[string]bool{ExitFailed: true}
+	if _, ok := st.Exits["0"]; !ok {
+		exits, seen[ExitOK] = append(exits, ExitOK), true
+	}
 	codes := make([]string, 0, len(st.Exits))
 	for c := range st.Exits {
 		codes = append(codes, c)

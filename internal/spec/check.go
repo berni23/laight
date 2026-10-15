@@ -48,9 +48,12 @@ func (c *checker) add(sev Severity, path []string, format string, args ...any) {
 
 func (c *checker) workflow() {
 	if stem := strings.TrimSuffix(filepath.Base(c.w.File), filepath.Ext(c.w.File)); stem != c.w.ID {
-		c.add(Warning, []string{"id"}, "id %q doesn't match the file name %q; `laight run` uses the id", c.w.ID, stem)
+		c.add(Error, []string{"id"}, "id %q must match the file name %q (`laight run %s` finds the workflow by its file)", c.w.ID, stem, stem)
 	}
 	c.template([]string{"summary"}, c.w.Summary, nil)
+	for _, k := range sortedKeys(c.w.Env) {
+		c.template([]string{"env", k}, c.w.Env[k], nil)
+	}
 }
 
 func (c *checker) seats() {
@@ -67,7 +70,9 @@ func (c *checker) seats() {
 		if s.Runtime != "shell" && s.Command != "" {
 			c.add(Error, at("command"), "`command` is only for runtime shell")
 		}
-		if s.Guidance != "" {
+		if s.Guidance != "" && !filepath.IsLocal(filepath.FromSlash(s.Guidance)) {
+			c.add(Error, at("guidance"), "guidance %s must be a path inside .laight/, so it's versioned with the repo", s.Guidance)
+		} else if s.Guidance != "" {
 			if _, err := os.Stat(filepath.Join(c.laightDir, filepath.FromSlash(s.Guidance))); err != nil {
 				c.add(Error, at("guidance"), "guidance file %s not found (paths are relative to .laight/)", s.Guidance)
 			}
@@ -81,8 +86,8 @@ func (c *checker) seats() {
 		if s.Setup != "" && s.Cwd != "worktree" {
 			c.add(Warning, at("setup"), "setup only runs in a new worktree (cwd: worktree)")
 		}
-		for k, v := range s.Env {
-			c.template([]string{"seats", name, "env", k}, v, nil)
+		for _, k := range sortedKeys(s.Env) {
+			c.template([]string{"seats", name, "env", k}, s.Env[k], nil)
 		}
 		if !used[name] {
 			c.add(Warning, []string{"seats", name}, "no step uses seat %q", name)
@@ -137,7 +142,7 @@ func (c *checker) steps() {
 		if contains(st.AllowedExits, ExitFailed) {
 			c.add(Warning, at("allowed_exits"), "`failed` is always allowed; no need to list it")
 		}
-		for exit := range st.NextHop.On {
+		for _, exit := range sortedKeys(st.NextHop.On) {
 			if !st.Allows(exit) {
 				c.add(Error, at("next_hop", "on", exit), "exit %q is not in allowed_exits %v", exit, st.AllowedExits)
 			}
@@ -155,13 +160,13 @@ func (c *checker) steps() {
 		if st.MaxParallel > 0 && len(st.Matrix) == 0 {
 			c.add(Error, at("max_parallel"), "max_parallel only applies to a matrix step")
 		}
-		for k, v := range st.Matrix {
-			if s, ok := v.(string); ok {
+		for _, k := range sortedKeys(st.Matrix) {
+			if s, ok := st.Matrix[k].(string); ok {
 				c.template(at("matrix", k), s, st)
 			}
 		}
-		for k, v := range st.Env {
-			c.template(at("env", k), v, st)
+		for _, k := range sortedKeys(st.Env) {
+			c.template(at("env", k), st.Env[k], st)
 		}
 	}
 }
@@ -306,9 +311,7 @@ func (c *checker) template(path []string, text string, step *Step) {
 		c.add(Error, path, "bad template: %s", msg)
 		return
 	}
-	walkTemplate(t.Root, func(f []string) {
-		c.field(path, f, step)
-	})
+	walkTemplate(t.Root, func(f []string) { c.field(path, f, step) }, true)
 }
 
 func (c *checker) field(path []string, f []string, step *Step) {
@@ -344,48 +347,58 @@ func (c *checker) field(path []string, f []string, step *Step) {
 	}
 }
 
-// walkTemplate calls fn with the identifiers of every field chain rooted at the dot (".a.b").
-func walkTemplate(n parse.Node, fn func([]string)) {
+// walkTemplate calls fn with the identifiers of every field chain rooted at the top-level dot:
+// ".a.b" while dot is still the root (rootDot), and "$.a.b" anywhere. Inside range and with, dot
+// is the current element, so its fields aren't checked there.
+func walkTemplate(n parse.Node, fn func([]string), rootDot bool) {
 	switch n := n.(type) {
 	case *parse.ListNode:
 		if n != nil {
 			for _, c := range n.Nodes {
-				walkTemplate(c, fn)
+				walkTemplate(c, fn, rootDot)
 			}
 		}
 	case *parse.ActionNode:
-		walkTemplate(n.Pipe, fn)
+		walkTemplate(n.Pipe, fn, rootDot)
 	case *parse.PipeNode:
 		if n != nil {
 			for _, cmd := range n.Cmds {
 				for _, a := range cmd.Args {
-					walkTemplate(a, fn)
+					walkTemplate(a, fn, rootDot)
 				}
 			}
 		}
 	case *parse.FieldNode:
-		fn(n.Ident)
+		if rootDot {
+			fn(n.Ident)
+		}
+	case *parse.VariableNode:
+		if len(n.Ident) > 1 && n.Ident[0] == "$" {
+			fn(n.Ident[1:])
+		}
 	case *parse.ChainNode:
-		if _, ok := n.Node.(*parse.DotNode); ok {
+		if _, ok := n.Node.(*parse.DotNode); ok && rootDot {
 			fn(n.Field)
 		}
-		walkTemplate(n.Node, fn)
+		walkTemplate(n.Node, fn, rootDot)
 	case *parse.IfNode:
-		walkBranch(&n.BranchNode, fn)
+		walkBranch(&n.BranchNode, fn, rootDot, rootDot)
 	case *parse.RangeNode:
-		walkBranch(&n.BranchNode, fn)
+		walkBranch(&n.BranchNode, fn, rootDot, false)
 	case *parse.WithNode:
-		walkBranch(&n.BranchNode, fn)
+		walkBranch(&n.BranchNode, fn, rootDot, false)
 	case *parse.TemplateNode:
-		walkTemplate(n.Pipe, fn)
+		walkTemplate(n.Pipe, fn, rootDot)
 	}
 }
 
-func walkBranch(b *parse.BranchNode, fn func([]string)) {
-	walkTemplate(b.Pipe, fn)
-	walkTemplate(b.List, fn)
+// walkBranch walks an if/range/with: the pipe and the else list see the outer dot, the body sees
+// bodyDot.
+func walkBranch(b *parse.BranchNode, fn func([]string), rootDot, bodyDot bool) {
+	walkTemplate(b.Pipe, fn, rootDot)
+	walkTemplate(b.List, fn, bodyDot)
 	if b.ElseList != nil {
-		walkTemplate(b.ElseList, fn)
+		walkTemplate(b.ElseList, fn, rootDot)
 	}
 }
 

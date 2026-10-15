@@ -78,7 +78,7 @@ what happens on each outcome. laight only executes it. If behaviour can't be rea
 file, it's a bug in laight.
 
 - **Project**: a git repo with a `.laight/` folder. laight finds it from the current directory and
-  registers it in `~/.laight/projects.json` the first time it runs there (for `ps`, `show`, `inbox`).
+  registers it in `~/.laight/projects.json` the first time it runs there (for `watch`, `show`, `inbox`).
   A project holds any number of workflows.
 - **Workflow**: one YAML file, `.laight/workflows/<id>.yaml`, self-contained: its **seats** (the
   agents) and its **steps** (who does what, in which order, routed on outcomes).
@@ -426,6 +426,9 @@ laight done <exit> [k=v…]            for agents: finish the current step (the 
 `run`, `watch`, `attach` and `abort` take a run id prefix, or nothing when exactly one run of the
 project is live. There is no "current run" bookkeeping to go stale.
 
+Every command with side effects outside the run (deleting worktrees, killing sessions) asks first
+and lists what it will do; `--yes` skips it for scripts.
+
 ## 9. Implementation
 
 - **Language: Go, latest stable** (1.27.2 on 2026-10-15; `go 1.27` in `go.mod`, bump with each Go
@@ -473,7 +476,7 @@ Installing must be one command, with no runtime to install first.
    issue cycle of section 3 on a real issue in a real repo.
 4. **M3** Inbox: the remaining hooks (questions, Stop), `laight inbox` (TUI), stuck detection.
 5. **M4** Channels and routing: `ntfy` (phone), `command`, then `slack` and `webhook`.
-6. **M5** Observability: `watch`, `ps`, `show` (web view), usage/cost.
+6. **M5** Observability: `watch`, `show` (web view), usage/cost.
 7. **M6** `sqs` queue (several machines, one inbox).
 8. **M7** Codex runtime; `shell` runtime for arbitrary CLIs.
 

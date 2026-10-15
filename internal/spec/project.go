@@ -53,7 +53,8 @@ func (p *Project) Workflows() ([]string, error) {
 	return files, nil
 }
 
-// WorkflowFile finds a workflow by id (the file name without extension) or by path.
+// WorkflowFile finds a workflow by id, which is its file name without extension (validate
+// enforces that), or by path.
 func (p *Project) WorkflowFile(name string) (string, error) {
 	if strings.ContainsAny(name, `/\`) || strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml") {
 		if _, err := os.Stat(name); err != nil {

@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -154,7 +155,18 @@ func TestLoadProblems(t *testing.T) {
 		{"yolo warns", func(s string) string { return strings.Replace(s, "permissions: auto", "permissions: yolo", 1) }, "yolo", 13, true},
 		{"cwd repo warns", func(s string) string { return strings.Replace(s, "cwd: worktree", "cwd: repo", 1) }, "share the main checkout", 0, true},
 		{"unrouted exit warns", func(s string) string { return strings.Replace(s, "yes: merge, no: end", "yes: merge", 1) }, `exit "no" has no route`, 0, true},
-		{"id vs file name warns", func(s string) string { return strings.Replace(s, "id: issue-cycle", "id: cycle", 1) }, "doesn't match the file name", 0, true},
+		{"id must match file name", func(s string) string { return strings.Replace(s, "id: issue-cycle", "id: cycle", 1) }, "must match the file name", 0, false},
+		{"range body sees the element", func(s string) string {
+			return strings.Replace(s, "Review {{ .steps", "Review {{ range .steps.implement.out.prs }}{{ .url }}{{ $.base }}{{ end }}{{ .steps", 1)
+		}, "", 0, false},
+		{"range body checks $ fields", func(s string) string {
+			return strings.Replace(s, "Review {{ .steps", "Review {{ with .steps.implement.out.pr }}{{ $.nope }}{{ end }}{{ .steps", 1)
+		}, ".nope: templates see only", 0, false},
+		{"workflow env template", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\nenv: { X: \"{{ .nope }}\" }", 1)
+		}, ".nope: templates see only", 0, false},
+		{"absolute guidance", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "/etc/hosts", 1) }, "must be a path inside .laight/", 0, false},
+		{"guidance outside .laight", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "../README.md", 1) }, "must be a path inside .laight/", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -258,5 +270,34 @@ func TestFindProject(t *testing.T) {
 	}
 	if _, err := FindProject(t.TempDir()); err != ErrNoProject {
 		t.Errorf("FindProject(empty) = %v, want ErrNoProject", err)
+	}
+}
+
+func TestShellExitsRemapZero(t *testing.T) {
+	dir, file := project(t, strings.Replace(issueCycle, "    run: gh pr merge", "    exits: { 0: merged, 1: conflict }\n    run: gh pr merge", 1))
+	w, probs := Load(dir, file)
+	if HasErrors(probs) {
+		t.Fatal(probs)
+	}
+	if got := w.Step("merge").AllowedExits; strings.Join(got, ",") != "merged,conflict" {
+		t.Errorf("merge exits = %v, want [merged conflict]: code 0 never gives ok", got)
+	}
+}
+
+// Problems on one line (a flow-style next_hop) come out in the same order every time.
+func TestProblemOrderStable(t *testing.T) {
+	dir, file := project(t, strings.Replace(issueCycle, "on: { handoff: fix }", "on: { zz: fix, mm: fix, aa: fix }", 1))
+	var first string
+	for i := 0; i < 20; i++ {
+		_, probs := Load(dir, file)
+		got := fmt.Sprint(probs)
+		if i == 0 {
+			first = got
+		} else if got != first {
+			t.Fatalf("order changed:\n%s\n%s", first, got)
+		}
+	}
+	if a, z := strings.Index(first, `"aa"`), strings.Index(first, `"zz"`); a < 0 || a > z {
+		t.Errorf("want aa before zz: %s", first)
 	}
 }
