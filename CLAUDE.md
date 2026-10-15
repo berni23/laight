@@ -6,8 +6,8 @@ series or in parallel; starting it spins up a **rig** of those agents, which die
 **one queue** that you answer from one place (a terminal, your phone, Slack…), so nobody has to
 watch agents.
 
-This file is the spec. README.md is the user-facing overview. Status: **design phase**; only
-`laight version` exists.
+This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
+`validate`, `run`, `attach`, `abort`: rigs spin up and tear down); next is M2, the engine loop.
 
 The four hard requirements, in order of priority. Anything that compromises one is wrong:
 

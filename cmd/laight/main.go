@@ -20,9 +20,13 @@ const usage = `laight runs teams of coding agents in tmux from YAML workflow fil
 Usage:
   laight init                          create .laight/
   laight validate [workflow…]          check the workflows: schema, routes, seats, templates
+  laight run <workflow> [key=value…]   spin up the rig of a new run and follow it
+  laight attach [run] [seat]           jump into a run's tmux session, or one seat's window
+  laight abort [run] [--yes]           stop a live run; on a finished one, delete its worktrees
   laight version                       print the version
 
-Coming next: run, watch, show, inbox, attach, abort, doctor, done.
+[run] is a run id or its start; leave it out when the project has one live run.
+Coming next: watch, show, inbox, doctor, done.
 See https://github.com/berni23/laight
 `
 
@@ -41,6 +45,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdInit(rest, stdout, stderr)
 	case "validate":
 		return cmdValidate(rest, stdout, stderr)
+	case "run":
+		return cmdRun(rest, stdout, stderr)
+	case "attach":
+		return cmdAttach(rest, stdout, stderr)
+	case "abort":
+		return cmdAbort(rest, stdout, stderr)
+	case "engine": // window 0 of a rig, started by run
+		return cmdEngine(rest, stdout, stderr)
+	case "hook": // called by the agent runtime's hooks
+		return cmdHook(rest, os.Stdin, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "laight %s (commit %s, built %s)\n", version, commit, date)
 		return 0
