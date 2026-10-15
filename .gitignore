@@ -10,3 +10,6 @@ CLAUDE.local.md
 .idea/
 .vscode/
 *.swp
+
+# Local code-review handoff from /cr to /check-cr (see .claude/commands/cr.md)
+scratch.review*
