@@ -1,0 +1,173 @@
+// Package spec parses and checks laight workflow files (.laight/workflows/*.yaml).
+//
+// Load runs the JSON Schema first, then resolves `uses:`, applies defaults and runs the semantic
+// checks of CLAUDE.md section 3 (unknown seats, unreachable steps, routes into `needs` steps…).
+package spec
+
+import (
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"time"
+)
+
+// Defaults that the schema documents.
+const (
+	DefaultBase        = "main"
+	DefaultMaxHops     = 50
+	DefaultMaxParallel = 4
+	DefaultAgentExit   = "handoff"
+	ExitFailed         = "failed" // implicit on every step
+	ExitOK             = "ok"     // shell steps that exit 0
+	End                = "end"    // route target that ends a branch
+)
+
+// Step types.
+const (
+	TypeAgent = "agent"
+	TypeShell = "shell"
+	TypeGate  = "gate"
+)
+
+// Workflow is one workflow file after `uses:` and defaults are applied.
+type Workflow struct {
+	Version    int              `json:"version"`
+	ID         string           `json:"id"`
+	Summary    string           `json:"summary"`
+	Base       string           `json:"base"`
+	Inputs     map[string]Input `json:"inputs"`
+	Env        StringMap        `json:"env"`
+	Seats      map[string]*Seat `json:"seats"`
+	Steps      []*Step          `json:"steps"`
+	LoopGuards LoopGuards       `json:"loop_guards"`
+	Timeouts   Timeouts         `json:"timeouts"`
+	OnFinish   OnFinish         `json:"on_finish"`
+
+	// File is the path the workflow was loaded from.
+	File string `json:"-"`
+}
+
+// Input is a value passed with `laight run <workflow> key=value`.
+type Input struct {
+	Required    bool   `json:"required"`
+	Default     any    `json:"default"`
+	Description string `json:"description"`
+}
+
+// Seat is one agent CLI session.
+type Seat struct {
+	Uses        string    `json:"uses"`
+	Label       string    `json:"label"`
+	Runtime     string    `json:"runtime"`
+	Command     string    `json:"command"`
+	Cwd         string    `json:"cwd"`
+	Session     string    `json:"session"`
+	Permissions string    `json:"permissions"`
+	Guidance    string    `json:"guidance"`
+	Model       string    `json:"model"`
+	Env         StringMap `json:"env"`
+	Setup       string    `json:"setup"`
+}
+
+// Step is one unit of work: an agent step, a shell command or a human gate.
+type Step struct {
+	ID           string            `json:"id"`
+	Type         string            `json:"type"`
+	Seat         string            `json:"seat"`
+	Objective    string            `json:"objective"`
+	Run          string            `json:"run"`
+	Exits        map[string]string `json:"exits"` // shell: exit code → exit name
+	Ask          string            `json:"ask"`
+	AllowedExits []string          `json:"allowed_exits"`
+	NextHop      NextHop           `json:"next_hop"`
+	Needs        []string          `json:"needs"`
+	Matrix       map[string]any    `json:"matrix"` // a list, or a template rendering a JSON list
+	MaxParallel  int               `json:"max_parallel"`
+	Timeout      Duration          `json:"timeout"`
+	Env          StringMap         `json:"env"`
+}
+
+// NextHop routes a finished step: On[exit] is the next step id or End.
+type NextHop struct {
+	On   map[string]string `json:"on"`
+	Mode string            `json:"mode"` // "end" or empty
+}
+
+// LoopGuards bound a run.
+type LoopGuards struct {
+	MaxHops int `json:"max_hops"`
+}
+
+// Timeouts apply to every step unless the step sets its own.
+type Timeouts struct {
+	Step Duration `json:"step"`
+}
+
+// OnFinish says what happens to worktrees when the run ends: "destroy" or "keep".
+type OnFinish struct {
+	Success string `json:"success"`
+	Failure string `json:"failure"`
+}
+
+// Allows reports whether exit is a valid way to finish the step.
+func (s *Step) Allows(exit string) bool {
+	if exit == ExitFailed {
+		return true
+	}
+	for _, e := range s.AllowedExits {
+		if e == exit {
+			return true
+		}
+	}
+	return false
+}
+
+// Step returns the step with the given id, or nil.
+func (w *Workflow) Step(id string) *Step {
+	for _, s := range w.Steps {
+		if s.ID == id {
+			return s
+		}
+	}
+	return nil
+}
+
+// Duration is a time.Duration written as a Go duration string ("90m").
+type Duration time.Duration
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return err
+	}
+	v, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*d = Duration(v)
+	return nil
+}
+
+// StringMap is an env-style map whose YAML values may be strings, numbers or booleans.
+type StringMap map[string]string
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *StringMap) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*m = make(StringMap, len(raw))
+	for k, v := range raw {
+		switch v := v.(type) {
+		case string:
+			(*m)[k] = v
+		case float64:
+			(*m)[k] = strconv.FormatFloat(v, 'f', -1, 64)
+		default:
+			(*m)[k] = fmt.Sprint(v)
+		}
+	}
+	return nil
+}

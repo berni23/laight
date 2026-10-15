@@ -1,5 +1,5 @@
-// Command laight runs teams of coding agents in tmux from YAML specs.
-// The design is in CLAUDE.md; most commands are not implemented yet.
+// Command laight runs teams of coding agents in tmux from YAML workflow files.
+// The design is in CLAUDE.md.
 package main
 
 import (
@@ -15,13 +15,15 @@ var (
 	date    = "unknown"
 )
 
-const usage = `laight runs teams of coding agents in tmux from YAML specs.
+const usage = `laight runs teams of coding agents in tmux from YAML workflow files.
 
 Usage:
-  laight version    print the version
-  laight help       show this help
+  laight init                          create .laight/
+  laight validate [workflow…]          check the workflows: schema, routes, seats, templates
+  laight version                       print the version
 
-laight is in its design phase: see https://github.com/berni23/laight
+Coming next: run, watch, show, inbox, attach, abort, doctor, done.
+See https://github.com/berni23/laight
 `
 
 func main() {
@@ -33,7 +35,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
-	switch args[0] {
+	cmd, rest := args[0], args[1:]
+	switch cmd {
+	case "init":
+		return cmdInit(rest, stdout, stderr)
+	case "validate":
+		return cmdValidate(rest, stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "laight %s (commit %s, built %s)\n", version, commit, date)
 		return 0
@@ -41,7 +48,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "laight: unknown command %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, "laight: unknown command %q\n\n%s", cmd, usage)
 		return 2
 	}
+}
+
+// fail prints a one-line error and returns exit code 1.
+func fail(stderr io.Writer, format string, args ...any) int {
+	fmt.Fprintf(stderr, "laight: "+format+"\n", args...)
+	return 1
 }
