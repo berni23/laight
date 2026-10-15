@@ -89,7 +89,7 @@ laight init                 # or: laight init --from openrig .openrig
 laight validate
 laight run issue-cycle      # spins up the workflow's rig and shows the live view
 laight inbox                # everything waiting for you, across all runs
-laight ps | laight watch    # what's running / live pipeline view
+laight watch                # every run / one run's live pipeline
 laight attach <run> impl    # jump into an agent's terminal
 laight abort <run>          # asks first, then tears down only that rig
 ```

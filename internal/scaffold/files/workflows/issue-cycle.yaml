@@ -1,0 +1,66 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# One issue, implemented and independently reviewed, then merged after you say yes.
+#   implement → review → fix → verify ─(pass)→ approve ─(yes)→ merge
+#                         ↑        └─(fail)─┘
+# Start it with:  laight run issue-cycle issue=42
+version: 1
+id: issue-cycle
+summary: One issue, implemented and independently reviewed, merged into {{ .base }}.
+base: {{BASE}}
+inputs:
+  issue: { required: true, description: The issue number to work on }
+
+seats:
+  impl:
+    label: Implementer
+    session: resume               # keeps its context from implement to fix
+    permissions: auto             # prompts it can't decide go to `laight inbox`
+    guidance: guidance/implementer.md
+  reviewer:
+    label: Reviewer
+    session: fresh                # a new session for every step: an independent review
+    permissions: auto
+    guidance: guidance/reviewer.md
+
+steps:
+  - id: implement
+    seat: impl
+    objective: |
+      Implement issue #{{ .inputs.issue }} on a new branch from {{ .base }}. Verify it, commit, push
+      and open a PR into {{ .base }}. Finish with: laight done handoff pr=<PR URL>
+    next_hop: { on: { handoff: review } }
+
+  - id: review
+    seat: reviewer
+    objective: |
+      Review {{ .steps.implement.out.pr }}: check out its head detached (the branch is checked out
+      elsewhere), read the diff, run the tests, and post your findings as PR comments.
+    next_hop: { on: { handoff: fix } }
+
+  - id: fix
+    seat: impl
+    objective: |
+      Address every review comment on {{ .steps.implement.out.pr }}, with a regression test for
+      each bug, and push.
+    next_hop: { on: { handoff: verify } }
+
+  - id: verify
+    seat: reviewer
+    objective: |
+      Check that every finding on {{ .steps.implement.out.pr }} is resolved.
+      All resolved: laight done pass. Anything left: laight done fail.
+    allowed_exits: [pass, fail]
+    next_hop: { on: { pass: approve, fail: fix } }
+
+  - id: approve
+    type: gate
+    ask: Merge {{ .steps.implement.out.pr }} into {{ .base }}?
+    next_hop: { on: { yes: merge, no: end } }
+
+  - id: merge
+    type: shell
+    run: gh pr merge {{ .steps.implement.out.pr }} --squash --delete-branch
+
+loop_guards: { max_hops: 11 }     # 6 steps, plus up to 2 more fix → verify rounds
+timeouts: { step: 90m }

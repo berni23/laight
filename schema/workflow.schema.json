@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json",
+  "title": "laight workflow",
+  "description": "One self-contained laight workflow: its seats (the agents) and its steps. See CLAUDE.md, section 3.",
+  "type": "object",
+  "required": ["version", "id", "steps"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1, "description": "Spec version. Always 1." },
+    "id": { "$ref": "#/$defs/ident", "description": "Workflow id; `laight run <id>`. Should match the file name." },
+    "summary": { "type": "string", "description": "One line on what the workflow does. May use templates." },
+    "base": { "type": "string", "minLength": 1, "description": "Branch worktrees start from and PRs go into. Default: main." },
+    "inputs": {
+      "type": "object",
+      "description": "Values passed with `laight run <workflow> key=value`.",
+      "propertyNames": { "$ref": "#/$defs/ident" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "required": { "type": "boolean" },
+          "default": { "type": ["string", "number", "boolean"] },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "env": { "$ref": "#/$defs/env", "description": "Environment for every seat and shell step." },
+    "seats": {
+      "type": "object",
+      "description": "The rig: exactly these agents are started for a run.",
+      "propertyNames": { "$ref": "#/$defs/ident" },
+      "additionalProperties": { "$ref": "#/$defs/seat" }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/step" }
+    },
+    "loop_guards": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_hops": { "type": "integer", "minimum": 1, "description": "Step starts allowed in one run (matrix copies count). Default 50." }
+      }
+    },
+    "timeouts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "step": { "$ref": "#/$defs/duration", "description": "A step over this raises an inbox item (it is not killed)." }
+      }
+    },
+    "on_finish": {
+      "type": "object",
+      "description": "What happens to the run's worktrees when it ends. The tmux session always stops.",
+      "additionalProperties": false,
+      "properties": {
+        "success": { "enum": ["destroy", "keep"], "description": "Default destroy." },
+        "failure": { "enum": ["destroy", "keep"], "description": "Default keep." }
+      }
+    }
+  },
+  "$defs": {
+    "ident": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "Lower case letters, digits, '-' and '_', starting with a letter."
+    },
+    "duration": {
+      "type": "string",
+      "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$",
+      "description": "A Go duration such as 90m, 1h30m or 45s."
+    },
+    "env": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
+      "additionalProperties": { "type": ["string", "number", "boolean"] }
+    },
+    "seat": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "uses": { "type": "string", "description": "A shared seat file, relative to .laight/ (e.g. seats/reviewer.yaml). Fields here override it." },
+        "label": { "type": "string" },
+        "runtime": { "enum": ["claude-code", "codex", "shell"], "description": "Default claude-code." },
+        "command": { "type": "string", "description": "For runtime shell: the command to run in the pane." },
+        "cwd": { "type": "string", "minLength": 1, "description": "worktree (own per run, default) | repo (the main checkout) | a path." },
+        "session": { "enum": ["resume", "fresh"], "description": "fresh restarts the CLI before each step. Default resume." },
+        "permissions": { "enum": ["default", "auto", "yolo"], "description": "Default: default (every permission prompt goes to the inbox)." },
+        "guidance": { "type": "string", "description": "A Markdown file, relative to .laight/, appended to the agent's system prompt." },
+        "model": { "type": "string" },
+        "env": { "$ref": "#/$defs/env" },
+        "setup": { "type": "string", "description": "Shell command run once in a new worktree before the agent starts." }
+      }
+    },
+    "next_hop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "on": {
+          "type": "object",
+          "description": "exit → next step id, or `end`.",
+          "propertyNames": { "$ref": "#/$defs/ident" },
+          "additionalProperties": { "$ref": "#/$defs/ident" }
+        },
+        "mode": { "const": "end", "description": "End the branch after this step, whatever the exit." }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/ident" },
+        "type": { "enum": ["agent", "shell", "gate"], "description": "Default: agent if `seat` is set, shell if `run` is set." },
+        "seat": { "$ref": "#/$defs/ident", "description": "agent steps: the seat that does the step." },
+        "objective": { "type": "string", "description": "agent steps: the prompt, a Go template." },
+        "run": { "type": "string", "description": "shell steps: the command, a Go template. Exit 0 → ok, else failed." },
+        "exits": {
+          "type": "object",
+          "description": "shell steps: exit code → exit name.",
+          "propertyNames": { "pattern": "^[0-9]+$" },
+          "additionalProperties": { "$ref": "#/$defs/ident" }
+        },
+        "ask": { "type": "string", "description": "gate steps: the question for the human." },
+        "allowed_exits": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ident" },
+          "uniqueItems": true,
+          "description": "Default: [handoff] for agent, [yes, no] for gate, [ok] for shell. `failed` is always allowed."
+        },
+        "next_hop": { "$ref": "#/$defs/next_hop" },
+        "needs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ident" },
+          "uniqueItems": true,
+          "description": "Start when all these steps have finished without failing. Such a step can't be a route target."
+        },
+        "matrix": {
+          "type": "object",
+          "description": "One copy of the step per combination. Values: a list, or a template rendering a JSON list.",
+          "propertyNames": { "$ref": "#/$defs/ident" },
+          "additionalProperties": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "array", "items": { "type": ["string", "number", "boolean"] }, "minItems": 1 }
+            ]
+          }
+        },
+        "max_parallel": { "type": "integer", "minimum": 1, "description": "Matrix copies alive at once. Default 4." },
+        "timeout": { "$ref": "#/$defs/duration" },
+        "env": { "$ref": "#/$defs/env" }
+      }
+    }
+  }
+}

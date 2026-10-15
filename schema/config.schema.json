@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/berni23/laight/main/schema/config.schema.json",
+  "title": "laight config",
+  "description": "~/.laight/config.yaml, or per project .laight/laight.yaml: the queue, the channels and how items are routed to them. See CLAUDE.md, section 6.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "queue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["type"],
+          "additionalProperties": false,
+          "properties": { "type": { "const": "files" } }
+        },
+        {
+          "type": "object",
+          "required": ["type", "items", "answers"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "sqs" },
+            "items": { "type": "string", "format": "uri", "description": "URL of the FIFO queue items go to." },
+            "answers": { "type": "string", "format": "uri", "description": "URL of the FIFO queue answers come back on." },
+            "region": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "channels": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_-]*$" },
+      "additionalProperties": { "$ref": "#/$defs/channel" }
+    },
+    "routes": {
+      "type": "array",
+      "description": "First match wins. terminal and web always see everything.",
+      "items": {
+        "type": "object",
+        "required": ["to"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "enum": ["permission", "question", "gate", "stuck", "failed"] },
+          "project": { "type": "string" },
+          "workflow": { "type": "string" },
+          "to": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+        }
+      }
+    },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "permission_timeout": { "type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$", "description": "How long a permission item waits before it is denied. Default 30m." },
+        "worktrees": { "enum": ["home", "sibling"], "description": "home: ~/.laight/runs/<run>/worktrees (default); sibling: next to the repo." }
+      }
+    }
+  },
+  "$defs": {
+    "channel": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["ntfy", "slack", "webhook", "command"] }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "ntfy" } } },
+          "then": {
+            "required": ["topic"],
+            "additionalProperties": false,
+            "properties": {
+              "type": true,
+              "server": { "type": "string", "format": "uri", "description": "Default https://ntfy.sh." },
+              "topic": { "type": "string", "minLength": 20, "description": "Long and random: anyone who knows it can read items." },
+              "token_env": { "type": "string", "description": "Env var holding an ntfy access token." }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "slack" } } },
+          "then": {
+            "required": ["channel"],
+            "additionalProperties": false,
+            "properties": {
+              "type": true,
+              "channel": { "type": "string", "description": "#channel or a user id for a DM." },
+              "token_env": { "type": "string" },
+              "app_token_env": { "type": "string" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "webhook" } } },
+          "then": {
+            "required": ["url"],
+            "additionalProperties": false,
+            "properties": {
+              "type": true,
+              "url": { "type": "string", "format": "uri" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "command" } } },
+          "then": {
+            "required": ["run"],
+            "additionalProperties": false,
+            "properties": {
+              "type": true,
+              "run": { "type": "string", "description": "Gets the item as JSON on stdin; may print an answer as JSON." }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+workflow:
+  id: demo-cycle
+  objective: >
+    Take one issue to a reviewed merge.
+  roles:
+    implementer: { preferred_targets: [dev-impl@demo] }
+    reviewer: { preferred_targets: [rev-reviewer@demo] }
+  steps:
+    - id: implement
+      actor_role: implementer
+      objective: >
+        Implement the issue, open a PR. Note "pr" in the result.
+      allowed_exits: [handoff, failed]
+      next_hop: { mode: require, on: { handoff: verify } }
+    - id: verify
+      actor_role: reviewer
+      objective: Verify the PR.
+      allowed_exits: [handoff, failed]
+      next_hop: { mode: require, on: { handoff: merge, failed: implement } }
+    - id: merge
+      actor_role: implementer
+      objective: Merge it.
+      allowed_exits: [done, failed]
+      next_hop: { mode: forbid }
+  loop_guards: { max_hops: 5 }

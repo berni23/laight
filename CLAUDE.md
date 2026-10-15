@@ -12,7 +12,7 @@ This file is the spec. README.md is the user-facing overview. Status: **design p
 The four hard requirements, in order of priority. Anything that compromises one is wrong:
 
 1. **Lightweight.** One binary, no daemon, no database server, no always-on server. State is plain
-   files. A user learns ~12 commands, an agent learns 1. The one exception is `laight show`, a
+   files. A user learns 10 commands (section 8), an agent learns 1. The one exception is `laight show`, a
    read-only web view bound to 127.0.0.1 that runs in the foreground only while you look at it.
 2. **tmux.** Every agent is a real interactive CLI session in a tmux pane that a human can attach to,
    read and type into at any time.
@@ -92,7 +92,7 @@ file, it's a bug in laight.
 - **Run**: one execution of a workflow, and the identity of its rig: tmux session
   `laight-<workflow>-<run6>` (on laight's own tmux server), one worktree per seat that asks for one,
   one state folder. When the run ends, the tmux session and agents are stopped; worktrees are
-  removed on success and kept on failure for inspection (`on_finish`, below; `laight clean` later).
+  removed on success and kept on failure for inspection (`on_finish`, below; `laight abort <run>` removes them later).
 - **Inbox item**: one thing waiting for a human (a permission, a question, a gate…).
 - **Queue**: where items wait and answers come back. `files` by default; `sqs` and others optional.
 - **Channel**: where items are shown and answered: `terminal` (`laight inbox`), `web`
@@ -148,6 +148,7 @@ seats:                            # the rig: exactly these agents are started fo
     guidance: guidance/implementer.md
     model: opus                   # optional, passed to the runtime
     env: { GH_TOKEN: "{{ secret \"gh-this-repo\" }}" }   # optional; secrets never logged
+    setup: make deps              # optional, run once in a new worktree (gitignored files aren't there)
   reviewer:
     uses: seats/reviewer.yaml     # shared definition; fields here override it
     session: fresh                # an independent review each cycle
@@ -216,9 +217,10 @@ steps:
     objective: Merge the PRs in order and run the full test suite.
 ```
 
-**Scheduling rules** (the whole engine, in five lines):
+**Scheduling rules** (the whole engine, in six lines):
 
-1. A step with no `needs` and no incoming route is an entry step; all entry steps start at once.
+1. Entry steps start at once: the first step of the file (unless it has `needs`; it may be a loop
+   target), and every other step with no `needs` and no incoming route.
 2. A step with `needs` starts when every needed step (every matrix copy) has finished with a
    non-`failed` exit.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
@@ -227,10 +229,15 @@ steps:
    unrouted `failed`, `max_hops`, or an `abort`.
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
    their own seat instance (`dev#1`, `dev#2`…), so parallelism is never hidden contention.
+   `max_parallel` on a matrix step caps live copies (default 4).
+6. Routes and `needs` don't mix: a step with `needs` can't be a route target, and a matrix step
+   can't have `next_hop` (it joins only through `needs`). `.steps.<id>.out` is the latest hop's
+   output. A hop is one step start (each matrix copy counts). `validate` enforces all of this.
 
 **Step types:** `agent` (default when `seat` is set), `shell` (`run:`; exit code 0 → `ok`, else
 `failed`, unless `exits:` maps codes), `gate` (a human decision, always via the inbox).
-**Exits:** any identifiers; `failed` is implicit on every step. **Outputs:**
+**Exits:** any identifiers; `allowed_exits` defaults to `[handoff]` for agent steps; `failed` is
+implicit on every step and can be routed. **Outputs:**
 `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values allowed). Templates see
 only `.inputs`, `.steps`, `.matrix`, `.base`, `.run` and `secret`.
 
@@ -245,7 +252,7 @@ on a real issue.
 
 ```
 ~/.laight/                            # global, so the inbox spans every project
-  projects.json                       # registered projects: path, rig name
+  projects.json                       # registered projects: path, name
   runs/<run-id>/
     run.json                          # spec snapshot, inputs, repo, status, current step, hops
     events.jsonl                      # append-only, the source of truth for observability
@@ -262,7 +269,7 @@ on a real issue.
 - **The engine** is `laight engine <run>` running in window 0 (`engine`) of the rig's tmux session.
   When the run finishes, the engine applies `on_finish`, stops the seats and kills the session.
   It is a loop: read state → act → append event → sleep/wake on file change. Kill it and run
-  `laight resume <run>`, and it continues from `run.json` + `events.jsonl`. That is the whole
+  `laight run --resume <run>`, and it continues from `run.json` + `events.jsonl`. That is the whole
   durability story.
 
 ## 5. Driving a seat
@@ -277,7 +284,19 @@ on a real issue.
   `decision: block` with "finish the step with `laight done <exit>`, exits: …", once; the second time
   it raises an inbox item instead of looping.
 - **Fresh vs resume:** `fresh` restarts the seat's CLI before each of its steps (`/clear` is not
-  enough for independence); `resume` keeps the session across steps of a run.
+  enough for independence); `resume` keeps the session across steps of a run. laight gives every
+  Claude session a `--session-id`, so `laight run --resume` relaunches a crashed seat with `--resume`.
+- **Idle:** a seat gets its next step only after `laight done` *and* its Stop hook (the turn ended).
+- **Launch prompts:** Claude's folder-trust dialog (new worktree) and yolo's warning are accepted by
+  the driver via `capture-pane`, only for laight's own worktrees; `~/.claude.json` is never written.
+- **Generated settings** allow `Bash(<abs path to laight> done:*)`, so finishing a step never prompts.
+  Permission modes map to Claude's `--permission-mode`: `default` → `manual`, `auto` → `auto`,
+  `yolo` → `bypassPermissions`.
+- **Worktrees** start detached at `origin/<base>`. A branch can be checked out in one worktree
+  only, so reviewers check PRs out detached (say so in their guidance).
+- **Who writes what:** only the engine writes `run.json`; `done` and hooks write their own files
+  (`out/`, `inbox/`), which the engine polls (~500 ms). No fsnotify.
+- **Secrets:** `{{ secret "x" }}` reads env `LAIGHT_SECRET_X`, then the OS keychain (service `laight`).
 - Every runtime is an adapter: `launch(cmd, flags)`, `ready()`, `deliver(text)`,
   `hooks()` and `detectBlocked(screen)` for runtimes without hooks. Claude Code first; Codex second.
 
@@ -288,7 +307,7 @@ Everything that needs a human becomes an **inbox item**:
 | Kind | Source | Answer goes back via |
 |---|---|---|
 | `permission` | Claude Code `PermissionRequest` hook | the hook process itself: it blocks, polling the item file, and returns allow/deny JSON to Claude |
-| `question` | `Notification` hook (agent waits for input), or `AskUserQuestion`-style prompts | paste the answer into the seat |
+| `question` | a `PreToolUse` hook on `AskUserQuestion` (blocks like `permission`); a plain-text question caught by the Stop hook | the hook returns the answer to the agent; for plain text, paste it into the seat |
 | `gate` | a `type: gate` step | the engine routes on the chosen exit |
 | `stuck` | step timeout, Stop hook gave up, idle with no `laight done` | choices: nudge / open pane / fail step |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | choices: retry step / abort run |
@@ -329,10 +348,11 @@ type Channel interface {          // where items are shown and answered
   - `web`: the inbox panel of `laight show` (section 7), same actions.
   - `ntfy`: a push to your phone with action buttons (self-hosted or ntfy.sh; a long random topic in
     `config.yaml`, never logged). Buttons publish to a *reply* topic that laight *subscribes* to
-    (outbound SSE).
+    (outbound SSE). Every answer must carry the item's random one-time token, and `doctor` warns
+    when a public server is used without an access token: an answer can allow a command.
   - `slack`: a message with buttons in a channel or DM, using Socket Mode (an outbound WebSocket),
     so no public URL. Tokens from env or the OS keychain.
-  - `webhook`: POSTs the item as JSON to a URL; answers come back with `laight answer <id> <choice>`
+  - `webhook`: POSTs the item as JSON to a URL; answers come back with `laight inbox <id> <choice>`
     or through the queue.
   - `command`: runs any executable with the item JSON on stdin; if it prints an answer as JSON,
     that's the answer. The escape hatch for Telegram, Discord, email, a desktop notification…
@@ -364,10 +384,11 @@ should make `yolo` unnecessary for most workflows; that is a design goal, measur
   Types: `run.started|finished|aborted`, `step.started|done|timeout`, `seat.up|down|crashed`,
   `inbox.raised|answered`, `hook.<name>`, `tool` (from `PostToolUse`: tool name + duration, not
   arguments), `usage` (tokens/cost per seat per step, read from the runtime's transcript).
-- `laight ps`: all live runs, one line each (repo, workflow, step, hop, age, waiting items).
+- `laight watch` with no run: every run, one line each (project, workflow, step, hop, age, waiting items).
 - `laight watch [run]`: a live CI-style view: the steps as a pipeline (✓ ● ✕ ○, ×N for loops),
   per-step duration and cost, the last events, the open inbox items. Default view of the engine window.
-- `laight logs <run> [seat]`: the seat's pane log. `laight trace <run>`: the event log, pretty.
+- The seat's pane log and the event log are plain files in the run folder (`seats/<seat>.log`,
+  `events.jsonl`); `show` and `watch` render them. No extra commands for reading files.
 - `laight show [run]`: the web view, **CircleCI-inspired and deliberately simple**. It serves on
   127.0.0.1 (a random free port), opens the browser, and stays in the foreground until Ctrl-C (or
   10 minutes with no browser connected). Pages:
@@ -383,26 +404,26 @@ should make `yolo` unnecessary for most workflows; that is a design goal, measur
 
 ## 8. CLI (the whole surface)
 
+Ten commands, and it stays that way. They map one to one onto the Makefile wrappers people wrote
+around OpenRig (`setup`/`start`/`track`/`show`/`abort`/`answer-workflow`); a new command needs a
+use that none of these covers.
+
 ```
-laight init [--from openrig <dir>]   scaffold .laight/ (or import an OpenRig .openrig/)
-laight validate                      schema + semantic checks
-laight run <workflow> [k=v…]         spin up the workflow's rig, start the engine, attach to watch
-laight ps                            live runs
-laight watch [run]                   live view
-laight inbox                         the human queue, in the terminal
-laight answer <item> <choice|text>   answer one item (scripts, webhooks)
-laight show [run] [--export]         the web view (localhost, foreground)
-laight attach <run> [seat]           tmux attach to the run (or a seat window)
-laight abort <run>                   confirm, stop the engine, kill the run's tmux session, keep worktrees
-laight resume <run>                  restart a dead engine
-laight clean [run|--done]            remove finished runs' worktrees and session leftovers (confirm)
-laight done <exit> [k=v…]            for agents: finish the current step
-laight doctor                        tmux, git, runtimes, hooks; queue and channels reachable
-laight channels test [name]          send a test item through a channel and wait for the answer
+laight init [--from openrig <dir>]   scaffold .laight/ (or import an OpenRig .openrig/)   ← setup
+laight validate [workflow]           schema + semantic checks (run also does this first)
+laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live     ← start
+laight run --resume <run>            restart a run whose engine died (crash, reboot)
+laight watch [run]                   live pipeline view; no run = every run, one line each ← track
+laight show [run] [--export]         the web view (localhost, foreground)                 ← show
+laight inbox [<item> <answer>]       the human queue; with arguments, answer one (scripts)  ← answer
+laight attach <run> [seat]           jump into the run's tmux session (or one seat's window)
+laight abort <run>                   stop a live run; on a finished one, remove its worktrees ← abort/stop
+laight doctor                        tmux, git, runtimes, hooks; queue and channels (sends a test item)
+laight done <exit> [k=v…]            for agents: finish the current step (the only one they learn)
 ```
 
-Every command with side effects outside the run (deleting worktrees, killing sessions) asks first
-and lists what it will do; `--yes` skips it for scripts.
+`run`, `watch`, `attach` and `abort` take a run id prefix, or nothing when exactly one run of the
+project is live. There is no "current run" bookkeeping to go stale.
 
 ## 9. Implementation
 
@@ -445,10 +466,11 @@ Installing must be one command, with no runtime to install first.
 
 1. **M0** Schemas, `init`, `validate`, `init --from openrig` (the reference OpenRig setup converts cleanly).
 2. **M1** tmux driver, rig spin-up/tear-down per run, worktrees, `on_finish`, `attach`, `abort`.
-3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps, resume; then `needs`
+3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps, resume; a minimal inbox
+   (the `files` queue, `laight inbox <item> <answer>`, gates, the `PermissionRequest` hook); then `needs`
    and `matrix` (parallel). Acceptance: the
    issue cycle of section 3 on a real issue in a real repo.
-4. **M3** Inbox: hooks, the `files` queue, `laight inbox`, `laight answer`, gates, stuck detection.
+4. **M3** Inbox: the remaining hooks (questions, Stop), `laight inbox` (TUI), stuck detection.
 5. **M4** Channels and routing: `ntfy` (phone), `command`, then `slack` and `webhook`.
 6. **M5** Observability: `watch`, `ps`, `show` (web view), usage/cost.
 7. **M6** `sqs` queue (several machines, one inbox).

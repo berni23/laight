@@ -1,0 +1,20 @@
+version: "0.2"
+name: demo
+permission_policy: builtin:yolo
+pods:
+  - id: dev
+    members:
+      - id: impl
+        label: Implementer
+        agent_ref: "local:agents/implementer"
+        runtime: claude-code
+        cwd: ..
+        restore_policy: resume_if_possible
+  - id: rev
+    members:
+      - id: reviewer
+        label: Reviewer
+        agent_ref: "local:agents/reviewer"
+        runtime: claude-code
+        cwd: ../../demo-review
+        restore_policy: relaunch_fresh
