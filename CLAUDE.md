@@ -106,7 +106,8 @@ each have their own). So:
 
 - Stay **close to OpenRig's vocabulary** for agents and routing (seats with `runtime`/`cwd`, steps
   with `objective`, `allowed_exits`, `next_hop.on`, `loop_guards.max_hops`), so OpenRig users read
-  it instantly and `laight init --from openrig` is a near line-by-line conversion.
+  it instantly and can convert a setup by hand in minutes. (An importer existed in M0 and was
+  removed: one user, one setup, and more code to keep safe than a hand conversion costs.)
 - Borrow **CircleCI / GitHub Actions** conventions for the rest: one file per workflow, `needs` for
   dependencies and parallelism, `matrix` for fan-out, `env`, `timeout`, `if`. Templates use
   `{{ }}` (Go `text/template`), not `${{ }}`.
@@ -409,7 +410,7 @@ around OpenRig (`setup`/`start`/`track`/`show`/`abort`/`answer-workflow`); a new
 use that none of these covers.
 
 ```
-laight init [--from openrig <dir>]   scaffold .laight/ (or import an OpenRig .openrig/)   ← setup
+laight init                          scaffold .laight/                                    ← setup
 laight validate [workflow]           schema + semantic checks (run also does this first)
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live     ← start
 laight run --resume <run>            restart a run whose engine died (crash, reboot)
@@ -464,7 +465,7 @@ Installing must be one command, with no runtime to install first.
 
 ## 10. Milestones
 
-1. **M0** Schemas, `init`, `validate`, `init --from openrig` (the reference OpenRig setup converts cleanly).
+1. **M0** Schemas, `init`, `validate`.
 2. **M1** tmux driver, rig spin-up/tear-down per run, worktrees, `on_finish`, `attach`, `abort`.
 3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps, resume; a minimal inbox
    (the `files` queue, `laight inbox <item> <answer>`, gates, the `PermissionRequest` hook); then `needs`

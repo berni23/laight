@@ -9,20 +9,14 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/berni23/laight/internal/openrig"
 	"github.com/berni23/laight/internal/scaffold"
 	"github.com/berni23/laight/internal/spec"
 )
 
 // cmdInit creates .laight/ at the root of the current git repo.
 func cmdInit(args []string, stdout, stderr io.Writer) int {
-	var from string
-	switch {
-	case len(args) == 0:
-	case len(args) == 3 && args[0] == "--from" && args[1] == "openrig":
-		from = args[2]
-	default:
-		return fail(stderr, "usage: laight init [--from openrig <dir>]")
+	if len(args) > 0 {
+		return fail(stderr, "usage: laight init")
 	}
 
 	root, err := gitRoot(".")
@@ -35,19 +29,9 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	base := defaultBranch(root)
 
-	var files map[string][]byte
-	var notes []string
-	if from == "" {
-		if files, err = scaffold.Files(base); err != nil {
-			return fail(stderr, "%v", err)
-		}
-	} else {
-		res, err := openrig.Import(from, base)
-		if err != nil {
-			return fail(stderr, "import: %v", err)
-		}
-		files, notes = res.Files, res.Notes
-		notes = append(notes, fmt.Sprintf("base is %q (the repo's default branch); change `base:` if PRs go elsewhere", base))
+	files, err := scaffold.Files(base)
+	if err != nil {
+		return fail(stderr, "%v", err)
 	}
 
 	// Write everything into a temporary folder and rename it into place, so a failure never
@@ -73,12 +57,6 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "created %s\n", dir)
 	for _, name := range sortedKeys(files) {
 		fmt.Fprintf(stdout, "  %s\n", name)
-	}
-	if len(notes) > 0 {
-		fmt.Fprintln(stdout, "\nCheck these:")
-		for _, n := range notes {
-			fmt.Fprintf(stdout, "  - %s\n", n)
-		}
 	}
 	fmt.Fprintln(stdout)
 	if code := validate(&spec.Project{Root: root, Dir: dir}, nil, stdout, stderr); code != 0 {

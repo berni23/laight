@@ -1,4 +1,0 @@
-resources:
-  guidance:
-    - id: role
-      path: guidance/role.md

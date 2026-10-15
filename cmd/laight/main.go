@@ -18,7 +18,7 @@ var (
 const usage = `laight runs teams of coding agents in tmux from YAML workflow files.
 
 Usage:
-  laight init [--from openrig <dir>]   create .laight/ (or import an OpenRig .openrig/ folder)
+  laight init                          create .laight/
   laight validate [workflow…]          check the workflows: schema, routes, seats, templates
   laight version                       print the version
 

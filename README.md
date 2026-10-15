@@ -34,7 +34,7 @@ laight keeps the idea and drops the machinery:
   default, or a real queue such as Amazon SQS when your agents run on several machines.
 - **See it**: `laight show` opens a simple, CircleCI-style web view of your workflows and runs.
 - **Plain YAML**: OpenRig-style vocabulary (seats, steps, `allowed_exits`, `next_hop`, `max_hops`),
-  a published JSON Schema for editor completion and validation, and an importer for OpenRig setups.
+  so OpenRig users read it instantly, and a published JSON Schema for editor completion and validation.
 - **Agent-agnostic**: Claude Code first, Codex next, any CLI through the `shell` runtime.
 
 ## One file is the whole system
@@ -85,7 +85,7 @@ laight doctor                       # checks Claude Code, gh and tmux
 ## Use (planned)
 
 ```bash
-laight init                 # or: laight init --from openrig .openrig
+laight init                 # scaffolds .laight/ with an issue-cycle workflow
 laight validate
 laight run issue-cycle      # spins up the workflow's rig and shows the live view
 laight inbox                # everything waiting for you, across all runs

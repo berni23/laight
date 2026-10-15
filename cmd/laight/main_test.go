@@ -21,7 +21,7 @@ func TestRun(t *testing.T) {
 		{args: []string{"help"}, code: 0, inStdout: "Usage:"},
 		{args: nil, code: 2, inStderr: "Usage:"},
 		{args: []string{"nope"}, code: 2, inStderr: `unknown command "nope"`},
-		{args: []string{"init", "--from"}, code: 1, inStderr: "usage: laight init"},
+		{args: []string{"init", "x"}, code: 1, inStderr: "usage: laight init"},
 	}
 	for _, tt := range tests {
 		var out, errOut bytes.Buffer
@@ -71,6 +71,10 @@ func TestInitValidate(t *testing.T) {
 	if !strings.Contains(string(b), "base: main") {
 		t.Error("base not filled in")
 	}
+	// No temporary folder left behind.
+	if m, _ := filepath.Glob(filepath.Join(dir, ".laight-init-*")); len(m) > 0 {
+		t.Errorf("left behind: %v", m)
+	}
 
 	// A second init changes nothing.
 	var o, e bytes.Buffer
@@ -103,27 +107,6 @@ func TestInitValidate(t *testing.T) {
 	e.Reset()
 	if code := run([]string{"validate", "nope"}, &o, &e); code != 1 || !strings.Contains(e.String(), "workflows: issue-cycle") {
 		t.Errorf("validate nope = %d, %q", code, e.String())
-	}
-}
-
-func TestInitFromOpenRig(t *testing.T) {
-	src, err := filepath.Abs("../../internal/openrig/testdata/openrig")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := gitRepo(t)
-	out := runOK(t, "init", "--from", "openrig", src)
-	for _, want := range []string{"workflows/cycle.yaml", "Check these:", "✓ cycle"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("output lacks %q:\n%s", want, out)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".laight", "guidance", "impl.md")); err != nil {
-		t.Error(err)
-	}
-	// No temporary folder left behind.
-	if m, _ := filepath.Glob(filepath.Join(dir, ".laight-init-*")); len(m) > 0 {
-		t.Errorf("left behind: %v", m)
 	}
 }
 
