@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+# Releases: push a vX.Y.Z tag; .github/workflows/release.yml runs this. Try it locally: make snapshot.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/laight
+    binary: laight
+    env: [CGO_ENABLED=0]
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }} -X main.date={{ .CommitDate }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files: [LICENSE, README.md, CHANGELOG.md]
+
+checksum:
+  name_template: checksums.txt
+
+nfpms:
+  - package_name: laight
+    homepage: https://github.com/berni23/laight
+    description: Run teams of coding agents in tmux from YAML specs, with one inbox for human decisions.
+    license: Apache-2.0
+    maintainer: laight maintainers
+    formats: [deb, rpm]
+    dependencies: [tmux, git]
+
+homebrew_casks:
+  - name: laight
+    binaries: [laight]
+    homepage: https://github.com/berni23/laight
+    description: Run teams of coding agents in tmux from YAML specs, with one inbox for human decisions.
+    license: Apache-2.0
+    dependencies:
+      - formula: tmux
+    # The binaries aren't signed yet; without this macOS says the file is damaged. See CLAUDE.md, Distribution.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/laight"]
+          end
+    repository:
+      owner: berni23
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    commit_msg_template: "laight {{ .Tag }}"
+
+changelog:
+  use: github
+  filters:
+    exclude: ["^docs:", "^test:", "^chore:"]
+
+release:
+  footer: |
+    Install: `brew install berni23/tap/laight` · Changes: see CHANGELOG.md

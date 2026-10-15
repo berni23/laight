@@ -1,0 +1,24 @@
+name: Feature request
+description: Something laight should do.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do, and what gets in the way today?
+    validations: { required: true }
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: A workflow or rig YAML snippet showing it is the best way to explain.
+    validations: { required: true }
+  - type: checkboxes
+    id: requirements
+    attributes:
+      label: The four requirements
+      description: laight stays lightweight (no daemon, server or database), uses tmux, isolates runs and has one human channel. See CLAUDE.md.
+      options:
+        - label: This fits within them, or I explain above why it should be an exception.
+          required: true

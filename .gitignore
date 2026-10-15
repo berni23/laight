@@ -1,0 +1,12 @@
+# Build output
+/bin/
+/dist/
+
+# Maintainer-local notes (see CLAUDE.md, section 11)
+CLAUDE.local.md
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp

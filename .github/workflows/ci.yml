@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+      - name: Install tmux
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -q && sudo apt-get install -yq tmux; else brew install tmux; fi
+      - run: make check
+      - run: make build && ./bin/laight version

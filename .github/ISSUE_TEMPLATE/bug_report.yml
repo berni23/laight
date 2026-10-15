@@ -1,0 +1,29 @@
+name: Bug report
+description: Something laight does wrong.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The command you ran and, if relevant, the rig and workflow YAML (remove anything private).
+      render: shell
+    validations: { required: true }
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Output of `laight version` and `laight doctor`, your OS, and the agent CLI (Claude Code, Codex…) with its version.
+      render: text
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: Events or logs
+      description: The relevant lines of the run's events.jsonl. Check it for secrets before pasting.
+      render: text
