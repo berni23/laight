@@ -243,8 +243,11 @@ steps:
 `failed`, unless `exits:` maps codes), `gate` (a human decision, always via the inbox).
 **Exits:** any identifiers; `allowed_exits` defaults to `[handoff]` for agent steps; `failed` is
 implicit on every step and can be routed. **Outputs:**
-`laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values allowed). Templates see
-only `.inputs`, `.steps`, `.matrix`, `.base`, `.run` and `secret`.
+`laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values allowed, numbers kept
+digit for digit; `null` is empty). Templates see only `.inputs`, `.steps.<id>.out`/`.exit`,
+`.matrix`, `.base`, `.run.id`/`.project`/`.workflow` and, **in `env` only**, `secret`: every other
+template can be pasted into a pane, and panes are logged. **`next_hop.mode: end`** ends the branch
+whatever the exit, except an unrouted `failed`, which still fails the run (rule 4).
 
 Guidance is delivered **without touching tracked files**: for Claude Code via
 `--append-system-prompt-file` / `--settings` on launch (whatever the installed version supports,
@@ -515,3 +518,118 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
   answers it; their local scratch is `scratch.review` (gitignored).
 - Maintainer-only local notes (paths, private reference repos) live in `CLAUDE.local.md`, which is
   gitignored. Read it if it exists; never commit it.
+
+## 12. Hard problems, and how other orchestrators solve them
+
+Four problems surfaced in the engine-loop review (#14) can't be fixed by a patch. Each one is a
+design choice. This section records how other tools handle them (checked 2026-10, from their source
+and docs) and what fits laight's rules: no daemon, plain files, tmux. Ideas only, never code (§11).
+The tools are:
+- **OpenRig**: a daemon with SQLite, agents in tmux. Apache-2.0. Read locally from `@openrig/cli` 0.6.7.
+- **Gas Town** (`steveyegge/gastown`): Claude Code in tmux, state in "beads".
+- **Archon** (`coleam00/Archon`): YAML DAG workflows that call agents through SDKs; no tmux.
+- **Orca** (`stablyai/orca`, onorca.dev): an Electron app whose daemon owns PTYs. MIT.
+- **Claude Squad** (`smtg-ai/claude-squad`): manages tmux sessions in git worktrees.
+
+### 12.1 Delivering a step exactly once (#8)
+
+The engine records a hop, then pastes it into the pane. If the engine dies in between, a restarted
+engine can't tell whether the agent got the prompt. tmux gives no acknowledgement.
+
+- **OpenRig** creates the step as a `pending` queue row in the same transaction as the workflow
+  state, and sends the tmux "nudge" only after the commit, as a best effort. The agent *claims* the
+  row through the CLI. A watchdog armed in that same transaction re-nudges a row that is never
+  claimed. It checks a paste by looking for a text snippet in `capture-pane` (`delivered` or
+  `rendered-unconfirmed`, never "failed"). A retry presses Enter alone, and only when the staged
+  text is visible.
+- **Gas Town** pulls instead of pushing. Work is pinned to the agent, and on `SessionStart` or
+  `PreCompact` the agent re-reads it ("if you find something on your hook, you run it"). A crash
+  respawns the agent and restarts the step (at-least-once). Its own code says checking the pane
+  can't prove delivery.
+- **Archon** skips completed nodes on resume. It won't replay a node that has a start event and no
+  end event, because it "cannot prove whether its side effects finished", and asks an operator.
+- **Orca** keeps a per-run inbox that the agent acks (`check --ack <deliveryId>`).
+- **Claude Squad** pastes and presses Enter, and tracks nothing.
+
+**For laight:** use OpenRig's split, with files instead of a database. The hop is written to
+`run.json` as `delivered: false` before the paste, and the paste is a nudge that can be sent again.
+**Acknowledgement comes from the agent's side**: a `UserPromptSubmit` hook writes
+`seats/<seat>.ack` with the step and hop, so no new command is needed. On resume:
+- a hop with no ack is pasted again;
+- an acked hop with no `done` is left running, since the agent has it;
+- re-pasting a hop that was acked is never automatic (Archon's rule): if laight can't tell, it
+  raises a `stuck` item.
+
+Runtimes without hooks fall back to OpenRig's capture-pane snippet check.
+
+### 12.2 Knowing an agent is idle, done or stuck (#15)
+
+Today `laight done` says the step is finished, and the Stop hook says the turn ended. Neither
+detects an agent that stops without `done`, a Stop hook that fails, or a step that runs too long.
+
+- **OpenRig** feeds hooks (`SessionStart`, `UserPromptSubmit`, `Stop`, `Notification`) into an
+  activity record. "Done" is explicit: closing a step requires a reason. It never *stores* "stuck":
+  it computes it from claim timestamps and a threshold. Stuck drives nudges only, never routing. An
+  escalation ladder goes nudge → orchestrator → operator.
+- **Gas Town**: done is explicit (`gt done`), and a session still alive 60 s after done is killed.
+  It declares "stuck" only from several signals together: self-reported heartbeats, staleness of
+  heartbeat files, and tmux `window_activity`. After 3 crashes on the same step it stops respawning
+  and escalates.
+- **Orca** ranks evidence of idleness: hooks first, then the terminal title or a known prompt, then
+  a quiet screen.
+- **Archon**: done means the SDK call returned. It has idle and node timeouts, and human items go
+  to an attention queue where the first answer wins.
+- **Claude Squad** hashes `capture-pane` every 500 ms (changed means running, unchanged means
+  ready). It has no hooks and no stuck handling.
+
+**For laight:** keep explicit `laight done` plus hooks as the proof. Screen or output silence only
+ever *adds* evidence; it never decides on its own (Gas Town, Orca). Compute "stuck" at each tick
+from file timestamps (`out/`, `.idle`, `.ack`, the seat log's modification time) against
+`timeouts.step`. Store nothing new, and never route on it (OpenRig). The escalation is one nudge
+(the Stop hook's reminder, which exists today), then a `stuck` inbox item. A seat that crashes
+twice on the same hop raises a `failed` item instead of being respawned again (Gas Town's limit).
+
+### 12.3 One parallel branch fails while others run (#12)
+
+Today rule 4 fails the run as soon as a step fails with no route, and the teardown kills whatever
+else is running. That is harmless in series. With `needs`/`matrix`, it throws away running
+siblings' work, and their worktrees with it.
+
+- **Archon** runs siblings to completion (`Promise.allSettled`). Their dependents are skipped under
+  the default `trigger_rule: all_success`. A failing fan-out child "does not stop its siblings";
+  only an explicit `cancel:` node stops in-flight work.
+- **Orca**: each worker reports `succeeded|failed` exactly once, and a retry is explicit.
+- **OpenRig** has no parallel steps yet (one active step per workflow). Gas Town and Claude Squad
+  don't address it.
+
+**For laight:** Archon's model is the strongest prior. When a parallel copy fails with no route,
+running siblings finish and their exits are recorded. Every step that `needs` the failed one is
+skipped, and the run fails once nothing is running, with one `failed` inbox item for the human.
+Stopping the siblings stays explicit (`laight abort`, or later an opt-in `on_failure: cancel`).
+**This changes rule 4 of §3**, so it is decided in #12, not here.
+
+### 12.4 Secrets and agent panes (#7, #16)
+
+Everything pasted into a pane is in `seats/<seat>.log` (`pipe-pane`), and in the agent's own
+transcript. Since #14, `{{ secret }}` renders only into `env`.
+
+- **Archon** keeps its secrets apart from the target repo's `.env`, encrypts credentials at rest
+  and masks tokens in logs. Inputs reach bash nodes **as env vars, never spliced into the script**.
+  It redacts saved values whose keys end in TOKEN, KEY, SECRET or PASSWORD, but not printed stdout.
+- **OpenRig** redacts transcripts by pattern (`sk-`, `gh*_`, `github_pat_`, Bearer, long base64)
+  before its API serves them. Credentials reach seats through the tmux environment, and are never
+  logged.
+- **Gas Town**, in its sandboxed mode, keeps the GitHub token on the host and gives each worker a
+  short-lived certificate, passed by path.
+- **Orca** and **Claude Squad** don't address it. Orca runs agents with permission prompts
+  skipped by default.
+
+**For laight:** keep the current rule and extend it the way Archon does. Secrets reach an agent or
+a shell step only as env vars (seat `env`, or a shell step's `env`, if #16 settles it that way). A
+secret never goes into a rendered prompt or command line, so #7 should not allow `secret` in
+`run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details.
+The values laight knows (the secrets it rendered into seat env) can also be stripped from the pane
+log as it is written, by piping `pipe-pane` through a filter instead of `cat`. **But raw pane logs
+can't be fully redacted**: an agent can print whatever it can read. So pane logs stay inside the
+run folder, which only the user can read (`0700`), and the docs say so plainly, instead of
+promising redaction.

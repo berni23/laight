@@ -44,6 +44,9 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if w == nil || spec.HasErrors(probs) {
 		return fail(stderr, "fix the workflow first (`laight validate %s`)", args[0])
 	}
+	if err := engine.Supported(w); err != nil {
+		return fail(stderr, "%v", err) // before the run exists: nothing to clean up
+	}
 	inputs, err := parseInputs(w, args[1:])
 	if err != nil {
 		return fail(stderr, "%v", err)

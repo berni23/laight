@@ -96,7 +96,7 @@ steps:
 	if got := strings.Join(e.stepsDone(r.ID), " "); got != want {
 		t.Errorf("steps:\n got %s\nwant %s", got, want)
 	}
-	if r.Hops != 6 || r.Steps["implement"].Out["pr"] != 42.0 {
+	if r.Hops != 6 || r.Steps["implement"].Out["pr"] != json.Number("42") {
 		t.Errorf("hops %d, implement %+v", r.Hops, r.Steps["implement"])
 	}
 	evs, _ := state.Events(e.home, r.ID)
@@ -221,10 +221,12 @@ steps:
   - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
   - { id: two, run: "true" }
 `)
-	e.mustLaight("run", "demo")
-	r := e.waitEnded(e.onlyRun().ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "shell steps are not supported yet") {
-		t.Errorf("status %s, error %q", r.Status, r.Error)
+	// Refused before a run or a tmux session exists.
+	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "shell steps are not supported yet") {
+		t.Errorf("run = %v\n%s", err, out)
+	}
+	if runs, _ := state.List(e.home); len(runs) != 0 {
+		t.Errorf("an unsupported workflow left %d runs", len(runs))
 	}
 }
 
@@ -264,7 +266,7 @@ func TestDone(t *testing.T) {
 		{nil, 1, "usage: laight done"},
 		{[]string{"handoff"}, 1, `step verify can't finish with "handoff"; its exits: pass, fail, failed`},
 		{[]string{"pass", "novalue"}, 1, `outputs are key=value, got "novalue"`},
-		{[]string{"pass", "n=7", "list=[1,2]", "s=hello world", "url=https://x/1"}, 0, "step verify done: pass"},
+		{[]string{"pass", "n=7", "big=12345678901234567890", "nil=null", "list=[1,2]", "s=hello world", "url=https://x/1", "two=1 2"}, 0, "step verify done: pass"},
 		{[]string{"fail"}, 1, "step verify already finished with pass"},
 	} {
 		var out, errOut bytes.Buffer
@@ -277,8 +279,13 @@ func TestDone(t *testing.T) {
 		t.Fatalf("ReadDone: %v %v", d, err)
 	}
 	b, _ := json.Marshal(d.Out)
-	if string(b) != `{"list":[1,2],"n":7,"s":"hello world","url":"https://x/1"}` {
+	if string(b) != `{"big":12345678901234567890,"list":[1,2],"n":7,"nil":"","s":"hello world","two":"1 2","url":"https://x/1"}` {
 		t.Errorf("out = %s", b)
+	}
+	// What a later objective sees: numbers digit for digit, null as nothing.
+	r := &state.Run{Spec: &spec.Workflow{}, Steps: map[string]*state.StepResult{"verify": {Exit: d.Exit, Out: d.Out}}}
+	if got, err := spec.Render("t", "{{ .steps.verify.out.big }}/{{ .steps.verify.out.nil }}/", r.TemplateData()); err != nil || got != "12345678901234567890//" {
+		t.Errorf("rendered %q, %v", got, err)
 	}
 
 	t.Setenv("LAIGHT_SEAT", "b")

@@ -186,6 +186,30 @@ func (s Server) PaneDead(session, window string) bool {
 	out, err := s.run("display-message", "-p", "-t", target(session, window), "#{pane_dead}")
 	return err == nil && strings.TrimSpace(out) == "1"
 }
+yes 
+// ErrGone is returned by Alive when the window, its session or the whole server no longer exists.
+var ErrGone = errors.New("window gone")
+
+// Alive reports whether the window's command is still running. It returns ErrGone when the
+// window doesn't exist any more, and any other error when tmux couldn't say: a caller deciding
+// that an agent crashed must not mistake one for the other.
+func (s Server) Alive(session, window string) (bool, error) {
+	out, err := s.run("list-windows", "-t", "="+session, "-F", "#{window_name}\t#{pane_dead}")
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") ||
+			strings.Contains(msg, "error connecting to") {
+			return false, ErrGone
+		}
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if name, dead, _ := strings.Cut(line, "\t"); name == window {
+			return dead != "1", nil
+		}
+	}
+	return false, ErrGone
+}
 
 // Capture returns the visible text of the window's pane.
 func (s Server) Capture(session, window string) (string, error) {

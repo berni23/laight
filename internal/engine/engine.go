@@ -17,6 +17,7 @@ import (
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
+	"github.com/berni23/laight/internal/tmux"
 )
 
 // Poll is how often the engine looks at the run's files.
@@ -90,6 +91,11 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			return errors.New("not live") // nothing to save
 		}
 		status, reason, starts, events = e.advance(r)
+		if status != "" {
+			// Saved with the state that implies it: an engine that dies before the teardown
+			// must not find an empty queue later and call a failed run a success.
+			r.Status, r.Error = status, reason
+		}
 		return nil
 	})
 	if status != "" {
@@ -113,7 +119,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			e.logf("✕ %s: %v", s.hop.Step, err)
 			msg, _, _ := strings.Cut(err.Error(), "\n")
 			if err := state.WriteDone(e.Home, id, state.Done{
-				Step: s.hop.Step, Hop: s.hop.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg},
+				Step: s.hop.Step, Hop: s.hop.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg}, Engine: true,
 			}); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
 				return "", "", err
 			}
@@ -147,8 +153,18 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 			e.logf("warning: %v", err)
 		}
 		if d == nil && h.Seat != "" && e.seatGone(r, h.Seat) {
-			ev("seat.crashed", h, nil)
-			d = &state.Done{Exit: spec.ExitFailed, Out: map[string]any{"error": "seat " + h.Seat + " crashed"}}
+			// Recorded like any other ending, so `laight done` racing the crash still wins.
+			crash := state.Done{Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Engine: true,
+				Out: map[string]any{"error": "seat " + h.Seat + " crashed"}}
+			if err := state.WriteDone(e.Home, r.ID, crash); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
+				e.logf("warning: %v", err)
+			}
+			if d, _ = state.ReadDone(e.Home, r.ID, h.Step, h.N); d == nil {
+				d = &crash
+			}
+			if d.Engine {
+				ev("seat.crashed", h, nil)
+			}
 			if s := r.Seats[h.Seat]; s != nil {
 				s.Up, s.Turn = false, false
 			}
@@ -177,20 +193,25 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 			r.Queue = append(r.Queue, next)
 		}
 		// A seat without hooks is free now; one with hooks once its Stop hook says the turn ended.
+		// An ending the engine wrote has no turn behind it to wait for.
 		if s := r.Seats[h.Seat]; s != nil {
-			if rt, err := runtime.For(r.Spec.Seats[h.Seat].Runtime); err == nil && !rt.Hooks() {
+			if rt, err := runtime.For(r.Spec.Seats[h.Seat].Runtime); d.Engine || (err == nil && !rt.Hooks()) {
 				s.Turn = false
 			}
 		}
 	}
 	r.Active = running
 
-	// 2. Seats whose turn ended after their step finished.
+	// 2. Seats whose turn ended after their step finished, or whose agent exited instead.
 	for name, s := range r.Seats {
 		if s.Turn && r.ActiveOn(name) == nil {
 			b, _ := os.ReadFile(filepath.Join(state.Dir(e.Home, r.ID), "seats", name+".idle"))
-			if strings.TrimSpace(string(b)) == IdleMark(s.Step, s.Hop) {
+			switch {
+			case strings.TrimSpace(string(b)) == IdleMark(s.Step, s.Hop):
 				s.Turn = false
+			case e.seatGone(r, name):
+				events = append(events, state.Event{Run: r.ID, Type: "seat.crashed", Seat: name})
+				s.Up, s.Turn = false, false
 			}
 		}
 	}
@@ -245,13 +266,19 @@ func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 	return e.Rig.Tmux.Paste(r.Session, r.Seats[st.Seat].Window, strings.TrimRight(text, "\n"))
 }
 
-// seatGone reports whether the seat's agent has exited or its window was closed.
+// seatGone reports whether the seat's agent has exited or its window was closed. When tmux can't
+// tell, it says no: a hiccup must not fail a live step; the next tick asks again.
 func (e *Engine) seatGone(r *state.Run, seat string) bool {
 	s := r.Seats[seat]
 	if s == nil {
 		return true
 	}
-	return !e.Rig.Tmux.HasWindow(r.Session, s.Window) || e.Rig.Tmux.PaneDead(r.Session, s.Window)
+	alive, err := e.Rig.Tmux.Alive(r.Session, s.Window)
+	if err != nil && !errors.Is(err, tmux.ErrGone) {
+		e.logf("warning: can't check seat %s: %v", seat, err)
+		return false
+	}
+	return !alive
 }
 
 // entrySteps is rule 1 of CLAUDE.md section 3: the first step (unless it has needs), and every

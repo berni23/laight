@@ -56,7 +56,8 @@ func cmdDone(args []string, stdout, stderr io.Writer) int {
 }
 
 // parseOut turns key=value arguments into a step's outputs. A value that parses as JSON is kept
-// as JSON (42, true, ["a","b"]); anything else is a string.
+// as JSON (42, true, ["a","b"]), numbers digit for digit; anything else is a string, and null is
+// empty (a template would print it as "<no value>").
 func parseOut(args []string) (map[string]any, error) {
 	out := map[string]any{}
 	for _, a := range args {
@@ -65,10 +66,15 @@ func parseOut(args []string) (map[string]any, error) {
 			return nil, fmt.Errorf("outputs are key=value, got %q", a)
 		}
 		var j any
-		if err := json.Unmarshal([]byte(v), &j); err == nil {
-			out[k] = j
-		} else {
+		d := json.NewDecoder(strings.NewReader(v))
+		d.UseNumber()
+		switch err := d.Decode(&j); {
+		case err != nil || d.More():
 			out[k] = v
+		case j == nil:
+			out[k] = ""
+		default:
+			out[k] = j
 		}
 	}
 	return out, nil

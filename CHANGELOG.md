@@ -33,7 +33,11 @@ All notable changes to laight are documented here. The format follows
   step once it has finished the last one and its turn has ended; `session: fresh` restarts the
   seat before each of its steps. A seat that crashes fails its step; one whose agent exits
   between steps is relaunched for its next one. Shell steps, gates and
-  `needs`/`matrix` aren't supported yet: a workflow that uses them fails at start.
+  `needs`/`matrix` aren't supported yet: `laight run` refuses a workflow that uses them.
+  `timeouts` and a step's `env` are accepted but not acted on yet.
+- Templates see `.run.id`, `.run.project`, `.run.workflow` and `.steps.<id>.exit`.
+  `{{ secret }}` is allowed only in `env`: `validate` rejects it in objectives and other text that
+  can reach a pane (and so its log).
 - `laight done <exit> [key=value…]`: how an agent finishes its step, with outputs (JSON values
   allowed) for later steps' templates. Claude seats get a Stop hook that reminds the agent, once,
   if it stops without it.

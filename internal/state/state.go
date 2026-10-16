@@ -4,6 +4,7 @@
 package state
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -197,7 +198,7 @@ func Load(home, id string) (*Run, error) {
 		return nil, err
 	}
 	var r Run
-	if err := json.Unmarshal(b, &r); err != nil {
+	if err := decode(b, &r); err != nil {
 		return nil, fmt.Errorf("run %s: bad run.json: %w", Short(id), err)
 	}
 	return &r, nil
@@ -349,6 +350,8 @@ type Done struct {
 	Exit string         `json:"exit"`
 	Out  map[string]any `json:"out,omitempty"`
 	TS   time.Time      `json:"ts"`
+	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end.
+	Engine bool `json:"engine,omitempty"`
 }
 
 // ErrAlreadyDone is returned by WriteDone for a hop that has already finished.
@@ -402,7 +405,7 @@ func ReadDone(home, id, step string, hop int) (*Done, error) {
 		return nil, err
 	}
 	var d Done
-	if err := json.Unmarshal(b, &d); err != nil {
+	if err := decode(b, &d); err != nil {
 		return nil, fmt.Errorf("%s: %w", doneFile(home, id, step, hop), err)
 	}
 	return &d, nil
@@ -429,6 +432,14 @@ func Register(home, root string) error {
 		}
 	}
 	return writeJSON(file, append(ps, Project{Path: root, Name: filepath.Base(root)}))
+}
+
+// decode is json.Unmarshal keeping numbers as json.Number, so a step output like 12345678901234567890
+// renders in a later template exactly as the agent wrote it.
+func decode(b []byte, v any) error {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	return d.Decode(v)
 }
 
 // writeJSON writes v to file atomically.

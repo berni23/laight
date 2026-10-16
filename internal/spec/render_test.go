@@ -15,12 +15,16 @@ func TestRender(t *testing.T) {
 		{in: "{{ .inputs.nope }}", err: "nope"},
 		{in: `{{ secret "laight-test-missing-xyz" }}`, err: "LAIGHT_SECRET_LAIGHT_TEST_MISSING_XYZ"},
 	} {
-		got, err := Render("t", tt.in, data)
+		got, err := RenderWithSecrets("t", tt.in, data)
 		switch {
 		case tt.err != "" && (err == nil || !strings.Contains(err.Error(), tt.err)):
 			t.Errorf("Render(%q) error = %v, want %q", tt.in, err, tt.err)
 		case tt.err == "" && (err != nil || got != tt.want):
 			t.Errorf("Render(%q) = %q, %v; want %q", tt.in, got, err, tt.want)
 		}
+	}
+	// Plain Render renders what reaches panes: no secrets there.
+	if got, err := Render("t", `{{ secret "gh-this-repo" }}`, data); err == nil || strings.Contains(got, "s3cret") {
+		t.Errorf("Render with secret = %q, %v; want an error", got, err)
 	}
 }
