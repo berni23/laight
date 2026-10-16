@@ -127,3 +127,14 @@ func TestWriteDoneFirstWins(t *testing.T) {
 		t.Errorf("won %d, done %+v, %v", won, d, err)
 	}
 }
+
+// A shell step's hop has no seat; it must not look like the step of a seat named "".
+func TestActiveOnShellHop(t *testing.T) {
+	r := &Run{Active: []*Hop{{Step: "merge", N: 1}, {Step: "fix", Seat: "impl", N: 2}}}
+	if h := r.ActiveOn(""); h != nil {
+		t.Errorf("ActiveOn(\"\") = %+v", h)
+	}
+	if h := r.ActiveOn("impl"); h == nil || h.Step != "fix" {
+		t.Errorf("ActiveOn(impl) = %+v", h)
+	}
+}

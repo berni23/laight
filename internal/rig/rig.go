@@ -268,7 +268,7 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	env := map[string]string{}
 	for _, m := range []spec.StringMap{r.Spec.Env, seat.Env} {
 		for k, v := range m {
-			out, err := spec.RenderWithSecrets("env "+k, v, data)
+			out, _, err := spec.RenderWithSecrets("env "+k, v, data)
 			if err != nil {
 				return nil, fmt.Errorf("env %s: %w", k, err)
 			}

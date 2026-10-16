@@ -150,7 +150,7 @@
         },
         "max_parallel": { "type": "integer", "minimum": 1, "description": "Matrix copies alive at once. Default 4." },
         "timeout": { "$ref": "#/$defs/duration" },
-        "env": { "$ref": "#/$defs/env" }
+        "env": { "$ref": "#/$defs/env", "description": "shell steps only: env of `run:`, over the workflow's env. The only place a shell step may use `secret`." }
       }
     }
   }

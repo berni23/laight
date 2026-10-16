@@ -15,7 +15,10 @@ func TestRender(t *testing.T) {
 		{in: "{{ .inputs.nope }}", err: "nope"},
 		{in: `{{ secret "laight-test-missing-xyz" }}`, err: "LAIGHT_SECRET_LAIGHT_TEST_MISSING_XYZ"},
 	} {
-		got, err := RenderWithSecrets("t", tt.in, data)
+		got, used, err := RenderWithSecrets("t", tt.in, data)
+		if tt.err == "" && strings.Contains(tt.in, "secret") && (len(used) != 1 || used[0] != "s3cret") {
+			t.Errorf("Render(%q) used secrets %q", tt.in, used)
+		}
 		switch {
 		case tt.err != "" && (err == nil || !strings.Contains(err.Error(), tt.err)):
 			t.Errorf("Render(%q) error = %v, want %q", tt.in, err, tt.err)

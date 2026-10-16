@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/berni23/laight/internal/rig"
@@ -28,9 +29,14 @@ type Engine struct {
 	Home string
 	Rig  *rig.Rig
 	Log  io.Writer // progress lines, shown in the engine window
+
+	mu     sync.Mutex     // Log is shared with running shell steps
+	shells sync.WaitGroup // running shell steps
 }
 
 func (e *Engine) logf(format string, args ...any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if e.Log != nil {
 		fmt.Fprintf(e.Log, format+"\n", args...)
 	}
@@ -46,8 +52,6 @@ func (e *Engine) event(ev state.Event) {
 func Supported(w *spec.Workflow) error {
 	for _, st := range w.Steps {
 		switch {
-		case st.Type == spec.TypeShell:
-			return fmt.Errorf("step %s: shell steps are not supported yet (#7)", st.ID)
 		case st.Type == spec.TypeGate:
 			return fmt.Errorf("step %s: gates are not supported yet (#9)", st.ID)
 		case len(st.Needs) > 0 || len(st.Matrix) > 0:
@@ -59,8 +63,10 @@ func Supported(w *spec.Workflow) error {
 
 // Run drives the run until it finishes and returns its final status (state.Succeeded or
 // state.Failed) and why it failed. The caller tears the rig down. When ctx ends first, it
-// returns ctx's error.
+// returns ctx's error, once the shell steps it started are stopped: they run in their own
+// process group, which closing the engine's window doesn't reach.
 func (e *Engine) Run(ctx context.Context, id string) (status, reason string, err error) {
+	defer e.shells.Wait()
 	for {
 		status, reason, err := e.tick(ctx, id)
 		if err != nil || status != "" {
@@ -216,12 +222,13 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		}
 	}
 
-	// 3. Queued steps whose seat is free (rule 5: one step per seat at a time).
+	// 3. Queued steps whose seat is free (rule 5: one step per seat at a time). Shell steps have
+	// no seat: they start at once.
 	var waiting []string
 	for _, id := range r.Queue {
 		st := r.Spec.Step(id)
 		s := r.Seats[st.Seat]
-		if s == nil || s.Turn || r.ActiveOn(st.Seat) != nil {
+		if st.Type != spec.TypeShell && (s == nil || s.Turn || r.ActiveOn(st.Seat) != nil) {
 			waiting = append(waiting, id)
 			continue
 		}
@@ -232,6 +239,11 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		r.Hops++
 		h := &state.Hop{Step: id, Seat: st.Seat, N: r.Hops, Started: time.Now().UTC()}
 		r.Active = append(r.Active, h)
+		if s == nil {
+			starts = append(starts, start{hop: *h})
+			ev("step.started", h, nil)
+			continue
+		}
 		if s.Up && e.seatGone(r, st.Seat) { // its agent exited while it was idle
 			events = append(events, state.Event{Run: r.ID, Type: "seat.crashed", Seat: st.Seat})
 			s.Up = false
@@ -250,9 +262,13 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 	return "", "", starts, events
 }
 
-// deliver gives a started hop to its seat: relaunch it if needed, then paste the objective.
+// deliver gives a started hop to its seat: relaunch it if needed, then paste the objective. A
+// shell step runs its command instead.
 func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 	st := r.Spec.Step(s.hop.Step)
+	if st.Type == spec.TypeShell {
+		return e.shell(ctx, r, s.hop)
+	}
 	text, err := spec.Render(st.ID+".objective", st.Objective, r.TemplateData())
 	if err != nil {
 		return fmt.Errorf("objective: %w", err)

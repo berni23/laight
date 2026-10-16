@@ -83,8 +83,11 @@ type Seat struct {
 	Given int    `json:"given,omitempty"` // steps given to the seat in this run
 }
 
-// ActiveOn returns the hop running on seat, or nil.
+// ActiveOn returns the hop running on seat, or nil. Shell steps have no seat.
 func (r *Run) ActiveOn(seat string) *Hop {
+	if seat == "" {
+		return nil
+	}
 	for _, h := range r.Active {
 		if h.Seat == seat {
 			return h
