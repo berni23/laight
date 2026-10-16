@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -69,8 +70,7 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	srv := tmux.Server{Socket: state.Socket(home)}
 	err = srv.NewSession(r.Session, tmux.Window{
 		Name: rig.EngineWindow, Dir: p.Root,
-		Env: map[string]string{"LAIGHT_HOME": home},
-		Cmd: tmux.Join([]string{laight, "engine", id}),
+		Cmd: tmux.Join([]string{"env", "LAIGHT_HOME=" + home, laight, "engine", id}),
 	})
 	if err != nil {
 		state.Update(home, id, func(r *state.Run) error { r.Status, r.Error = state.Failed, err.Error(); return nil })
@@ -105,7 +105,7 @@ func parseInputs(w *spec.Workflow, args []string) (map[string]string, error) {
 		}
 		switch {
 		case def.Default != nil:
-			in[k] = fmt.Sprint(def.Default)
+			in[k] = formatDefault(def.Default)
 		case def.Required:
 			missing = append(missing, k+"=…")
 		default:
@@ -116,6 +116,14 @@ func parseInputs(w *spec.Workflow, args []string) (map[string]string, error) {
 		return nil, fmt.Errorf("missing required input: laight run %s %s", w.ID, strings.Join(missing, " "))
 	}
 	return in, nil
+}
+
+// formatDefault writes a YAML default as the string an input holds: 1234567, not 1.234567e+06.
+func formatDefault(v any) string {
+	if f, ok := v.(float64); ok {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	return fmt.Sprint(v)
 }
 
 // cmdEngine is window 0 of a rig. In this version it brings the seats up and holds the rig until
@@ -139,19 +147,38 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	g := rig.New(home, laight, stdout)
 	fmt.Fprintf(stdout, "laight %s · run %s · %s · %s\n\n", version, r.Short(), r.Workflow, r.Repo)
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	// SIGHUP is tmux closing the window (`laight abort` or the run ending), so whoever closed it
+	// owns the teardown. Ctrl-C or a kill aimed at the engine stops the run: no orphaned rig.
+	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	interrupted := false
+	go func() {
+		interrupted = <-sigs != syscall.SIGHUP
+		stop()
+	}()
+	abort := func() int {
+		fmt.Fprintf(stdout, "\nengine interrupted: stopping the rig\n")
+		if err := g.Down(id, state.Aborted, "engine interrupted"); err != nil {
+			fmt.Fprintf(stdout, "teardown: %v\n", err)
+		}
+		return 1
+	}
 	if r.Status == state.Starting {
 		state.Update(home, id, func(r *state.Run) error { r.Status = state.Running; return nil })
 		state.Append(home, state.Event{Run: id, Type: "run.started", Data: map[string]any{"workflow": r.Workflow, "repo": r.Repo}})
 	}
 	if err := g.Up(ctx, id); err != nil {
 		if ctx.Err() != nil {
-			return 1 // stopped from outside (abort, Ctrl-C): the run stays as it is
+			if interrupted {
+				return abort()
+			}
+			return 1 // the window was closed: its closer tears down
 		}
 		fmt.Fprintf(stdout, "\n✕ %v\n", err)
 		reason, _, _ := strings.Cut(err.Error(), "\n") // the screen excerpt stays out of run.json
-		if err := g.Down(id, state.Failed, reason, false); err != nil {
+		if err := g.Down(id, state.Failed, reason); err != nil {
 			fmt.Fprintf(stdout, "teardown: %v\n", err)
 		}
 		return 1
@@ -165,6 +192,9 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "\nThis version starts the rig only; steps run with the engine loop (M2).\n")
 	fmt.Fprintf(stdout, "Switch windows with your tmux prefix + w. Stop the rig with: laight abort %s\n", r.Short())
 	<-ctx.Done()
+	if interrupted {
+		return abort()
+	}
 	return 0
 }
 
@@ -257,7 +287,10 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	laight, _ := os.Executable()
+	laight, err := os.Executable()
+	if err != nil {
+		return fail(stderr, "%v", err)
+	}
 	g := rig.New(home, laight, stdout)
 	worktrees := g.Worktrees(r)
 
@@ -277,7 +310,7 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		if !confirm(fmt.Sprintf("Abort run %s (%s, %s):", r.Short(), r.Workflow, r.Status), plan, yes, stdout, stderr) {
 			return 1
 		}
-		if err := g.Down(r.ID, state.Aborted, "", true); err != nil {
+		if err := g.Down(r.ID, state.Aborted, ""); err != nil {
 			return fail(stderr, "%v", err)
 		}
 		fmt.Fprintf(stdout, "run %s aborted\n", r.Short())

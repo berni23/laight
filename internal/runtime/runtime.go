@@ -6,6 +6,8 @@ package runtime
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/berni23/laight/internal/spec"
@@ -17,6 +19,7 @@ type Launch struct {
 	Name      string     // a display name for the session, e.g. "7k3mqz/impl"
 	Seat      *spec.Seat //
 	SessionID string     // a UUID the runtime should use, so it can be resumed later
+	Resume    bool       // SessionID ran before: continue that conversation
 	Guidance  string     // absolute path of the guidance file, or ""
 	Settings  string     // absolute path of the generated settings file, or ""
 }
@@ -50,7 +53,11 @@ type claude struct{}
 var permissionModes = map[string]string{"default": "manual", "auto": "auto", "yolo": "bypassPermissions"}
 
 func (claude) Command(l Launch) string {
-	argv := []string{"claude", "--session-id", l.SessionID, "--permission-mode", permissionModes[l.Seat.Permissions]}
+	argv := []string{"claude", "--session-id", l.SessionID}
+	if l.Resume && transcriptExists(l.SessionID) {
+		argv = []string{"claude", "--resume", l.SessionID}
+	}
+	argv = append(argv, "--permission-mode", permissionModes[l.Seat.Permissions])
 	if l.Name != "" {
 		argv = append(argv, "--name", l.Name)
 	}
@@ -64,6 +71,21 @@ func (claude) Command(l Launch) string {
 		argv = append(argv, "--model", l.Seat.Model)
 	}
 	return tmux.Join(argv)
+}
+
+// transcriptExists reports whether Claude saved a conversation for id: it does so only once the
+// session gets its first message, and --resume fails without one.
+func transcriptExists(id string) bool {
+	dir := os.Getenv("CLAUDE_CONFIG_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return false
+		}
+		dir = filepath.Join(home, ".claude")
+	}
+	m, _ := filepath.Glob(filepath.Join(dir, "projects", "*", id+".jsonl"))
+	return len(m) > 0
 }
 
 // Settings lets the seat finish steps without a prompt and reports ready through SessionStart.

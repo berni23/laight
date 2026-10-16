@@ -166,6 +166,9 @@ func TestLoadProblems(t *testing.T) {
 			return strings.Replace(s, "base: dev", "base: dev\nenv: { X: \"{{ .nope }}\" }", 1)
 		}, ".nope: templates see only", 0, false},
 		{"absolute guidance", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "/etc/hosts", 1) }, "must be a path inside .laight/", 0, false},
+		{"seat named engine", func(s string) string {
+			return strings.Replace(strings.ReplaceAll(s, "seat: impl\n", "seat: engine\n"), "  impl:\n", "  engine:\n", 1)
+		}, `seat name "engine" is reserved`, 0, false},
 		{"guidance outside .laight", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "../README.md", 1) }, "must be a path inside .laight/", 0, false},
 	}
 	for _, tt := range tests {

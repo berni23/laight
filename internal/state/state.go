@@ -52,6 +52,7 @@ type Seat struct {
 	Dir       string `json:"dir"`                // where the agent works
 	Worktree  bool   `json:"worktree,omitempty"` // Dir is a worktree laight created and owns
 	SessionID string `json:"session_id,omitempty"`
+	SetupDone bool   `json:"setup_done,omitempty"` // the seat's setup succeeded in Dir
 	Up        bool   `json:"up"`
 }
 
@@ -62,7 +63,7 @@ func (r *Run) Live() bool { return r.Status == Starting || r.Status == Running }
 func (r *Run) Short() string { return Short(r.ID) }
 
 // Short returns the short form of a run id.
-func Short(id string) string { return strings.ToLower(id[len(id)-6:]) }
+func Short(id string) string { return strings.ToLower(id[max(0, len(id)-6):]) }
 
 // SessionName is the tmux session of a run: laight-<workflow>-<short id>.
 func SessionName(workflow, id string) string { return "laight-" + workflow + "-" + Short(id) }

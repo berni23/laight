@@ -189,6 +189,11 @@ steps:
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	// The seat's env file, which can hold secrets, is gone once the seat has read it.
+	if _, err := os.Stat(filepath.Join(state.Dir(e.home, r.ID), "seats", "a.env")); !os.IsNotExist(err) {
+		t.Errorf("a.env still there: %v", err)
+	}
+
 	// No terminal and no --yes: abort refuses and changes nothing.
 	if out, err := e.laight("abort"); err == nil || !strings.Contains(out, "add --yes") || !e.srv.HasSession(r.Session) {
 		t.Fatalf("abort without --yes: %v\n%s", err, out)
@@ -276,5 +281,85 @@ steps:
 	}
 	if runs, _ := state.List(e.home); len(runs) != 0 {
 		t.Errorf("a failed `run` left %d runs behind", len(runs))
+	}
+}
+
+// waitStatus polls run.json until the run reaches status.
+func (e *rigEnv) waitStatus(id, status string) *state.Run {
+	e.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		r, err := state.Load(e.home, id)
+		if err == nil && r.Status == status {
+			return r
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatalf("run status %v, want %s (%v)", r, status, err)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+const twoShellSeats = `version: 1
+id: demo
+seats:
+  a: { runtime: shell, command: sh }
+  b: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
+  - { id: two, seat: b, objective: y }
+on_finish: { failure: destroy }
+`
+
+// An abort typed in one of the rig's own panes must not kill itself before it's done.
+func TestAbortFromInsideTheRig(t *testing.T) {
+	e := newRigEnv(t, twoShellSeats)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitFor(r.ID, "seat.up", 2)
+	if err := e.srv.Paste(r.Session, "b", tmux.Join([]string{e.bin, "abort", r.Short(), "--yes"})); err != nil {
+		t.Fatal(err)
+	}
+	e.waitFor(r.ID, "run.aborted", 1)
+	r = e.waitStatus(r.ID, state.Aborted)
+	if _, err := os.Stat(filepath.Join(state.Dir(e.home, r.ID), "worktrees", "a")); !os.IsNotExist(err) {
+		t.Errorf("on_finish.failure destroy kept the worktree: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for e.srv.HasSession(r.Session) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if e.srv.HasSession(r.Session) {
+		t.Error("the session outlived the abort")
+	}
+}
+
+// Ctrl-C in the engine window stops the whole rig instead of orphaning its seats.
+func TestEngineInterrupt(t *testing.T) {
+	e := newRigEnv(t, twoShellSeats)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitFor(r.ID, "seat.up", 2)
+	if err := e.srv.SendKeys(r.Session, "engine", "C-c"); err != nil {
+		t.Fatal(err)
+	}
+	r = e.waitStatus(r.ID, state.Aborted)
+	if r.Error != "engine interrupted" {
+		t.Errorf("error %q", r.Error)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for e.srv.HasSession(r.Session) && time.Now().Before(deadline) {
+		time.Sleep(100 * time.Millisecond)
+	}
+	if e.srv.HasSession(r.Session) {
+		t.Error("the session outlived the run")
+	}
+}
+
+func TestFormatDefault(t *testing.T) {
+	for in, want := range map[any]string{1234567.0: "1234567", 1.5: "1.5", "x": "x", true: "true"} {
+		if got := formatDefault(in); got != want {
+			t.Errorf("formatDefault(%v) = %q, want %q", in, got, want)
+		}
 	}
 }

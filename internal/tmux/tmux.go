@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -19,11 +20,11 @@ type Server struct {
 	Socket string
 }
 
-// Window says how to start a tmux window.
+// Window says how to start a tmux window. Its environment is set by Cmd itself (see EnvCmd):
+// `-e` needs tmux 3.2, and values on the tmux client's argv would show in `ps`.
 type Window struct {
 	Name string
 	Dir  string
-	Env  map[string]string
 	Cmd  string // a shell command line; empty starts the default shell
 }
 
@@ -66,13 +67,11 @@ func (s Server) HasSession(name string) bool {
 // NewSession starts a detached session whose first window is w. Panes stay open after their
 // command exits (remain-on-exit), so a crash leaves its last output on screen.
 func (s Server) NewSession(name string, w Window) error {
-	args := []string{"new-session", "-d", "-s", name, "-n", w.Name, "-x", "220", "-y", "50"}
-	args = append(args, windowArgs(w)...)
-	if _, err := s.run(args...); err != nil {
-		return err
-	}
+	// remain-on-exit is set in the same client call, before the window's command can exit.
 	// The server is laight's own, so a global window option touches nothing of the user's.
-	_, err := s.run("set-option", "-g", "-w", "remain-on-exit", "on")
+	args := []string{"start-server", ";", "set-option", "-g", "-w", "remain-on-exit", "on", ";",
+		"new-session", "-d", "-s", name, "-n", w.Name, "-x", "220", "-y", "50"}
+	_, err := s.run(append(args, windowArgs(w)...)...)
 	return err
 }
 
@@ -88,18 +87,54 @@ func windowArgs(w Window) []string {
 	if w.Dir != "" {
 		args = append(args, "-c", w.Dir)
 	}
-	keys := make([]string, 0, len(w.Env))
-	for k := range w.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		args = append(args, "-e", k+"="+w.Env[k])
-	}
 	if w.Cmd != "" {
 		args = append(args, w.Cmd)
 	}
 	return args
+}
+
+// EnvCmd returns a command line that exports the variables in envFile (written by WriteEnv),
+// deletes the file and then runs cmd (the user's shell when cmd is empty). It runs under sh,
+// whatever the user's default shell is.
+func EnvCmd(envFile, cmd string) string {
+	if cmd == "" {
+		cmd = `"${SHELL:-sh}"`
+	}
+	f := Quote(envFile)
+	return Join([]string{"sh", "-c", "set -a && . " + f + " && set +a && rm -f " + f + " && exec " + cmd})
+}
+
+// WriteEnv writes env as an sh script readable only by the user, for EnvCmd.
+func WriteEnv(file string, env map[string]string) error {
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s=%s\n", k, Quote(env[k]))
+	}
+	return os.WriteFile(file, []byte(b.String()), 0o600)
+}
+
+// CurrentWindow returns the name of the window of session that this process runs in, or "" when
+// it doesn't run inside that session of this server.
+func (s Server) CurrentWindow(session string) string {
+	pane, sock := os.Getenv("TMUX_PANE"), os.Getenv("TMUX")
+	sockPath, _, _ := strings.Cut(sock, ",")
+	if pane == "" || sockPath == "" || filepath.Base(sockPath) != s.Socket {
+		return ""
+	}
+	out, err := s.run("display-message", "-p", "-t", pane, "#{session_name}\t#{window_name}")
+	if err != nil {
+		return ""
+	}
+	sess, win, _ := strings.Cut(strings.TrimSpace(out), "\t")
+	if sess != session {
+		return ""
+	}
+	return win
 }
 
 // target is session:window, matched exactly.

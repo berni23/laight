@@ -73,7 +73,7 @@ func (g *Rig) Up(ctx context.Context, id string) error {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if s := r.Seats[name]; s != nil && s.Up && g.Tmux.HasWindow(r.Session, s.Window) {
+		if s := r.Seats[name]; s != nil && s.Up && g.Tmux.HasWindow(r.Session, s.Window) && !g.Tmux.PaneDead(r.Session, s.Window) {
 			continue
 		}
 		if err := g.seatUp(ctx, r, name); err != nil {
@@ -100,8 +100,16 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	}
 	runDir := state.Dir(g.Home, r.ID)
 
-	// Where the agent works.
+	// Where the agent works. A seat started before (a crash, an engine restart) keeps its
+	// session id, so the runtime can resume the conversation, and its setup record.
 	st := &state.Seat{Window: name}
+	resume := false
+	if prev := r.Seats[name]; prev != nil {
+		st.SetupDone = prev.SetupDone
+		if seat.Session != "fresh" {
+			st.SessionID, resume = prev.SessionID, prev.SessionID != ""
+		}
+	}
 	save := func() error {
 		_, err := state.Update(g.Home, r.ID, func(r *state.Run) error {
 			if r.Seats == nil {
@@ -116,19 +124,23 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	case "worktree":
 		st.Dir, st.Worktree = filepath.Join(runDir, "worktrees", name), true
 		if _, err := os.Stat(st.Dir); errors.Is(err, os.ErrNotExist) {
+			// Recorded before it exists, so an abort or a failure in between still finds it.
+			if err := save(); err != nil {
+				return err
+			}
 			g.logf("%s: worktree at %s (%s)", name, st.Dir, r.Base)
 			if err := git(ctx, r.Repo, "worktree", "add", "--detach", st.Dir, r.Base); err != nil {
 				return err
 			}
-			// Recorded before setup, so a failing setup still leaves it to on_finish.
-			if err := save(); err != nil {
+		}
+		if seat.Setup != "" && !st.SetupDone {
+			g.logf("%s: setup: %s", name, seat.Setup)
+			if err := setup(ctx, st.Dir, seat.Setup, filepath.Join(runDir, "seats", name+".setup.log")); err != nil {
 				return err
 			}
-			if seat.Setup != "" {
-				g.logf("%s: setup: %s", name, seat.Setup)
-				if err := setup(ctx, st.Dir, seat.Setup, filepath.Join(runDir, "seats", name+".setup.log")); err != nil {
-					return err
-				}
+			st.SetupDone = true
+			if err := save(); err != nil {
+				return err
 			}
 		}
 	case "repo":
@@ -149,7 +161,10 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 		return err
 	}
 	env["LAIGHT_RUN"], env["LAIGHT_SEAT"], env["LAIGHT_HOME"] = r.ID, name, g.Home
-	l := runtime.Launch{Name: r.Short() + "/" + name, Seat: seat, SessionID: uuid()}
+	if st.SessionID == "" {
+		st.SessionID = uuid()
+	}
+	l := runtime.Launch{Name: r.Short() + "/" + name, Seat: seat, SessionID: st.SessionID, Resume: resume}
 	if seat.Guidance != "" {
 		l.Guidance = filepath.Join(r.SpecDir, filepath.FromSlash(seat.Guidance))
 	}
@@ -159,12 +174,16 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 			return err
 		}
 	}
-	st.SessionID = l.SessionID
 	ready := filepath.Join(runDir, "seats", name+".ready")
 	os.Remove(ready)
 
 	g.Tmux.KillWindow(r.Session, name) // a dead pane left from a crash
-	if err := g.Tmux.NewWindow(r.Session, tmux.Window{Name: name, Dir: st.Dir, Env: env, Cmd: rt.Command(l)}); err != nil {
+	envFile := filepath.Join(runDir, "seats", name+".env")
+	if err := tmux.WriteEnv(envFile, env); err != nil {
+		return err
+	}
+	if err := g.Tmux.NewWindow(r.Session, tmux.Window{Name: name, Dir: st.Dir, Cmd: tmux.EnvCmd(envFile, rt.Command(l))}); err != nil {
+		os.Remove(envFile)
 		return err
 	}
 	if err := g.Tmux.PipeTo(r.Session, name, filepath.Join(runDir, "seats", name+".log")); err != nil {
@@ -190,6 +209,10 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 // user's call.
 func (g *Rig) waitReady(ctx context.Context, session, window string, rt runtime.Runtime, readyFile string, ownDir bool) error {
 	deadline := time.Now().Add(ReadyTimeout)
+	// After a key, wait for the screen to change before pressing another: a prompt that
+	// repaints slowly would otherwise get extra keys, and a stray Enter would reach the agent.
+	var sentOn string
+	var sentAt time.Time
 	for {
 		if g.Tmux.PaneDead(session, window) {
 			screen, _ := g.Tmux.Capture(session, window)
@@ -205,13 +228,15 @@ func (g *Rig) waitReady(ctx context.Context, session, window string, rt runtime.
 		if err != nil {
 			return err
 		}
-		if key := runtime.Choose(screen, rt.Accept()); key != "" {
+		settled := screen != sentOn || time.Since(sentAt) > 3*time.Second
+		if key := runtime.Choose(screen, rt.Accept()); key != "" && settled {
 			if !ownDir {
 				return fmt.Errorf("waiting on a launch prompt; laight only answers it in its own worktrees, so answer it once with `laight attach`:\n%s", tail(screen, 15))
 			}
 			if err := g.Tmux.SendKeys(session, window, key); err != nil {
 				return err
 			}
+			sentOn, sentAt = screen, time.Now()
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("not ready after %s:\n%s", ReadyTimeout, tail(screen, 15))
@@ -247,24 +272,26 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	return env, nil
 }
 
-// Down ends the run: it stops the seats, applies on_finish to the worktrees, records the final
-// status and stops the tmux session. status is Succeeded, Failed or Aborted. killFirst stops the
-// whole session before anything else, which `laight abort` does so the engine can't race it;
-// the engine itself passes false and dies last, with the session.
-func (g *Rig) Down(id, status, reason string, killFirst bool) error {
+// Down ends the run: it stops the engine (unless Down runs in it) and the seats, applies
+// on_finish to the worktrees, records the final status and stops the tmux session last. The
+// window Down itself runs in (the engine, or a seat where someone typed `laight abort`) is
+// spared until then, so Down always gets to finish. status is Succeeded, Failed or Aborted.
+func (g *Rig) Down(id, status, reason string) error {
 	r, err := state.Load(g.Home, id)
 	if err != nil {
 		return err
 	}
-	if killFirst {
-		if err := g.Tmux.KillSession(r.Session); err != nil {
-			return err
+	self := g.Tmux.CurrentWindow(r.Session)
+	windows := []string{EngineWindow} // first, so it can't race the teardown
+	for _, s := range r.Seats {
+		windows = append(windows, s.Window)
+	}
+	for _, w := range windows {
+		if w == self {
+			continue
 		}
-	} else {
-		for name, s := range r.Seats {
-			if err := g.Tmux.KillWindow(r.Session, s.Window); err != nil {
-				g.logf("%s: %v", name, err)
-			}
+		if err := g.Tmux.KillWindow(r.Session, w); err != nil {
+			g.logf("%s: %v", w, err)
 		}
 	}
 	policy := r.Spec.OnFinish.Failure

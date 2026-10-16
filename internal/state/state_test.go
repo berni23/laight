@@ -26,6 +26,12 @@ func TestNewID(t *testing.T) {
 	}
 }
 
+func TestShortOfShortID(t *testing.T) {
+	if got := Short("AB12"); got != "ab12" {
+		t.Errorf("Short(AB12) = %q", got)
+	}
+}
+
 func TestCreateUpdateFind(t *testing.T) {
 	home := t.TempDir()
 	mk := func(id, repo, status string) {
