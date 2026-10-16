@@ -186,7 +186,7 @@ func (s Server) PaneDead(session, window string) bool {
 	out, err := s.run("display-message", "-p", "-t", target(session, window), "#{pane_dead}")
 	return err == nil && strings.TrimSpace(out) == "1"
 }
-yes 
+
 // ErrGone is returned by Alive when the window, its session or the whole server no longer exists.
 var ErrGone = errors.New("window gone")
 
