@@ -8,6 +8,8 @@ watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); next is M2, the engine loop.
+**Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
+last session finished and what to pick up next.
 
 The four hard requirements, in order of priority. Anything that compromises one is wrong:
 
@@ -497,5 +499,12 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
   in the PR.
 - Every change: `make check` passes (gofmt, vet, staticcheck, tests). User-visible changes get a
   line in CHANGELOG.md under *Unreleased*. See CONTRIBUTING.md.
+- **Every commit passes the baton.** `baton.md` is the session handoff, in three sections only:
+  done last session, do this next, waiting on the user. The `baton-check` hook
+  (`.claude/hooks/baton-check.sh`) blocks a `git commit` that doesn't include it; `/baton` says what
+  to write, `/pickup` reads it. It never holds merge/push state or a finding's only copy (that goes
+  on an issue or into this spec). Escape hatch for a commit that teaches the next session nothing:
+  `[no-baton]` in the command, and say so. Reviews: `/cr` posts a two-reviewer review, `/check-cr`
+  answers it; their local scratch is `scratch.review` (gitignored).
 - Maintainer-only local notes (paths, private reference repos) live in `CLAUDE.local.md`, which is
   gitignored. Read it if it exists; never commit it.
