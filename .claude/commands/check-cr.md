@@ -151,5 +151,5 @@ filed as an issue, and what is still open — noting for each its tag (`[A+B]`, 
 likely to be waiting on, because several are questions addressed to them. For each: answered (with
 the answer), fixed, filed, or still needs them. Then say whether the file is spent; offer to rewrite
 it with whatever is genuinely still open, and leave it alone otherwise — it is the next `/cr` run's
-to overwrite. Then stop — **don't commit and don't push unless asked**; if you are asked, `baton.md`
+to overwrite. Then commit and push the fixes to the PR's branch (`CLAUDE.md` §11); `baton.md`
 comes with the commit (the `baton-check` hook enforces it).

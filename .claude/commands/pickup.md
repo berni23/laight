@@ -85,8 +85,8 @@ and get on with it; don't narrate options you are not going to take.
   `git switch -c <issue#>-<short-slug>` (e.g. `6-engine-loop`), or `m2-<slug>` for a milestone
   item with no issue. Uncommitted changes in the tree move with the switch, so this also rescues
   work a previous session left on `main`. Already on the item's branch (an open PR, `/check-cr`):
-  stay on it. On some other item's branch: stop and ask. Creating the branch is local and is not a
-  commit; still don't commit or push unless asked.
+  stay on it. On some other item's branch: stop and ask. Commit, push the branch and open
+  its PR when the work is verified (`CLAUDE.md` §11); no need to ask.
 - **The four hard requirements beat features.** A change that needs a daemon, a server, a database,
   a new command or a required flag is wrong as shaped — say so before building it.
 - **Every bug fix gets a regression test, verified to fail before the fix.** Mutate the fix away,
@@ -119,7 +119,7 @@ For anything that drives tmux or an agent, also do a real run (`./bin/laight run
 ## 9. Hand back
 
 Report what you did, what you verified — naming the commands you actually ran — and what is left.
-**Don't commit and don't push unless asked.**
+Commit, push and open the PR without waiting to be asked (`CLAUDE.md` §11).
 
-When you are asked to commit, the loop closes where it opened: `baton.md` goes in with the change,
+When you commit, the loop closes where it opened: `baton.md` goes in with the change,
 the `baton-check` hook enforces it, and **`/baton` says what to write.**
