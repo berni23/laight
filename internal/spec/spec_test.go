@@ -173,6 +173,26 @@ func TestLoadProblems(t *testing.T) {
 			return strings.Replace(s, "Review {{ .steps", `Review {{ secret "gh" }} {{ .steps`, 1)
 		}, "`secret` is only allowed in `env`", 0, false},
 		{"guidance outside .laight", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "../README.md", 1) }, "must be a path inside .laight/", 0, false},
+		{"env on an agent step", func(s string) string {
+			return strings.Replace(s, "objective: Verify every finding.\n", "objective: Verify every finding.\n    env: { X: y }\n", 1)
+		}, "`env` is only for shell steps", 0, false},
+		{"env on a gate", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    env: { X: y }\n", 1) }, "`env` is only for shell steps", 0, false},
+		{"secret in shell env", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    env: { GH_TOKEN: '{{ secret \"gh\" }}' }\n", 1)
+		}, "", 0, false},
+		{"secret in run", func(s string) string { return strings.Replace(s, "--squash", `--squash {{ secret "gh" }}`, 1) }, "`secret` is only allowed in `env`", 0, false},
+		{"shell exit not allowed", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"3\": retry }\n    allowed_exits: [ok]\n", 1)
+		}, `exit "retry" is not in allowed_exits`, 0, false},
+		{"shell exit code with a leading zero", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"03\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
+		}, `'03' does not match pattern`, 0, false},
+		{"shell exit code out of range", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"256\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
+		}, `'256' does not match pattern`, 0, false},
+		{"shell exits default allowed", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"3\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
+		}, "", 0, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

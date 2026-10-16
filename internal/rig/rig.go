@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/berni23/laight/internal/proc"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -268,7 +269,7 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	env := map[string]string{}
 	for _, m := range []spec.StringMap{r.Spec.Env, seat.Env} {
 		for k, v := range m {
-			out, err := spec.RenderWithSecrets("env "+k, v, data)
+			out, _, err := spec.RenderWithSecrets("env "+k, v, data)
 			if err != nil {
 				return nil, fmt.Errorf("env %s: %w", k, err)
 			}
@@ -299,6 +300,11 @@ func (g *Rig) Down(id, status, reason string) error {
 		if err := g.Tmux.KillWindow(r.Session, w); err != nil {
 			g.logf("%s: %v", w, err)
 		}
+	}
+	// A shell step's command has its own process group, which closing the engine's window
+	// doesn't reach. A live engine stops it itself; this is for one that died.
+	for _, h := range r.Active {
+		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
 	policy := r.Spec.OnFinish.Failure
 	if status == state.Succeeded {

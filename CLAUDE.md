@@ -8,7 +8,7 @@ watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
-loop runs agent steps (`laight done`, routing, `max_hops`); shell steps, resume, the inbox and
+loop runs agent and shell steps (`laight done`, routing, `max_hops`); resume, the inbox and
 `needs`/`matrix` are next.
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
@@ -241,6 +241,17 @@ steps:
 
 **Step types:** `agent` (default when `seat` is set), `shell` (`run:`; exit code 0 → `ok`, else
 `failed`, unless `exits:` maps codes), `gate` (a human decision, always via the inbox).
+A **shell step** has no seat and never waits for one: the engine runs `sh -c '<run>'` in the
+repo's main checkout, with the workflow's `env` plus the step's own `env` (and `LAIGHT_RUN`,
+`LAIGHT_HOME`, `LAIGHT_STEP`; never `LAIGHT_SEAT` or the engine's `LAIGHT_SECRET_*`), in a session
+of its own: no terminal, so a command that prompts fails instead of hanging the run. When `sh`
+exits, whatever it left running is stopped (SIGTERM, then SIGKILL after 5s); so is the whole
+command when the run ends, by any branch, an abort, or an abort after the engine died (its
+process group is kept on the hop in run.json). Its output goes to `out/<step>-<hop>.log`, with
+the secret values its env read replaced by `***` (exact values only: an encoded copy isn't
+caught); its exit code is `.steps.<id>.out.code`.
+**A step's `env` exists only on shell steps** (#16): an agent's env is its seat's, fixed when the
+seat starts. Secrets reach a shell command only through `env`, never spliced into `run:` (§12.4).
 **Exits:** any identifiers; `allowed_exits` defaults to `[handoff]` for agent steps; `failed` is
 implicit on every step and can be routed. **Outputs:**
 `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values allowed, numbers kept
@@ -264,7 +275,8 @@ on a real issue.
   runs/<run-id>/
     run.json                          # spec snapshot, inputs, repo, status, current step, hops
     events.jsonl                      # append-only, the source of truth for observability
-    out/<step>-<hop>.json             # what `laight done` wrote
+    out/<step>-<hop>.json             # what `laight done` wrote (or the engine, for shell steps)
+    out/<step>-<hop>.log              # a shell step's output, known secrets redacted
     seats/<seat>.log                  # tmux pipe-pane of the seat
     worktrees/<seat>/                 # or under the repo's parent dir, configurable
   inbox/<item-id>.json                # one file per pending decision (the `files` queue)
@@ -494,8 +506,8 @@ Installing must be one command, with no runtime to install first.
 
 For contributors and for coding agents working here (AGENTS.md points to this file):
 
-- **Agents: don't commit or push unless the person you work for asks.** Never kill, merge, push or
-  abort anything outside a throwaway test without asking. Never touch the user's own tmux sessions
+- **Agents may commit, push the item's branch and open its PR without being asked.** Never kill,
+  merge or abort anything outside a throwaway test without asking. Never touch the user's own tmux sessions
   (laight uses its own server, `tmux -L laight`; tests use a throwaway one).
 - **Work never happens on `main`.** Before the first edit for an item, switch to its own branch,
   `<issue#>-<short-slug>` (or `m2-<slug>` for a milestone item with no issue); `/pickup` does this.
@@ -625,7 +637,7 @@ transcript. Since #14, `{{ secret }}` renders only into `env`.
   skipped by default.
 
 **For laight:** keep the current rule and extend it the way Archon does. Secrets reach an agent or
-a shell step only as env vars (seat `env`, or a shell step's `env`, if #16 settles it that way). A
+a shell step only as env vars (seat `env`, or a shell step's `env`, as #16 settled it). A
 secret never goes into a rendered prompt or command line, so #7 should not allow `secret` in
 `run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details.
 The values laight knows (the secrets it rendered into seat env) can also be stripped from the pane

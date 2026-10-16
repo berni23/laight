@@ -136,6 +136,11 @@ func (c *checker) steps() {
 				c.add(Error, at(), "a shell step needs `run`")
 			}
 			c.template(at("run"), st.Run, st, false)
+			for _, code := range sortedKeys(st.Exits) {
+				if !st.Allows(st.Exits[code]) {
+					c.add(Error, at("exits", code), "exit %q is not in allowed_exits %v", st.Exits[code], st.AllowedExits)
+				}
+			}
 		case TypeGate:
 			if st.Ask == "" {
 				c.add(Error, at(), "a gate step needs `ask`")
@@ -167,6 +172,9 @@ func (c *checker) steps() {
 			if s, ok := st.Matrix[k].(string); ok {
 				c.template(at("matrix", k), s, st, false)
 			}
+		}
+		if len(st.Env) > 0 && st.Type != TypeShell {
+			c.add(Error, at("env"), "`env` is only for shell steps: an agent's env is its seat's (seats.<name>.env), fixed when it starts")
 		}
 		for _, k := range sortedKeys(st.Env) {
 			c.template(at("env", k), st.Env[k], st, true)
