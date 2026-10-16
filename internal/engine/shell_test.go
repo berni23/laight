@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/berni23/laight/internal/spec"
@@ -16,6 +17,27 @@ func TestRedactor(t *testing.T) {
 	r.Flush()
 	if want := "a *** b\nline ***en\nno newline ***"; b.String() != want {
 		t.Errorf("got %q, want %q", b.String(), want)
+	}
+}
+
+// A secret that spans a line break, or the cut the redactor makes in a long line, is still caught.
+func TestRedactorSpans(t *testing.T) {
+	var b bytes.Buffer
+	r := &redactor{w: &b, secrets: []string{"line1\nline2"}}
+	r.Write([]byte("a line1\n"))
+	r.Write([]byte("line2 b\n"))
+	r.Flush()
+	if want := "a *** b\n"; b.String() != want {
+		t.Errorf("multi-line: got %q, want %q", b.String(), want)
+	}
+
+	b.Reset()
+	r = &redactor{w: &b, secrets: []string{"s3cret"}}
+	long := strings.Repeat("x", 70000) + "s3cret" + strings.Repeat("y", 32765) // no newline
+	r.Write([]byte(long))
+	r.Flush()
+	if got := b.String(); strings.Contains(got, "s3c") || got != strings.Replace(long, "s3cret", "***", 1) {
+		t.Errorf("long line: secret not redacted (%d bytes out)", len(got))
 	}
 }
 

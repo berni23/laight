@@ -38,10 +38,13 @@ All notable changes to laight are documented here. The format follows
 - Shell steps (`run:`): the engine runs the command in the repo, with the workflow's and the
   step's `env` (the only way a secret reaches it), and routes on its exit code (0 → `ok`, else
   `failed`, or what `exits:` maps). Output goes to `out/<step>-<hop>.log` in the run folder, with
-  the secrets its env read replaced by `***`; the code is `.steps.<id>.out.code`. Stopping the
-  run stops the command and whatever it started.
-- `validate` rejects `env` on agent steps and gates (an agent's env is its seat's), and an
-  `exits:` name that isn't in the step's `allowed_exits`.
+  the secrets its env read replaced by `***`; the code is `.steps.<id>.out.code`. The command
+  runs without a terminal and doesn't inherit the engine's `LAIGHT_SECRET_*`. Whatever it leaves
+  running is stopped when it exits, and the run ending (any branch failing, an abort, or an abort
+  after the engine died) stops the command and whatever it started.
+- `validate` rejects `env` on agent steps and gates (an agent's env is its seat's), an
+  `exits:` name that isn't in the step's `allowed_exits`, and an `exits:` code that can never
+  match (`"03"`, `"256"`).
 - Templates see `.run.id`, `.run.project`, `.run.workflow` and `.steps.<id>.exit`.
   `{{ secret }}` is allowed only in `env`: `validate` rejects it in objectives and other text that
   can reach a pane (and so its log).

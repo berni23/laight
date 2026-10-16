@@ -15,9 +15,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/berni23/laight/internal/proc"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
 )
+
+// stopGrace is how long a stopped command gets between SIGTERM and SIGKILL.
+const stopGrace = 5 * time.Second
 
 // ShellLog is where a shell step's output goes, relative to the run's folder.
 func ShellLog(step string, hop int) string {
@@ -59,35 +63,65 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	}
 	fmt.Fprintf(f, "$ %s\n", command) // rendered without secrets, so safe to keep
 	out := &redactor{w: f, secrets: secrets}
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir, cmd.Stdout, cmd.Stderr = r.Repo, out, out
-	cmd.Env = shellEnv(os.Environ(), env)
-	// Its own process group, so stopping the run stops whatever the command started too.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	cmd.WaitDelay = 5 * time.Second
-	if err := cmd.Start(); err != nil {
+	// A pipe of our own, so Wait returns when sh exits even if something it left behind still
+	// holds the output open.
+	pr, pw, err := os.Pipe()
+	if err != nil {
 		f.Close()
 		return err
 	}
+
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir, cmd.Stdout, cmd.Stderr = r.Repo, pw, pw
+	cmd.Env = shellEnv(os.Environ(), env)
+	// Its own session: no terminal for a prompt to stop on, and a process group that stopping
+	// the step stops whole.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = stopGrace
+	err = cmd.Start()
+	pw.Close()
+	if err != nil {
+		pr.Close()
+		f.Close()
+		return err
+	}
+	pgid := cmd.Process.Pid
+	// Recorded so an abort can stop the command even if this engine has died by then.
+	if _, err := state.Update(e.Home, r.ID, func(r *state.Run) error {
+		for _, a := range r.Active {
+			if a.Step == h.Step && a.N == h.N {
+				a.Pgid = pgid
+			}
+		}
+		return nil
+	}); err != nil {
+		e.logf("warning: %s: %v", st.ID, err)
+	}
+	copied := make(chan struct{})
+	go func() {
+		io.Copy(out, pr)
+		close(copied)
+	}()
 	e.logf("▶ %s (shell, hop %d): %s", st.ID, h.N, logName)
 	e.shells.Add(1)
 	go func() {
 		defer e.shells.Done()
 		err := cmd.Wait()
+		proc.StopGroup(pgid, stopGrace) // what the command left behind, which closes the pipe
+		select {
+		case <-copied:
+		case <-time.After(stopGrace): // held open by something that left the group
+			pr.Close()
+			<-copied
+		}
+		pr.Close()
 		out.Flush()
 		f.Close()
 		if ctx.Err() != nil {
 			return // the run is stopping: the command was killed, not finished
 		}
-		code := -1 // killed by a signal
-		var exitErr *exec.ExitError
-		if err == nil {
-			code = 0
-		} else if errors.As(err, &exitErr) {
-			code = exitErr.ExitCode()
-		}
+		code := cmd.ProcessState.ExitCode() // -1 when killed by a signal
 		d := state.Done{Step: st.ID, Hop: h.N, Exit: shellExit(st, code), Out: map[string]any{"code": code}, Engine: true}
 		if d.Exit == spec.ExitFailed {
 			d.Out["error"] = fmt.Sprintf("exit code %d, output in %s", code, logName)
@@ -115,12 +149,13 @@ func shellExit(st *spec.Step, code int) string {
 }
 
 // shellEnv is base with env laid over it, minus LAIGHT_SEAT: a shell step is not a seat, so a
-// `laight done` inside it must not finish some seat's step.
+// `laight done` inside it must not finish some seat's step. Minus LAIGHT_SECRET_* too: a secret
+// reaches the command only through env, where its value is known and redacted.
 func shellEnv(base []string, env map[string]string) []string {
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if _, over := env[k]; !over && k != "LAIGHT_SEAT" {
+		if _, over := env[k]; !over && k != "LAIGHT_SEAT" && !strings.HasPrefix(k, "LAIGHT_SECRET_") {
 			out = append(out, kv)
 		}
 	}
@@ -147,29 +182,43 @@ func (e *Engine) logTail(file string, n int) {
 	}
 }
 
-// redactor writes to w with every secret replaced by ***. It holds back a partial line (up to
-// a limit) so a secret split across two writes is still caught.
+// redactor writes to w with every secret replaced by ***. It holds back as many bytes as the
+// longest secret less one, so a secret split across writes, or across lines, is still caught.
 type redactor struct {
 	w       io.Writer
 	secrets []string
 	buf     []byte
 }
 
-const redactHold = 64 << 10
-
 func (r *redactor) Write(p []byte) (int, error) {
 	r.buf = append(r.buf, p...)
-	cut := bytes.LastIndexByte(r.buf, '\n') + 1
-	if cut == 0 && len(r.buf) > redactHold {
-		cut = len(r.buf) - redactHold/2
-	}
-	if cut > 0 {
+	if cut := r.cut(); cut > 0 {
 		if _, err := r.w.Write(r.redact(r.buf[:cut])); err != nil {
 			return 0, err
 		}
 		r.buf = append(r.buf[:0], r.buf[cut:]...)
 	}
 	return len(p), nil
+}
+
+// cut is how much of buf can be written now: all but a tail where a secret may still be
+// arriving, and never through the middle of one.
+func (r *redactor) cut() int {
+	hold := 0
+	for _, s := range r.secrets {
+		hold = max(hold, len(s)-1)
+	}
+	cut := len(r.buf) - hold
+	for moved := true; moved && cut > 0; {
+		moved = false
+		for _, s := range r.secrets {
+			lo := max(0, cut-len(s)+1) // a match starting in [lo, cut) crosses the cut
+			if i := bytes.Index(r.buf[lo:min(len(r.buf), cut+len(s)-1)], []byte(s)); i >= 0 && lo+i < cut {
+				cut, moved = lo+i, true
+			}
+		}
+	}
+	return cut
 }
 
 // Flush writes what is held back.

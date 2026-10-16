@@ -184,6 +184,12 @@ func TestLoadProblems(t *testing.T) {
 		{"shell exit not allowed", func(s string) string {
 			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"3\": retry }\n    allowed_exits: [ok]\n", 1)
 		}, `exit "retry" is not in allowed_exits`, 0, false},
+		{"shell exit code with a leading zero", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"03\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
+		}, `'03' does not match pattern`, 0, false},
+		{"shell exit code out of range", func(s string) string {
+			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"256\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
+		}, `'256' does not match pattern`, 0, false},
 		{"shell exits default allowed", func(s string) string {
 			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"3\": retry }\n    next_hop: { on: { retry: merge, ok: end } }\n", 1)
 		}, "", 0, false},

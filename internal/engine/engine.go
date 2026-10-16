@@ -63,10 +63,15 @@ func Supported(w *spec.Workflow) error {
 
 // Run drives the run until it finishes and returns its final status (state.Succeeded or
 // state.Failed) and why it failed. The caller tears the rig down. When ctx ends first, it
-// returns ctx's error, once the shell steps it started are stopped: they run in their own
-// process group, which closing the engine's window doesn't reach.
+// returns ctx's error. Either way it returns once the shell steps it started are stopped: they
+// run in their own process group, which closing the engine's window doesn't reach, and one
+// still running when another branch ends the run must not hold up the teardown.
 func (e *Engine) Run(ctx context.Context, id string) (status, reason string, err error) {
-	defer e.shells.Wait()
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		e.shells.Wait()
+	}()
 	for {
 		status, reason, err := e.tick(ctx, id)
 		if err != nil || status != "" {

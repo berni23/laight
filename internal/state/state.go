@@ -59,6 +59,7 @@ type Hop struct {
 	Seat    string    `json:"seat,omitempty"`
 	N       int       `json:"hop"`
 	Started time.Time `json:"started"`
+	Pgid    int       `json:"pgid,omitempty"` // a shell step's process group, once it started
 }
 
 // StepResult is how a step's latest hop finished: what templates see as .steps.<id>.

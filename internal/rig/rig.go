@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/berni23/laight/internal/proc"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -299,6 +300,11 @@ func (g *Rig) Down(id, status, reason string) error {
 		if err := g.Tmux.KillWindow(r.Session, w); err != nil {
 			g.logf("%s: %v", w, err)
 		}
+	}
+	// A shell step's command has its own process group, which closing the engine's window
+	// doesn't reach. A live engine stops it itself; this is for one that died.
+	for _, h := range r.Active {
+		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
 	policy := r.Spec.OnFinish.Failure
 	if status == state.Succeeded {
