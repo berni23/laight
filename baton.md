@@ -16,6 +16,9 @@ that.
 **M1 — done.** `run`, `attach`, `abort`: rigs spin up and tear down.
 **Filed** — M2 split into #6–#12 (GitHub milestone `M2`), one issue per item of §10.
 **Added** — the baton workflow: `/baton`, `/pickup`, `/cr`, `/check-cr`, the `code-reviewer` agent.
+**Done** — the #5 review fixed on `m1-rig`: a reserved `engine` seat name, `laight abort` safe inside
+the rig, crashed seats relaunched (Claude resumed), setup retried, Ctrl-C stops the rig, no
+`new-session -e`. Not yet checked: tmux 3.0/3.1, and resume against a real Claude seat.
 
 ---
 

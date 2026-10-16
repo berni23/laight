@@ -135,11 +135,23 @@ func (w *Workflow) Step(id string) *Step {
 // Duration is a time.Duration written as a Go duration string ("90m").
 type Duration time.Duration
 
+// MarshalJSON implements json.Marshaler, so a run's spec snapshot reads back the same.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	if d == 0 {
+		return []byte(`""`), nil
+	}
+	return json.Marshal(time.Duration(d).String())
+}
+
 // UnmarshalJSON implements json.Unmarshaler.
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
 		return err
+	}
+	if s == "" {
+		*d = 0
+		return nil
 	}
 	v, err := time.ParseDuration(s)
 	if err != nil {

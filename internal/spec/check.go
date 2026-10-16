@@ -64,6 +64,9 @@ func (c *checker) seats() {
 	for _, name := range sortedKeys(c.w.Seats) {
 		s := c.w.Seats[name]
 		at := func(field string) []string { return []string{"seats", name, field} }
+		if name == "engine" {
+			c.add(Error, []string{"seats", name}, "seat name %q is reserved: window 0 of every rig is the engine", name)
+		}
 		if s.Runtime == "shell" && s.Command == "" {
 			c.add(Error, at("runtime"), "runtime shell needs a `command`")
 		}

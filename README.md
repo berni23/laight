@@ -6,9 +6,10 @@
 **Run teams of coding agents in tmux from two small YAML files, and answer everything they need
 from you in one place.**
 
-> **Status: design phase.** The specification is in [CLAUDE.md](CLAUDE.md); the code is just
-> starting (see the [milestones](CLAUDE.md#10-milestones)). Feedback on the design is very welcome:
-> open an [issue](https://github.com/berni23/laight/issues) or a
+> **Status: early.** `init`, `validate`, `run`, `attach` and `abort` work: a run spins up its rig
+> of agents in tmux and tears it down, but steps don't run yet (that's M2, see the
+> [milestones](CLAUDE.md#10-milestones)). The specification is in [CLAUDE.md](CLAUDE.md).
+> Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).
 
 ## Why
