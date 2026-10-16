@@ -169,6 +169,9 @@ func TestLoadProblems(t *testing.T) {
 		{"seat named engine", func(s string) string {
 			return strings.Replace(strings.ReplaceAll(s, "seat: impl\n", "seat: engine\n"), "  impl:\n", "  engine:\n", 1)
 		}, `seat name "engine" is reserved`, 0, false},
+		{"secret in an objective", func(s string) string {
+			return strings.Replace(s, "Review {{ .steps", `Review {{ secret "gh" }} {{ .steps`, 1)
+		}, "`secret` is only allowed in `env`", 0, false},
 		{"guidance outside .laight", func(s string) string { return strings.Replace(s, "guidance/implementer.md", "../README.md", 1) }, "must be a path inside .laight/", 0, false},
 	}
 	for _, tt := range tests {

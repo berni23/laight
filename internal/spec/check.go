@@ -50,9 +50,9 @@ func (c *checker) workflow() {
 	if stem := strings.TrimSuffix(filepath.Base(c.w.File), filepath.Ext(c.w.File)); stem != c.w.ID {
 		c.add(Error, []string{"id"}, "id %q must match the file name %q (`laight run %s` finds the workflow by its file)", c.w.ID, stem, stem)
 	}
-	c.template([]string{"summary"}, c.w.Summary, nil)
+	c.template([]string{"summary"}, c.w.Summary, nil, false)
 	for _, k := range sortedKeys(c.w.Env) {
-		c.template([]string{"env", k}, c.w.Env[k], nil)
+		c.template([]string{"env", k}, c.w.Env[k], nil, true)
 	}
 }
 
@@ -90,7 +90,7 @@ func (c *checker) seats() {
 			c.add(Warning, at("setup"), "setup only runs in a new worktree (cwd: worktree)")
 		}
 		for _, k := range sortedKeys(s.Env) {
-			c.template([]string{"seats", name, "env", k}, s.Env[k], nil)
+			c.template([]string{"seats", name, "env", k}, s.Env[k], nil, true)
 		}
 		if !used[name] {
 			c.add(Warning, []string{"seats", name}, "no step uses seat %q", name)
@@ -130,17 +130,17 @@ func (c *checker) steps() {
 			if st.Objective == "" {
 				c.add(Error, at(), "an agent step needs an `objective`")
 			}
-			c.template(at("objective"), st.Objective, st)
+			c.template(at("objective"), st.Objective, st, false)
 		case TypeShell:
 			if st.Run == "" {
 				c.add(Error, at(), "a shell step needs `run`")
 			}
-			c.template(at("run"), st.Run, st)
+			c.template(at("run"), st.Run, st, false)
 		case TypeGate:
 			if st.Ask == "" {
 				c.add(Error, at(), "a gate step needs `ask`")
 			}
-			c.template(at("ask"), st.Ask, st)
+			c.template(at("ask"), st.Ask, st, false)
 		}
 		if contains(st.AllowedExits, ExitFailed) {
 			c.add(Warning, at("allowed_exits"), "`failed` is always allowed; no need to list it")
@@ -165,11 +165,11 @@ func (c *checker) steps() {
 		}
 		for _, k := range sortedKeys(st.Matrix) {
 			if s, ok := st.Matrix[k].(string); ok {
-				c.template(at("matrix", k), s, st)
+				c.template(at("matrix", k), s, st, false)
 			}
 		}
 		for _, k := range sortedKeys(st.Env) {
-			c.template(at("env", k), st.Env[k], st)
+			c.template(at("env", k), st.Env[k], st, true)
 		}
 	}
 }
@@ -300,8 +300,9 @@ func needsCycle(steps []*Step) []string {
 
 // template parses text as a Go template and checks every field it reads against the context
 // templates get (CLAUDE.md section 3): .inputs, .steps, .matrix, .base, .run. step is nil for
-// workflow-level templates.
-func (c *checker) template(path []string, text string, step *Step) {
+// workflow-level templates. secrets says whether `secret` may be called: only in env, since
+// everything else can be pasted into a pane, and panes are logged.
+func (c *checker) template(path []string, text string, step *Step, secrets bool) {
 	if !strings.Contains(text, "{{") {
 		return
 	}
@@ -313,6 +314,12 @@ func (c *checker) template(path []string, text string, step *Step) {
 		}
 		c.add(Error, path, "bad template: %s", msg)
 		return
+	}
+	if !secrets {
+		if _, err := template.New("").Funcs(template.FuncMap{}).Parse(text); err != nil && strings.Contains(err.Error(), `function "secret" not defined`) {
+			c.add(Error, path, "`secret` is only allowed in `env`: this text can reach an agent's pane, and panes are logged")
+			return
+		}
 	}
 	walkTemplate(t.Root, func(f []string) { c.field(path, f, step) }, true)
 }

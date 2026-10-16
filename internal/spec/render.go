@@ -13,13 +13,24 @@ import (
 )
 
 // Render executes a workflow template against data (.inputs, .steps, .matrix, .base, .run).
-// `secret "x"` reads $LAIGHT_SECRET_X, then the OS keychain (service "laight", account "x").
-// A missing key is an error, never an empty string.
+// A missing key is an error, never an empty string. It has no `secret`: what it renders may be
+// pasted into a pane, and panes are logged.
 func Render(name, text string, data map[string]any) (string, error) {
+	return render(name, text, data, template.FuncMap{})
+}
+
+// RenderWithSecrets is Render plus `secret "x"`, which reads $LAIGHT_SECRET_X, then the OS
+// keychain (service "laight", account "x"). Only for values that never reach a pane or a log:
+// env (see SecretsAllowed).
+func RenderWithSecrets(name, text string, data map[string]any) (string, error) {
+	return render(name, text, data, template.FuncMap{"secret": Secret})
+}
+
+func render(name, text string, data map[string]any, funcs template.FuncMap) (string, error) {
 	if !strings.Contains(text, "{{") {
 		return text, nil
 	}
-	t, err := template.New(name).Option("missingkey=error").Funcs(template.FuncMap{"secret": Secret}).Parse(text)
+	t, err := template.New(name).Option("missingkey=error").Funcs(funcs).Parse(text)
 	if err != nil {
 		return "", err
 	}

@@ -1,6 +1,8 @@
 package state
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -99,5 +101,29 @@ func TestEventsAndRegister(t *testing.T) {
 	}
 	if s := Socket(home); s == "laight" || s == Socket(t.TempDir()) {
 		t.Errorf("Socket(%s) = %s: want a name of its own", home, s)
+	}
+}
+
+// Many writers finishing the same hop at once: exactly one wins, and the file is its write.
+func TestWriteDoneFirstWins(t *testing.T) {
+	home, id := t.TempDir(), "RUN"
+	errs := make(chan error, 20)
+	for i := range 20 {
+		go func() {
+			errs <- WriteDone(home, id, Done{Step: "s", Hop: 1, Exit: fmt.Sprint("e", i)})
+		}()
+	}
+	won := 0
+	for range 20 {
+		switch err := <-errs; {
+		case err == nil:
+			won++
+		case !errors.Is(err, ErrAlreadyDone):
+			t.Fatal(err)
+		}
+	}
+	d, err := ReadDone(home, id, "s", 1)
+	if won != 1 || err != nil || d == nil || !strings.HasPrefix(d.Exit, "e") {
+		t.Errorf("won %d, done %+v, %v", won, d, err)
 	}
 }

@@ -6,6 +6,7 @@ package tmux
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -187,6 +188,30 @@ func (s Server) PaneDead(session, window string) bool {
 	return err == nil && strings.TrimSpace(out) == "1"
 }
 
+// ErrGone is returned by Alive when the window, its session or the whole server no longer exists.
+var ErrGone = errors.New("window gone")
+
+// Alive reports whether the window's command is still running. It returns ErrGone when the
+// window doesn't exist any more, and any other error when tmux couldn't say: a caller deciding
+// that an agent crashed must not mistake one for the other.
+func (s Server) Alive(session, window string) (bool, error) {
+	out, err := s.run("list-windows", "-t", "="+session, "-F", "#{window_name}\t#{pane_dead}")
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") ||
+			strings.Contains(msg, "error connecting to") {
+			return false, ErrGone
+		}
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if name, dead, _ := strings.Cut(line, "\t"); name == window {
+			return dead != "1", nil
+		}
+	}
+	return false, ErrGone
+}
+
 // Capture returns the visible text of the window's pane.
 func (s Server) Capture(session, window string) (string, error) {
 	return s.run("capture-pane", "-p", "-J", "-t", target(session, window))
@@ -206,7 +231,11 @@ func (s Server) SendKeys(session, window string, keys ...string) error {
 
 // Paste types text into the window as one bracketed paste, then presses Enter.
 func (s Server) Paste(session, window, text string) error {
-	buf := "laight-" + session + "-" + window
+	// A buffer of its own: two pastes into one window (the engine and a person) must not
+	// delete each other's buffer.
+	var id [6]byte
+	rand.Read(id[:])
+	buf := fmt.Sprintf("laight-%s-%s-%x", session, window, id)
 	c := s.cmd("load-buffer", "-b", buf, "-")
 	c.Stdin = strings.NewReader(text)
 	if out, err := c.CombinedOutput(); err != nil {

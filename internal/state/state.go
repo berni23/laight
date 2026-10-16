@@ -4,6 +4,7 @@
 package state
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,6 +45,27 @@ type Run struct {
 	Seats    map[string]*Seat  `json:"seats"`
 	Created  time.Time         `json:"created"`
 	Finished *time.Time        `json:"finished,omitempty"`
+
+	// The engine's progress.
+	Hops   int                    `json:"hops"`             // step starts so far (loop_guards.max_hops)
+	Queue  []string               `json:"queue,omitempty"`  // steps routed to, waiting for their seat
+	Active []*Hop                 `json:"active,omitempty"` // steps running now
+	Steps  map[string]*StepResult `json:"steps,omitempty"`  // the latest finished hop of each step
+}
+
+// Hop is one start of a step.
+type Hop struct {
+	Step    string    `json:"step"`
+	Seat    string    `json:"seat,omitempty"`
+	N       int       `json:"hop"`
+	Started time.Time `json:"started"`
+}
+
+// StepResult is how a step's latest hop finished: what templates see as .steps.<id>.
+type StepResult struct {
+	Hop  int            `json:"hop"`
+	Exit string         `json:"exit"`
+	Out  map[string]any `json:"out"`
 }
 
 // Seat is one seat's live state.
@@ -54,6 +76,41 @@ type Seat struct {
 	SessionID string `json:"session_id,omitempty"`
 	SetupDone bool   `json:"setup_done,omitempty"` // the seat's setup succeeded in Dir
 	Up        bool   `json:"up"`
+
+	Step  string `json:"step,omitempty"`  // the step last given to the seat…
+	Hop   int    `json:"hop,omitempty"`   // …and its hop
+	Turn  bool   `json:"turn,omitempty"`  // the agent's turn on it hasn't ended yet
+	Given int    `json:"given,omitempty"` // steps given to the seat in this run
+}
+
+// ActiveOn returns the hop running on seat, or nil.
+func (r *Run) ActiveOn(seat string) *Hop {
+	for _, h := range r.Active {
+		if h.Seat == seat {
+			return h
+		}
+	}
+	return nil
+}
+
+// TemplateData is what workflow templates see: .inputs, .steps, .matrix, .base and .run.
+func (r *Run) TemplateData() map[string]any {
+	inputs := map[string]any{}
+	for k, v := range r.Inputs {
+		inputs[k] = v
+	}
+	steps := map[string]any{}
+	for id, res := range r.Steps {
+		out := res.Out
+		if out == nil {
+			out = map[string]any{}
+		}
+		steps[id] = map[string]any{"exit": res.Exit, "out": out}
+	}
+	return map[string]any{
+		"inputs": inputs, "steps": steps, "matrix": map[string]any{}, "base": r.Spec.Base,
+		"run": map[string]any{"id": r.ID, "project": filepath.Base(r.Repo), "workflow": r.Workflow},
+	}
 }
 
 // Live reports whether the run hasn't reached a final status.
@@ -141,7 +198,7 @@ func Load(home, id string) (*Run, error) {
 		return nil, err
 	}
 	var r Run
-	if err := json.Unmarshal(b, &r); err != nil {
+	if err := decode(b, &r); err != nil {
 		return nil, fmt.Errorf("run %s: bad run.json: %w", Short(id), err)
 	}
 	return &r, nil
@@ -285,6 +342,75 @@ func Events(home, id string) ([]Event, error) {
 	return evs, nil
 }
 
+// Done is what finished a hop: out/<step>-<hop>.json, written by `laight done`, or by the engine
+// when the hop can't finish otherwise (a crashed seat, a step that couldn't be delivered).
+type Done struct {
+	Step string         `json:"step"`
+	Hop  int            `json:"hop"`
+	Exit string         `json:"exit"`
+	Out  map[string]any `json:"out,omitempty"`
+	TS   time.Time      `json:"ts"`
+	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end.
+	Engine bool `json:"engine,omitempty"`
+}
+
+// ErrAlreadyDone is returned by WriteDone for a hop that has already finished.
+var ErrAlreadyDone = errors.New("already finished")
+
+func doneFile(home, id, step string, hop int) string {
+	return filepath.Join(Dir(home, id), "out", fmt.Sprintf("%s-%d.json", step, hop))
+}
+
+// WriteDone records how a hop finished. The first write wins: later ones get ErrAlreadyDone.
+func WriteDone(home, id string, d Done) error {
+	if d.TS.IsZero() {
+		d.TS = time.Now().UTC()
+	}
+	file := doneFile(home, id, d.Step, d.Hop)
+	b, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(file), ".done-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(b, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	// A hard link fails if the file exists, where a rename would replace it.
+	if err := os.Link(tmp.Name(), file); errors.Is(err, os.ErrExist) {
+		return ErrAlreadyDone
+	} else if err != nil {
+		return err
+	}
+	return nil
+}
+
+// ReadDone returns how a hop finished, or nil while it hasn't.
+func ReadDone(home, id, step string, hop int) (*Done, error) {
+	b, err := os.ReadFile(doneFile(home, id, step, hop))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var d Done
+	if err := decode(b, &d); err != nil {
+		return nil, fmt.Errorf("%s: %w", doneFile(home, id, step, hop), err)
+	}
+	return &d, nil
+}
+
 // Project is one entry of projects.json.
 type Project struct {
 	Path string `json:"path"`
@@ -306,6 +432,14 @@ func Register(home, root string) error {
 		}
 	}
 	return writeJSON(file, append(ps, Project{Path: root, Name: filepath.Base(root)}))
+}
+
+// decode is json.Unmarshal keeping numbers as json.Number, so a step output like 12345678901234567890
+// renders in a later template exactly as the agent wrote it.
+func decode(b []byte, v any) error {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber()
+	return d.Decode(v)
 }
 
 // writeJSON writes v to file atomically.

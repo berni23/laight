@@ -104,7 +104,7 @@
           "propertyNames": { "$ref": "#/$defs/ident" },
           "additionalProperties": { "$ref": "#/$defs/ident" }
         },
-        "mode": { "const": "end", "description": "End the branch after this step, whatever the exit." }
+        "mode": { "const": "end", "description": "End the branch after this step, whatever the exit; an unrouted failed still fails the run." }
       }
     },
     "step": {

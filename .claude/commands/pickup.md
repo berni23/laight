@@ -80,6 +80,13 @@ and get on with it; don't narrate options you are not going to take.
 
 ## 7. Work it, the way this repo works
 
+- **Branch before the first edit.** Work never happens on `main`. Once the item is picked, if the
+  current branch is `main`, create one named after the item and switch to it:
+  `git switch -c <issue#>-<short-slug>` (e.g. `6-engine-loop`), or `m2-<slug>` for a milestone
+  item with no issue. Uncommitted changes in the tree move with the switch, so this also rescues
+  work a previous session left on `main`. Already on the item's branch (an open PR, `/check-cr`):
+  stay on it. On some other item's branch: stop and ask. Creating the branch is local and is not a
+  commit; still don't commit or push unless asked.
 - **The four hard requirements beat features.** A change that needs a daemon, a server, a database,
   a new command or a required flag is wrong as shaped — say so before building it.
 - **Every bug fix gets a regression test, verified to fail before the fix.** Mutate the fix away,

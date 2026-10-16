@@ -13,41 +13,47 @@ that.
 
 ## Last session — 2026-10-16
 
-**M1 — done.** `run`, `attach`, `abort`: rigs spin up and tear down.
-**Filed** — M2 split into #6–#12 (GitHub milestone `M2`), one issue per item of §10.
-**Added** — the baton workflow: `/baton`, `/pickup`, `/cr`, `/check-cr`, the `code-reviewer` agent.
-**Done** — the #5 review fixed on `m1-rig`: a reserved `engine` seat name, `laight abort` safe inside
-the rig, crashed seats relaunched (Claude resumed), setup retried, Ctrl-C stops the rig, no
-`new-session -e`. Not yet checked: tmux 3.0/3.1, and resume against a real Claude seat.
+**#6 — review answered.** Every finding of the `/cr` review was fixed with a regression test (each
+seen red), deferred to an issue, or answered on its thread. Real Claude seat (haiku), run before
+and after the fixes: the Stop hook reminder fired once and worked, and step two waited for the Stop
+hook. Not yet seen with real Claude: `session: fresh`.
+**Filed** — #15 (stuck detection: second Stop, step timeouts, a failing Stop hook), #16 (step `env`
+on agent steps). Comments with fix shapes on #7, #8, #12.
+**Spec** — `CLAUDE.md` §12: how OpenRig, Gas Town, Archon, Orca and Claude Squad solve delivery,
+stuck detection, branch failure and secrets, with a recommendation for each.
 
 ---
 
 ## Do this next
 
-### 1. #6 — engine loop: agent steps, `laight done`, routing, `max_hops`
+### 1. #7 — shell steps
 
-First, with a `runtime: shell` seat whose script calls `laight done`, inside a throwaway tmux
-server: every other M2 item plugs into this loop, and the fake runtime is how the rest gets tested
-without Claude.
+Small now that the loop exists. `{{ secret }}` stays out of `run:` (§12.4, comment on #7): pass
+secrets as the command's env.
 
-### 2. #7 shell steps, then #8 `run --resume`
+### 2. #8 — `laight run --resume`
 
-Shell steps are small once the loop exists. Resume next, while the event log format is still fresh:
-it forces everything the engine needs into `run.json` + `events.jsonl`.
+Build in the delivery ack of §12.1 (the hop is saved before the paste; a `UserPromptSubmit` hook
+acks it), and fix the "hop saved, never pasted" gap noted on #8. Resume is what turns that gap into
+a hang.
 
 ### 3. #9 minimal inbox + gates, then #10 PermissionRequest hook
 
 Gates are the first inbox producer that needs no Claude; the permission hook is the first real one.
+#15 needs the inbox, so it waits for this.
 
 ### 4. #11 — acceptance: the issue cycle on a real issue
 
 Before `needs`/`matrix`: the issue cycle doesn't use them, and it is what proves M2.
-`CLAUDE.local.md` names the reference setup.
+`CLAUDE.local.md` names the reference setup. Also check `session: fresh` with real Claude here.
 
-### 5. #12 — `needs` and `matrix`
+### 5. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
+
+#12 waits on the decision below.
 
 ---
 
 ## Waiting on the user
 
-Nothing.
+- #12: adopt Archon's model (siblings finish, dependents skipped)? It changes rule 4 of §3.
+- #16: what a step's `env` means on agent steps (recommendation: shell steps only).
