@@ -6,6 +6,7 @@ package tmux
 
 import (
 	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -230,7 +231,11 @@ func (s Server) SendKeys(session, window string, keys ...string) error {
 
 // Paste types text into the window as one bracketed paste, then presses Enter.
 func (s Server) Paste(session, window, text string) error {
-	buf := "laight-" + session + "-" + window
+	// A buffer of its own: two pastes into one window (the engine and a person) must not
+	// delete each other's buffer.
+	var id [6]byte
+	rand.Read(id[:])
+	buf := fmt.Sprintf("laight-%s-%s-%x", session, window, id)
 	c := s.cmd("load-buffer", "-b", buf, "-")
 	c.Stdin = strings.NewReader(text)
 	if out, err := c.CombinedOutput(); err != nil {
