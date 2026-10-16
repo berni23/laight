@@ -7,7 +7,9 @@ series or in parallel; starting it spins up a **rig** of those agents, which die
 watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
-`validate`, `run`, `attach`, `abort`: rigs spin up and tear down); next is M2, the engine loop.
+`validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
+loop runs agent steps (`laight done`, routing, `max_hops`); shell steps, resume, the inbox and
+`needs`/`matrix` are next.
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -298,7 +300,10 @@ on a real issue.
 - **Worktrees** start detached at `origin/<base>`. A branch can be checked out in one worktree
   only, so reviewers check PRs out detached (say so in their guidance).
 - **Who writes what:** only the engine writes `run.json`; `done` and hooks write their own files
-  (`out/`, `inbox/`), which the engine polls (~500 ms). No fsnotify.
+  (`out/<step>-<hop>.json`, first write wins; the Stop hook's `seats/<seat>.idle`; `inbox/`),
+  which the engine polls (~500 ms). No fsnotify. When a hop can't finish otherwise (its seat
+  crashed, its objective didn't render), the engine writes its `failed` out file itself, so every
+  ending goes through the same routing.
 - **Secrets:** `{{ secret "x" }}` reads env `LAIGHT_SECRET_X`, then the OS keychain (service `laight`).
 - Every runtime is an adapter: `launch(cmd, flags)`, `ready()`, `deliver(text)`,
   `hooks()` and `detectBlocked(screen)` for runtimes without hooks. Claude Code first; Codex second.
@@ -489,6 +494,8 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
 - **Agents: don't commit or push unless the person you work for asks.** Never kill, merge, push or
   abort anything outside a throwaway test without asking. Never touch the user's own tmux sessions
   (laight uses its own server, `tmux -L laight`; tests use a throwaway one).
+- **Work never happens on `main`.** Before the first edit for an item, switch to its own branch,
+  `<issue#>-<short-slug>` (or `m2-<slug>` for a milestone item with no issue); `/pickup` does this.
 - Requirement 1 beats features: if something needs a daemon, an always-on server or a database,
   it's out. Optional integrations (SQS, Slack…) stay optional: off unless configured, and the
   default install needs no account anywhere.

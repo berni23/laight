@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/berni23/laight/internal/engine"
 	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -126,8 +127,8 @@ func formatDefault(v any) string {
 	return fmt.Sprint(v)
 }
 
-// cmdEngine is window 0 of a rig. In this version it brings the seats up and holds the rig until
-// `laight abort`; steps and routing come with the engine loop (M2).
+// cmdEngine is window 0 of a rig: it brings the seats up, runs the steps, and tears the rig down
+// when the run ends.
 func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
 		return fail(stderr, "usage: laight engine <run id>")
@@ -165,6 +166,13 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
+	if err := engine.Supported(r.Spec); err != nil {
+		fmt.Fprintf(stdout, "✕ %v\n", err)
+		if err := g.Down(id, state.Failed, err.Error()); err != nil {
+			fmt.Fprintf(stdout, "teardown: %v\n", err)
+		}
+		return 1
+	}
 	if r.Status == state.Starting {
 		state.Update(home, id, func(r *state.Run) error { r.Status = state.Running; return nil })
 		state.Append(home, state.Event{Run: id, Type: "run.started", Data: map[string]any{"workflow": r.Workflow, "repo": r.Repo}})
@@ -189,18 +197,34 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	for _, name := range sortedKeys(r.Seats) {
 		fmt.Fprintf(stdout, "  %-12s %s\n", name, r.Seats[name].Dir)
 	}
-	fmt.Fprintf(stdout, "\nThis version starts the rig only; steps run with the engine loop (M2).\n")
-	fmt.Fprintf(stdout, "Switch windows with your tmux prefix + w. Stop the rig with: laight abort %s\n", r.Short())
-	<-ctx.Done()
-	if interrupted {
-		return abort()
+	fmt.Fprintf(stdout, "Switch windows with your tmux prefix + w. Stop the run with: laight abort %s\n\n", r.Short())
+
+	eng := &engine.Engine{Home: home, Rig: g, Log: stdout}
+	status, reason, err := eng.Run(ctx, id)
+	switch {
+	case ctx.Err() != nil:
+		if interrupted {
+			return abort()
+		}
+		return 1 // the window was closed: its closer tears down
+	case err != nil:
+		status, reason = state.Failed, "engine: "+err.Error()
+	case status != state.Succeeded && status != state.Failed:
+		return 1 // someone else ended the run (an abort)
+	}
+	fmt.Fprintf(stdout, "\nrun %s %s\n", r.Short(), status)
+	if err := g.Down(id, status, reason); err != nil {
+		fmt.Fprintf(stdout, "teardown: %v\n", err)
+	}
+	if status != state.Succeeded {
+		return 1
 	}
 	return 0
 }
 
 // cmdHook handles the runtime's hooks. It must never get in the agent's way: any problem is
 // reported on stderr and the exit code is 0.
-func cmdHook(args []string, stdin io.Reader, stderr io.Writer) int {
+func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	runID, seat := os.Getenv("LAIGHT_RUN"), os.Getenv("LAIGHT_SEAT")
 	if len(args) != 1 || runID == "" || seat == "" {
 		return 0 // not a laight seat
@@ -211,8 +235,9 @@ func cmdHook(args []string, stdin io.Reader, stderr io.Writer) int {
 		return 0
 	}
 	var in struct {
-		SessionID string `json:"session_id"`
-		Source    string `json:"source"`
+		SessionID      string `json:"session_id"`
+		Source         string `json:"source"`
+		StopHookActive bool   `json:"stop_hook_active"`
 	}
 	json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in)
 	switch args[0] {
@@ -221,9 +246,48 @@ func cmdHook(args []string, stdin io.Reader, stderr io.Writer) int {
 		if err := os.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b, 0o600); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
+	case "stop":
+		if err := stopHook(home, runID, seat, in.StopHookActive, stdout); err != nil {
+			fmt.Fprintf(stderr, "laight hook: %v\n", err)
+		}
 	}
 	state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
 	return 0
+}
+
+// stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
+// may get its next one. If not, the agent is told once how to finish it (Claude sets
+// stop_hook_active when it is already continuing because of this hook, so it never loops).
+func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
+	r, err := state.Load(home, runID)
+	if err != nil {
+		return err
+	}
+	s := r.Seats[seat]
+	if s == nil || s.Step == "" {
+		return nil // no step given yet: someone is talking to the agent
+	}
+	d, err := state.ReadDone(home, runID, s.Step, s.Hop)
+	if err != nil {
+		return err
+	}
+	if d != nil {
+		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
+		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+	}
+	if again || r.ActiveOn(seat) == nil {
+		return nil
+	}
+	st := r.Spec.Step(s.Step)
+	laight, err := os.Executable()
+	if err != nil {
+		laight = "laight"
+	}
+	return json.NewEncoder(stdout).Encode(map[string]string{
+		"decision": "block",
+		"reason": fmt.Sprintf("Step %s isn't finished. When it is, run: %s done <exit> [key=value…] (exits: %s, failed).",
+			st.ID, tmux.Quote(laight), strings.Join(st.AllowedExits, ", ")),
+	})
 }
 
 // cmdAttach puts the terminal in a run's tmux session, at the engine or at one seat.

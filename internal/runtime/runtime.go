@@ -88,7 +88,8 @@ func transcriptExists(id string) bool {
 	return len(m) > 0
 }
 
-// Settings lets the seat finish steps without a prompt and reports ready through SessionStart.
+// Settings lets the seat finish steps without a prompt, reports ready through SessionStart and
+// the end of each turn through Stop.
 // Passed with --settings, so the user's own ~/.claude/settings.json is never written.
 func (claude) Settings(laight string) []byte {
 	hook := func(event string) []any {
@@ -98,7 +99,7 @@ func (claude) Settings(laight string) []byte {
 	}
 	b, _ := json.MarshalIndent(map[string]any{
 		"permissions": map[string]any{"allow": []string{"Bash(" + laight + " done:*)", "Bash(laight done:*)"}},
-		"hooks":       map[string]any{"SessionStart": hook("session-start")},
+		"hooks":       map[string]any{"SessionStart": hook("session-start"), "Stop": hook("stop")},
 	}, "", "  ")
 	return b
 }

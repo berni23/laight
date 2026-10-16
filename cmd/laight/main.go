@@ -23,10 +23,11 @@ Usage:
   laight run <workflow> [key=value…]   spin up the rig of a new run and follow it
   laight attach [run] [seat]           jump into a run's tmux session, or one seat's window
   laight abort [run] [--yes]           stop a live run; on a finished one, delete its worktrees
+  laight done <exit> [key=value…]      for agents: finish the current step
   laight version                       print the version
 
 [run] is a run id or its start; leave it out when the project has one live run.
-Coming next: watch, show, inbox, doctor, done.
+Coming next: watch, show, inbox, doctor.
 See https://github.com/berni23/laight
 `
 
@@ -51,10 +52,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdAttach(rest, stdout, stderr)
 	case "abort":
 		return cmdAbort(rest, stdout, stderr)
+	case "done":
+		return cmdDone(rest, stdout, stderr)
 	case "engine": // window 0 of a rig, started by run
 		return cmdEngine(rest, stdout, stderr)
 	case "hook": // called by the agent runtime's hooks
-		return cmdHook(rest, os.Stdin, stderr)
+		return cmdHook(rest, os.Stdin, stdout, stderr)
 	case "version", "--version", "-v":
 		fmt.Fprintf(stdout, "laight %s (commit %s, built %s)\n", version, commit, date)
 		return 0

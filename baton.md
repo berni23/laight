@@ -13,22 +13,21 @@ that.
 
 ## Last session — 2026-10-16
 
-**M1 — done.** `run`, `attach`, `abort`: rigs spin up and tear down.
-**Filed** — M2 split into #6–#12 (GitHub milestone `M2`), one issue per item of §10.
-**Added** — the baton workflow: `/baton`, `/pickup`, `/cr`, `/check-cr`, the `code-reviewer` agent.
-**Done** — the #5 review fixed on `m1-rig`: a reserved `engine` seat name, `laight abort` safe inside
-the rig, crashed seats relaunched (Claude resumed), setup retried, Ctrl-C stops the rig, no
-`new-session -e`. Not yet checked: tmux 3.0/3.1, and resume against a real Claude seat.
+**#6 — done.** The engine loop: agent steps, `laight done`, routing, `max_hops`, the Stop hook. Fake
+`sh` runtime tests cover series, a `fail → fix` loop, `max_hops`, unrouted `failed`, a crash
+mid-step and a seat relaunched after exiting between steps. One real run with a Claude Code seat
+(haiku, worktree): two steps, outputs templated. Not yet seen with real Claude: the Stop hook's
+one-time reminder, `session: fresh`.
+**Changed** — `/pickup` branches before the first edit; `CLAUDE.md` §11 says work never happens on
+`main`.
 
 ---
 
 ## Do this next
 
-### 1. #6 — engine loop: agent steps, `laight done`, routing, `max_hops`
+### 1. Review #6's PR
 
-First, with a `runtime: shell` seat whose script calls `laight done`, inside a throwaway tmux
-server: every other M2 item plugs into this loop, and the fake runtime is how the rest gets tested
-without Claude.
+`/cr`, then `/check-cr`: the next items build on this loop, so its review comes first.
 
 ### 2. #7 shell steps, then #8 `run --resume`
 

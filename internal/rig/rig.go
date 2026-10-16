@@ -102,14 +102,18 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 
 	// Where the agent works. A seat started before (a crash, an engine restart) keeps its
 	// session id, so the runtime can resume the conversation, and its setup record.
-	st := &state.Seat{Window: name}
+	// The engine's record of the seat (its step, turn…) carries over too.
+	st := &state.Seat{}
 	resume := false
 	if prev := r.Seats[name]; prev != nil {
-		st.SetupDone = prev.SetupDone
-		if seat.Session != "fresh" {
-			st.SessionID, resume = prev.SessionID, prev.SessionID != ""
+		*st = *prev
+		st.Up = false
+		if seat.Session == "fresh" {
+			st.SessionID = ""
 		}
+		resume = st.SessionID != ""
 	}
+	st.Window = name
 	save := func() error {
 		_, err := state.Update(g.Home, r.ID, func(r *state.Run) error {
 			if r.Seats == nil {
@@ -249,16 +253,18 @@ func (g *Rig) waitReady(ctx context.Context, session, window string, rt runtime.
 	}
 }
 
+// Restart relaunches one seat: a fresh session, or a pane that died.
+func (g *Rig) Restart(ctx context.Context, id, name string) error {
+	r, err := state.Load(g.Home, id)
+	if err != nil {
+		return err
+	}
+	return g.seatUp(ctx, r, name)
+}
+
 // seatEnv renders the workflow's and the seat's env (the seat's wins).
 func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
-	inputs := map[string]any{}
-	for k, v := range r.Inputs {
-		inputs[k] = v
-	}
-	data := map[string]any{
-		"inputs": inputs, "base": r.Spec.Base, "steps": map[string]any{}, "matrix": map[string]any{},
-		"run": map[string]any{"id": r.ID, "short": r.Short()},
-	}
+	data := r.TemplateData()
 	env := map[string]string{}
 	for _, m := range []spec.StringMap{r.Spec.Env, seat.Env} {
 		for k, v := range m {
