@@ -325,7 +325,6 @@ func (g *Rig) Down(id, status, reason string) error {
 	for _, h := range Groups(r) {
 		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
-	inbox.Withdraw(g.Home, id) // nobody is waiting on the run's items any more
 	policy := r.Spec.OnFinish.Failure
 	if status == state.Succeeded {
 		policy = r.Spec.OnFinish.Success
@@ -342,6 +341,9 @@ func (g *Rig) Down(id, status, reason string) error {
 	}); err != nil {
 		errs = append(errs, err)
 	}
+	// Nobody is waiting on the run's items any more. Only now: an engine tick raises items under
+	// the run's lock, and once the status above is recorded, no tick acts.
+	inbox.Withdraw(g.Home, id)
 	typ := "run.finished"
 	if status == state.Aborted {
 		typ = "run.aborted"
