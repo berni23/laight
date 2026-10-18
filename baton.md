@@ -26,6 +26,11 @@ ending it. `make check` plus a manual run of the built binary (gate → yes → 
 Its review (posted on #20) is answered: every retry grants a hop, titles are redacted and
 cleaned, a dead engine's items refuse answers, `Down` withdraws after its final status. Filed
 #25 (redact events/run.json), #26 (engine records answers), #27 (prune `~/.laight`).
+**#19's second review (5564328626) answered.** Redaction keeps SHAs and branch names (a long run
+counts only when it mixes cases and digits); `laight inbox` refuses and marks items of an ended
+or dead run, reports unreadable item files, rejects an empty ref; an unreadable answer re-raises
+the `failed` item (a gate's fails the gate); abort says when it leaves a shell step running
+because the boot time is unknown. Redacting `run.json`/events stays on #25, pid reuse on #23.
 
 ---
 
@@ -52,4 +57,6 @@ and `merge` shell step both work now. `CLAUDE.local.md` names the reference setu
 
 ## Waiting on the user
 
-- Nothing open. #17 (shell step `cwd`) waits for a workflow that needs it.
+- #19 review, open question: should an abort answered from the inbox say so in the run's reason
+  (e.g. `<step error>; aborted from the inbox`), or keep the step's error alone?
+- #17 (shell step `cwd`) waits for a workflow that needs it.

@@ -119,8 +119,8 @@ func TestRedact(t *testing.T) {
 	for in, want := range map[string]string{
 		"Merge branch 123-make-the-engine-hold-failed-steps-for-retry into dev?": "Merge branch 123-make-the-engine-hold-failed-steps-for-retry into dev?",
 		"revert 24285a546915eb4da1a26ed2d6ec51fe8dccaaff?":                       "revert 24285a546915eb4da1a26ed2d6ec51fe8dccaaff?",
-		"key AKIAxyz0123456789abcdefGHIJKLmnopqrstuvwx9 leaked":                   "key *** leaked",
-		"sk-abcdefghijklmnop0123 and Bearer abc.def.ghi":                           "*** and ***",
+		"key AKIAxyz0123456789abcdefGHIJKLmnopqrstuvwx9 leaked":                  "key *** leaked",
+		"sk-abcdefghijklmnop0123 and Bearer abc.def.ghi":                         "*** and ***",
 	} {
 		if got := Redact(in); got != want {
 			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
