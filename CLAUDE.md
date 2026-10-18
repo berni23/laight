@@ -8,8 +8,8 @@ watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
-loop runs agent and shell steps (`laight done`, routing, `max_hops`); resume, the inbox and
-`needs`/`matrix` are next.
+loop runs agent and shell steps (`laight done`, routing, `max_hops`); the inbox and
+`needs`/`matrix` are next. Resuming a run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -288,9 +288,14 @@ on a real issue.
   `run.json` while the engine updates it.
 - **The engine** is `laight engine <run>` running in window 0 (`engine`) of the rig's tmux session.
   When the run finishes, the engine applies `on_finish`, stops the seats and kills the session.
-  It is a loop: read state → act → append event → sleep/wake on file change. Kill it and run
-  `laight run --resume <run>`, and it continues from `run.json` + `events.jsonl`. That is the whole
-  durability story.
+  It is a loop: read state → act → append event → sleep/wake on file change.
+- **When the engine dies** (a reboot, the tmux server killed, a bug), the run is lost, not
+  resumed: `attach` and `abort` report it as "engine died", and `laight abort` cleans it up. The
+  worktrees stay (`on_finish.failure`), and so does whatever the agents committed or pushed; a new
+  run starts over. **Resume is deferred (#8)**: the engine lives in tmux, so it rarely dies, and
+  recovering a step in flight is most of the engine's hard cases (§12.1). It comes back only if
+  real runs show engines dying. Keep the state in files anyway (`run.json` + `events.jsonl`), so
+  it stays possible.
 
 ## 5. Driving a seat
 
@@ -305,7 +310,8 @@ on a real issue.
   it raises an inbox item instead of looping.
 - **Fresh vs resume:** `fresh` restarts the seat's CLI before each of its steps (`/clear` is not
   enough for independence); `resume` keeps the session across steps of a run. laight gives every
-  Claude session a `--session-id`, so `laight run --resume` relaunches a crashed seat with `--resume`.
+  Claude session a `--session-id`, so a seat relaunched within a run (it crashed while idle)
+  continues its conversation with `--resume`.
 - **Idle:** a seat gets its next step only after `laight done` *and* its Stop hook (the turn ended).
 - **Launch prompts:** Claude's folder-trust dialog (new worktree) and yolo's warning are accepted by
   the driver via `capture-pane`, only for laight's own worktrees; `~/.claude.json` is never written.
@@ -435,7 +441,6 @@ use that none of these covers.
 laight init                          scaffold .laight/                                    ← setup
 laight validate [workflow]           schema + semantic checks (run also does this first)
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live     ← start
-laight run --resume <run>            restart a run whose engine died (crash, reboot)
 laight watch [run]                   live pipeline view; no run = every run, one line each ← track
 laight show [run] [--export]         the web view (localhost, foreground)                 ← show
 laight inbox [<item> <answer>]       the human queue; with arguments, answer one (scripts)  ← answer
@@ -464,7 +469,7 @@ and lists what it will do; `--yes` skips it for scripts.
   a generated settings file passed at launch, never into the user's `~/.claude/settings.json`.
 - Tests: unit tests for spec parsing, routing, templating; an integration test with a fake runtime
   (`runtime: shell` running a script that calls `laight done`) exercising loops, gates, timeouts,
-  abort and resume, inside a throwaway tmux server. Real Claude runs are manual and supervised.
+  abort and a dead engine, inside a throwaway tmux server. Real Claude runs are manual and supervised.
 
 ### Distribution
 
@@ -492,7 +497,7 @@ Installing must be one command, with no runtime to install first.
 
 1. **M0** Schemas, `init`, `validate`.
 2. **M1** tmux driver, rig spin-up/tear-down per run, worktrees, `on_finish`, `attach`, `abort`.
-3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps, resume; a minimal inbox
+3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps; a minimal inbox
    (the `files` queue, `laight inbox <item> <answer>`, gates, the `PermissionRequest` hook); then `needs`
    and `matrix` (parallel). Acceptance: the
    issue cycle of section 3 on a real issue in a real repo.
@@ -544,6 +549,13 @@ The tools are:
 - **Claude Squad** (`smtg-ai/claude-squad`): manages tmux sessions in git worktrees.
 
 ### 12.1 Delivering a step exactly once (#8)
+
+**Deferred with resume (#8, §4).** Without a restarted engine, nothing re-delivers a hop, so this
+matters only once resume comes back. If it does, the user has settled the hardest case: a hop
+the agent already acked whose seat died while the engine was down continues only when the seat
+can resume its conversation (Claude with a saved transcript), with a short note to carry on, not
+the objective, and once per hop; otherwise it fails as a crashed seat would. Below is the design
+as researched.
 
 The engine records a hop, then pastes it into the pane. If the engine dies in between, a restarted
 engine can't tell whether the agent got the prompt. tmux gives no acknowledgement.

@@ -4,11 +4,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/state"
 	"github.com/berni23/laight/internal/tmux"
 )
@@ -354,6 +357,45 @@ func TestEngineInterrupt(t *testing.T) {
 	if e.srv.HasSession(r.Session) {
 		t.Error("the session outlived the run")
 	}
+}
+
+// A run whose engine died (killed, then the whole tmux server gone, as in a reboot) is reported
+// as such instead of looking live for ever, and abort still cleans it up.
+func TestEngineDied(t *testing.T) {
+	e := newRigEnv(t, twoShellSeats)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitFor(r.ID, "seat.up", 2)
+	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid == 0 {
+		t.Fatalf("engine pid %q: %v", out, err)
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !e.srv.PaneDead(r.Session, "engine"); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the engine pane never died")
+		}
+	}
+	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died, so it will never finish; clean it up with: laight abort "+r.Short()) {
+		t.Errorf("attach with a dead engine:\n%s", out)
+	}
+	e.srv.KillServer()
+	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died") || !strings.Contains(out, "tmux session is gone") {
+		t.Errorf("attach with no tmux server:\n%s", out)
+	}
+	if out := e.mustLaight("abort", r.Short(), "--yes"); !strings.Contains(out, "(demo, its engine died)") {
+		t.Errorf("abort:\n%s", out)
+	}
+	if r := e.waitStatus(r.ID, state.Aborted); len(e.rigWorktrees(r)) != 0 {
+		t.Errorf("on_finish.failure destroy kept %v", e.rigWorktrees(r))
+	}
+}
+
+func (e *rigEnv) rigWorktrees(r *state.Run) []string {
+	return rig.New(e.home, e.bin, nil).Worktrees(r)
 }
 
 func TestFormatDefault(t *testing.T) {

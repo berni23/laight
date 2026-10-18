@@ -42,6 +42,9 @@ All notable changes to laight are documented here. The format follows
   runs without a terminal and doesn't inherit the engine's `LAIGHT_SECRET_*`. Whatever it leaves
   running is stopped when it exits, and the run ending (any branch failing, an abort, or an abort
   after the engine died) stops the command and whatever it started.
+- A live run whose engine died (killed, or the tmux server gone after a reboot) is reported as
+  such by `attach` and `abort` instead of looking live for ever; `laight abort` cleans it up.
+  Such a run is not resumed: `laight run --resume` is deferred (#8).
 - `validate` rejects `env` on agent steps and gates (an agent's env is its seat's), an
   `exits:` name that isn't in the step's `allowed_exits`, and an `exits:` code that can never
   match (`"03"`, `"256"`).
