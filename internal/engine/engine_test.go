@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -184,6 +185,20 @@ func TestVerdictSavedWithState(t *testing.T) {
 		t.Fatalf("tick: %s %v", status, err)
 	}
 	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Out: map[string]any{"error": "boom"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Held on a failed item, which is saved with the state: an engine that runs on the same
+	// files later still holds the run, never finds it empty and calls it a success.
+	for range 2 {
+		if status, reason, err := e.tick(ctx, id); status != "" || err != nil {
+			t.Fatalf("tick: %s %q %v", status, reason, err)
+		}
+	}
+	r := load(t, e, id)
+	if len(r.Blocked) != 1 || r.Blocked[0].Error != "step one failed: boom" {
+		t.Fatalf("blocked %+v", r.Blocked)
+	}
+	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Abort); err != nil {
 		t.Fatal(err)
 	}
 	status, reason, err := e.tick(ctx, id)

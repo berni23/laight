@@ -6,9 +6,10 @@
 **Run teams of coding agents in tmux from two small YAML files, and answer everything they need
 from you in one place.**
 
-> **Status: early.** `init`, `validate`, `run`, `attach`, `abort` and `done` work: a run spins up
-> its rig of agents in tmux, hands each agent its steps in series, runs shell steps, routes on
-> their exits (loops included) and tears the rig down. Gates, the inbox and parallel steps are next (M2,
+> **Status: early.** `init`, `validate`, `run`, `attach`, `abort`, `inbox` and `done` work: a run
+> spins up its rig of agents in tmux, hands each agent its steps in series, runs shell steps and
+> gates, routes on their exits (loops included), holds a failed step in the inbox for retry or
+> abort, and tears the rig down. Permission prompts in the inbox and parallel steps are next (M2,
 > see the [milestones](CLAUDE.md#10-milestones)). The specification is in [CLAUDE.md](CLAUDE.md).
 > Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).

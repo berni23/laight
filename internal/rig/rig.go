@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/proc"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
@@ -306,6 +307,7 @@ func (g *Rig) Down(id, status, reason string) error {
 	for _, h := range r.Active {
 		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
+	inbox.Withdraw(g.Home, id) // nobody is waiting on the run's items any more
 	policy := r.Spec.OnFinish.Failure
 	if status == state.Succeeded {
 		policy = r.Spec.OnFinish.Success

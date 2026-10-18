@@ -8,7 +8,8 @@ watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
-loop runs agent and shell steps (`laight done`, routing, `max_hops`); the inbox and
+loop runs agent and shell steps (`laight done`, routing, `max_hops`), gates, and a minimal inbox
+(`files` queue, `laight inbox`, `gate` and `failed` items); the `PermissionRequest` hook and
 `needs`/`matrix` are next. Resuming a run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
@@ -193,7 +194,7 @@ steps:
     type: shell                   # deterministic step, no agent
     run: gh pr merge {{ .steps.implement.out.pr }} --squash && gh issue close {{ .steps.implement.out.issue }}
 
-loop_guards: { max_hops: 11 }     # exceeding it → run fails → inbox item
+loop_guards: { max_hops: 11 }     # exceeding it → a `failed` inbox item: retry or abort
 timeouts: { step: 90m }           # a step over its timeout → inbox item (not a kill)
 on_finish: { success: destroy, failure: keep }   # worktrees; the tmux session always stops
 ```
@@ -230,8 +231,10 @@ steps:
    non-`failed` exit.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
    without `next_hop` simply ends its branch; `end` ends it explicitly.
-4. The run succeeds when no step is running or ready and none failed unrouted; it fails on an
-   unrouted `failed`, `max_hops`, or an `abort`.
+4. The run succeeds when no step is running, ready or held. An unrouted `failed`, or a step
+   `max_hops` refuses, is **held** on a `failed` inbox item while everything else carries on:
+   `retry` starts that step again (past `max_hops`, with one more hop), `abort` fails the run.
+   It also fails on `laight abort`. (Decided in #9: with no resume, waiting is how a run survives.)
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
    their own seat instance (`dev#1`, `dev#2`…), so parallelism is never hidden contention.
    `max_parallel` on a matrix step caps live copies (default 4).
@@ -258,7 +261,7 @@ implicit on every step and can be routed. **Outputs:**
 digit for digit; `null` is empty). Templates see only `.inputs`, `.steps.<id>.out`/`.exit`,
 `.matrix`, `.base`, `.run.id`/`.project`/`.workflow` and, **in `env` only**, `secret`: every other
 template can be pasted into a pane, and panes are logged. **`next_hop.mode: end`** ends the branch
-whatever the exit, except an unrouted `failed`, which still fails the run (rule 4).
+whatever the exit, except an unrouted `failed`, which is still held (rule 4).
 
 Guidance is delivered **without touching tracked files**: for Claude Code via
 `--append-system-prompt-file` / `--settings` on launch (whatever the installed version supports,
@@ -345,7 +348,9 @@ An item: `{id, run, repo, workflow, step, seat, kind, title, detail, choices[], 
 `detail` is a short excerpt (the command asking permission, the last lines of the pane),
 **redacted** (env values, tokens, anything matching common secret patterns).
 
-**Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy:
+**Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy
+(`internal/inbox` is the `files` queue as plain functions today; the interface is extracted when a
+second backend arrives, not before):
 
 ```go
 type Queue interface {            // where items wait and answers come back
@@ -615,9 +620,11 @@ twice on the same hop raises a `failed` item instead of being respawned again (G
 
 ### 12.3 One parallel branch fails while others run (#12)
 
-Today rule 4 fails the run as soon as a step fails with no route, and the teardown kills whatever
-else is running. That is harmless in series. With `needs`/`matrix`, it throws away running
-siblings' work, and their worktrees with it.
+Before #9, rule 4 failed the run as soon as a step failed with no route, and the teardown killed
+whatever else was running: harmless in series, but with `needs`/`matrix` it would throw away
+running siblings' work, and their worktrees with it. #9 holds the failed step on a `failed` item
+while the rest carries on, and fails the run only on `abort`; #12 still decides what happens to
+the steps that `need` a held one.
 
 - **Archon** runs siblings to completion (`Promise.allSettled`). Their dependents are skipped under
   the default `trigger_rule: all_success`. A failing fan-out child "does not stop its siblings";

@@ -13,30 +13,34 @@ that.
 
 ## Last session — 2026-10-18
 
-**#8 — deferred, decided with the user.** No `run --resume` in M2: the engine lives in tmux and
-rarely dies, and recovering a step in flight is most of the engine's hard cases. Instead,
-`attach` and `abort` report a live run whose engine died (regression test `TestEngineDied`,
-verified red without the fix). Spec §4, §8, §10 and §12.1 amended; the settled answer for the
+**#8 — deferred, decided with the user.** No `run --resume` in M2. Instead, `attach` and
+`abort` report a live run whose engine died. Spec §4/§8/§10/§12.1 amended; the answer for the
 day it comes back is on #8.
+**#9 — minimal inbox + gates.** `files` queue (`internal/inbox`), `laight inbox [<item> <answer>]`,
+gates routed on the answer, and **rule 4 changed (decided with the user, on #9)**: an unrouted
+`failed` or a `max_hops` refusal holds the run on a `failed` item (`retry`/`abort`) instead of
+ending it. `make check` plus a manual run of the built binary (gate → yes → held failure → abort).
 
 ---
 
 ## Do this next
 
-### 1. #9 minimal inbox + gates, then #10 PermissionRequest hook
+### 1. #10 — PermissionRequest hook into the inbox
 
-Gates are the first inbox producer that needs no Claude; the permission hook is the first real one.
-#15 needs the inbox, so it waits for this.
+The first real-agent producer, on the queue #9 built: the hook blocks polling
+`inbox/answered/<id>.json` (`inbox.Answered`), expiry falls back to deny. Needs a real Claude seat
+with `permissions: default` to verify. #15 waits for it.
 
 ### 2. #11 — acceptance: the issue cycle on a real issue
 
-Before `needs`/`matrix`: the issue cycle doesn't use them, and it is what proves M2. Its `merge`
-step is a shell step, which works. `CLAUDE.local.md` names the reference setup. Also check
-`session: fresh` with real Claude, and watch whether an engine ever dies (that is #8's trigger).
+Before `needs`/`matrix`: the issue cycle doesn't use them, and it proves M2. Its `approve` gate
+and `merge` shell step both work now. `CLAUDE.local.md` names the reference setup. Also check
+`session: fresh` with real Claude, and watch whether an engine ever dies (#8's trigger).
 
 ### 3. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
 
-#12 is decided (see its last comment); amend rule 4 of §3 when it lands.
+#12 is decided (its last comment), but rule 4 now holds a failed step instead of failing the run
+(§12.3 says so): decide what a step that `needs` a held one does.
 
 ---
 

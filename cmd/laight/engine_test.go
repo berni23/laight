@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
 )
@@ -116,6 +117,37 @@ steps:
 	}
 }
 
+// waitItem waits for the run's next pending inbox item.
+func (e *rigEnv) waitItem(id string) *inbox.Item {
+	e.t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		items, _ := inbox.Pending(e.home)
+		for _, it := range items {
+			if it.Run == id {
+				return it
+			}
+		}
+		if time.Now().After(deadline) {
+			r, _ := state.Load(e.home, id)
+			screen, _ := e.srv.Capture(r.Session, "engine")
+			e.t.Fatalf("no inbox item; run %s %q\nengine:\n%s", r.Status, r.Error, screen)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// abortItem answers the run's failed item with abort, which fails the run.
+func (e *rigEnv) abortItem(id string) {
+	e.t.Helper()
+	it := e.waitItem(id)
+	if it.Kind != inbox.Failed {
+		e.t.Fatalf("item %+v", it)
+	}
+	e.mustLaight("inbox", it.Short(), "abort")
+}
+
+// max_hops holds the run on a failed item: retry grants one more hop, abort fails the run.
 func TestEngineMaxHops(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -126,12 +158,23 @@ steps:
 loop_guards: { max_hops: 3 }
 `))
 	e.mustLaight("run", "demo")
-	r := e.waitEnded(e.onlyRun().ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "max_hops (3) reached before step pong") {
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	if it.Kind != inbox.Failed || it.Step != "pong" || !strings.Contains(it.Title, "max_hops (3) reached before step pong") {
+		t.Errorf("item %+v", it)
+	}
+	e.mustLaight("inbox", it.Short(), "retry")
+	it = e.waitItem(r.ID) // pong ran, ping is refused next
+	if it.Step != "ping" {
+		t.Errorf("item %+v", it)
+	}
+	e.mustLaight("inbox", it.Short(), "abort")
+	r = e.waitEnded(r.ID)
+	if r.Status != state.Failed || !strings.Contains(r.Error, "max_hops (3) reached before step ping") {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
 	}
-	if got := len(e.stepsDone(r.ID)); got != 3 {
-		t.Errorf("%d steps done, want 3", got)
+	if got := len(e.stepsDone(r.ID)); got != 4 || r.Hops != 4 {
+		t.Errorf("%d steps done, %d hops; want 4", got, r.Hops)
 	}
 }
 
@@ -144,12 +187,98 @@ steps:
   - { id: two, seat: a, objective: '"$L" done handoff' }
 `))
 	e.mustLaight("run", "demo")
-	r := e.waitEnded(e.onlyRun().ID)
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	if it.Kind != inbox.Failed || it.Title != "step one failed: boom" || strings.Join(it.Choices, ",") != "retry,abort" {
+		t.Errorf("item %+v", it)
+	}
+	if out, err := e.laight("inbox"); err != nil || !strings.Contains(out, it.Short()+"  failed") || !strings.Contains(out, "step one failed: boom  [retry|abort]") {
+		t.Errorf("inbox: %v\n%s", err, out)
+	}
+	e.mustLaight("inbox", it.Short(), "abort")
+	r = e.waitEnded(r.ID)
 	if r.Status != state.Failed || r.Error != "step one failed: boom" {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
 	}
 	if got := strings.Join(e.stepsDone(r.ID), " "); got != "one:failed" {
 		t.Errorf("steps %s", got)
+	}
+	if out := e.mustLaight("inbox"); !strings.Contains(out, "inbox empty") {
+		t.Errorf("inbox after the run:\n%s", out)
+	}
+}
+
+// A failed step retried from the inbox starts again and the run goes on.
+func TestEngineRetry(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, `version: 1
+id: demo
+steps:
+  - { id: flaky, run: 'if [ -e tried ]; then exit 0; fi; touch tried; exit 1', next_hop: { on: { ok: last } } }
+  - { id: last, run: 'rm tried' }
+`)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	e.mustLaight("inbox", it.Short(), "retry")
+	r = e.waitEnded(r.ID)
+	if got := strings.Join(e.stepsDone(r.ID), " "); r.Status != state.Succeeded || got != "flaky:failed flaky:ok last:ok" {
+		t.Errorf("status %s (%s), steps %s", r.Status, r.Error, got)
+	}
+	evs, _ := state.Events(e.home, r.ID)
+	if countEvents(evs, "inbox.raised", "") != 1 || countEvents(evs, "inbox.answered", "") != 1 {
+		t.Errorf("events %+v", evs)
+	}
+}
+
+// A gate asks in the inbox and routes on the answer; the first answer wins.
+func TestEngineGate(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - { id: build, seat: a, objective: '"$L" done handoff pr=42', next_hop: { on: { handoff: approve } } }
+  - id: approve
+    type: gate
+    ask: Merge PR {{ .steps.build.out.pr }}?
+    next_hop: { on: { yes: merge, no: end } }
+  - { id: merge, run: 'true' }
+`))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	if it.Kind != inbox.Gate || it.Title != "Merge PR 42?" || strings.Join(it.Choices, ",") != "yes,no" || it.Step != "approve" {
+		t.Errorf("item %+v", it)
+	}
+	if out, err := e.laight("inbox", it.Short(), "maybe"); err == nil || !strings.Contains(out, "choose one of: yes, no") {
+		t.Errorf("a wrong answer: %v\n%s", err, out)
+	}
+	if out := e.mustLaight("inbox", it.Short(), "yes"); !strings.Contains(out, it.Short()+": yes") {
+		t.Errorf("answer: %s", out)
+	}
+	if out, err := e.laight("inbox", it.Short(), "no"); err == nil || !strings.Contains(out, "was already answered: yes") {
+		t.Errorf("a second answer: %v\n%s", err, out)
+	}
+	r = e.waitEnded(r.ID)
+	if got := strings.Join(e.stepsDone(r.ID), " "); r.Status != state.Succeeded || got != "build:handoff approve:yes merge:ok" {
+		t.Errorf("status %s (%s), steps %s", r.Status, r.Error, got)
+	}
+}
+
+// An abort withdraws the run's open items.
+func TestEngineGateAbort(t *testing.T) {
+	e := newRigEnv(t, `version: 1
+id: demo
+steps:
+  - { id: approve, type: gate, ask: 'Go?', next_hop: { on: { yes: end, no: end } } }
+`)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitItem(r.ID)
+	e.mustLaight("abort", r.Short(), "--yes")
+	e.waitEnded(r.ID)
+	if items, _ := inbox.Pending(e.home); len(items) != 0 {
+		t.Errorf("items left: %+v", items)
 	}
 }
 
@@ -208,6 +337,7 @@ steps:
   - { id: two, seat: a, objective: 'echo {{ .steps.one.out.missing }}' }
 `))
 	e.mustLaight("run", "demo")
+	e.abortItem(e.onlyRun().ID)
 	r := e.waitEnded(e.onlyRun().ID)
 	if r.Status != state.Failed || !strings.Contains(r.Error, "step two failed: objective:") {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
@@ -330,7 +460,8 @@ func readPid(t *testing.T, file string) int {
 	}
 }
 
-// A run that fails while a shell step still runs ends at once and stops the command.
+// A step that fails while a shell step still runs holds the run on an item; the command keeps
+// running, and aborting from the inbox ends the run at once and stops it.
 func TestEngineShellStoppedWhenRunFails(t *testing.T) {
 	e := newRigEnv(t, "")
 	pids := filepath.Join(t.TempDir(), "pids")
@@ -345,7 +476,12 @@ steps:
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
 	pid := readPid(t, pids)
+	e.waitItem(r.ID)
+	if syscall.Kill(pid, 0) != nil {
+		t.Error("the sibling command was stopped by the failure")
+	}
 	start := time.Now()
+	e.abortItem(r.ID)
 	if r := e.waitEnded(r.ID); r.Status != state.Failed {
 		t.Errorf("status %s: %s", r.Status, r.Error)
 	}
@@ -404,6 +540,7 @@ steps:
     run: 'read x < /dev/tty'
 `)
 	e.mustLaight("run", "demo")
+	e.abortItem(e.onlyRun().ID)
 	if r := e.waitEnded(e.onlyRun().ID); r.Status != state.Failed {
 		t.Errorf("status %s: %s", r.Status, r.Error)
 	}
@@ -436,11 +573,11 @@ id: demo
 seats:
   a: { runtime: shell, command: sh, cwd: repo }
 steps:
-  - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
-  - { id: two, type: gate, ask: "ok?" }
+  - { id: one, seat: a, objective: x }
+  - { id: two, seat: a, objective: y, needs: [one] }
 `)
 	// Refused before a run or a tmux session exists.
-	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "gates are not supported yet") {
+	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "needs and matrix are not supported yet") {
 		t.Errorf("run = %v\n%s", err, out)
 	}
 	if runs, _ := state.List(e.home); len(runs) != 0 {
