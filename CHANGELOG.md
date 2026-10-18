@@ -32,8 +32,8 @@ All notable changes to laight are documented here. The format follows
   (`.inputs`, `.steps.<id>.out`, `.base`, `.run`) and pasted into its seat; a seat gets its next
   step once it has finished the last one and its turn has ended; `session: fresh` restarts the
   seat before each of its steps. A seat that crashes fails its step; one whose agent exits
-  between steps is relaunched for its next one. Gates and
-  `needs`/`matrix` aren't supported yet: `laight run` refuses a workflow that uses them.
+  between steps is relaunched for its next one. `needs`/`matrix` aren't supported yet:
+  `laight run` refuses a workflow that uses them.
   `timeouts` are accepted but not acted on yet.
 - Shell steps (`run:`): the engine runs the command in the repo, with the workflow's and the
   step's `env` (the only way a secret reaches it), and routes on its exit code (0 → `ok`, else
@@ -42,6 +42,25 @@ All notable changes to laight are documented here. The format follows
   runs without a terminal and doesn't inherit the engine's `LAIGHT_SECRET_*`. Whatever it leaves
   running is stopped when it exits, and the run ending (any branch failing, an abort, or an abort
   after the engine died) stops the command and whatever it started.
+- The inbox, minimal: `laight inbox` lists what waits for a human in every run of every project,
+  oldest first, and `laight inbox <item> <answer>` answers one (the first answer wins; a later one
+  is told it was late; an item whose run ended or lost its engine is listed as such and refused;
+  an item file that can't be read is reported, never taken for an empty inbox). Items are files under
+  `~/.laight/inbox/`, their title and detail redacted (a long run only when it mixes upper case, lower case and
+  digits, so commit SHAs and branch names survive) and stripped of control characters.
+- Gates (`type: gate`): the rendered `ask` goes to the inbox with the step's exits as choices, and
+  the run routes on the answer.
+- A step that fails with no route, or that `max_hops` refuses, no longer ends the run: it raises a
+  `failed` item and the run waits, everything else carrying on. `retry` starts the step again
+  and grants one more hop past `max_hops`; `abort` fails the run. An aborted run withdraws its items.
+  An answer file that can't be read raises the item again (a gate's fails the gate) instead of
+  holding the run silently.
+- A live run whose engine died (killed, or the tmux server gone after a reboot) is reported as
+  such by `attach` and `abort` instead of looking live for ever; `laight abort` cleans it up.
+  Such a run is not resumed: `laight run --resume` is deferred (#8). Its abort lists the shell
+  commands it will stop (or leave running, when the boot time can't be read), and never signals a process group recorded before the last reboot
+  (that pid may be one of yours now). A tmux socket laight can't open is no longer taken for a
+  dead engine or a crashed seat.
 - `validate` rejects `env` on agent steps and gates (an agent's env is its seat's), an
   `exits:` name that isn't in the step's `allowed_exits`, and an `exits:` code that can never
   match (`"03"`, `"256"`).

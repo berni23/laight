@@ -1,8 +1,12 @@
 package tmux
 
 import (
+	"errors"
 	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -38,5 +42,42 @@ func TestConcurrentPaste(t *testing.T) {
 	}
 	if out, _ := s.run("list-buffers", "-F", "#{buffer_name}"); strings.Contains(out, "laight-") {
 		t.Errorf("buffers left behind: %s", out)
+	}
+}
+
+// A missing server is gone; a socket tmux can't open is "can't say", never "gone": a caller
+// would report a crashed seat or a dead engine.
+func TestAliveCantConnect(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root connects to any socket")
+	}
+	dir, err := os.MkdirTemp("/tmp", "lt") // short: a socket path is capped near 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	sockets := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.Mkdir(sockets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Server{Socket: "missing"}).Alive("s", "w"); !errors.Is(err, ErrGone) {
+		t.Errorf("no server: %v", err)
+	}
+	// A socket nobody may connect to: "Permission denied" on Linux and macOS alike. (A plain
+	// file reads as a stale socket on Linux, "no server running".)
+	l, err := net.Listen("unix", filepath.Join(sockets, "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := os.Chmod(filepath.Join(sockets, "file"), 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Server{Socket: "file"}).Alive("s", "w"); err == nil || errors.Is(err, ErrGone) {
+		t.Errorf("a socket tmux can't open: %v", err)
 	}
 }

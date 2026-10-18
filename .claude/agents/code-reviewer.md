@@ -66,7 +66,7 @@ Read the whole file around each change, not just the hunk. Check every diff agai
 5. **State is files, written safely.** Writes are atomic (temp + rename, `internal/state`). Only the
    engine writes `run.json`, under its `flock`; `done` and hooks write their own files. Anything the
    engine needs after a crash must be recoverable from `run.json` + `events.jsonl` — in-memory-only
-   state breaks `run --resume`.
+   state would make resume (deferred, #8) impossible to add later.
 6. **Driving a seat (§5).** Long text goes in by `load-buffer` + `paste-buffer -p`, never `send-keys`.
    Launch prompts are accepted only for laight's own worktrees. Readiness has a timeout.
 7. **The human channel (requirement 4, §6).** An agent is never blocked without an inbox item. An

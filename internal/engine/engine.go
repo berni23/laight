@@ -1,6 +1,6 @@
 // Package engine runs a workflow's steps on its rig: the loop of CLAUDE.md section 4. Each tick
 // reads run.json and the files agents write (out/, seats/*.idle), acts, and appends events. Only
-// the engine writes run.json, so a restarted engine continues from the files alone.
+// the engine writes run.json.
 package engine
 
 import (
@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
@@ -51,10 +52,7 @@ func (e *Engine) event(ev state.Event) {
 // Supported reports the first thing in the workflow this engine can't run yet, or nil.
 func Supported(w *spec.Workflow) error {
 	for _, st := range w.Steps {
-		switch {
-		case st.Type == spec.TypeGate:
-			return fmt.Errorf("step %s: gates are not supported yet (#9)", st.ID)
-		case len(st.Needs) > 0 || len(st.Matrix) > 0:
+		if len(st.Needs) > 0 || len(st.Matrix) > 0 {
 			return fmt.Errorf("step %s: needs and matrix are not supported yet (#12)", st.ID)
 		}
 	}
@@ -91,7 +89,8 @@ type start struct {
 	restart bool // relaunch the seat first (session: fresh, or its pane died)
 }
 
-// tick does one round: finish the hops that are done, route them, start what can start.
+// tick does one round: act on inbox answers, finish the hops that are done, route them, start
+// what can start.
 func (e *Engine) tick(ctx context.Context, id string) (status, reason string, err error) {
 	var starts []start
 	var events []state.Event
@@ -126,12 +125,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			if ctx.Err() != nil {
 				return "", "", ctx.Err()
 			}
-			// Finish the hop as failed, so it goes through routing like any other ending.
-			e.logf("✕ %s: %v", s.hop.Step, err)
-			msg, _, _ := strings.Cut(err.Error(), "\n")
-			if err := state.WriteDone(e.Home, id, state.Done{
-				Step: s.hop.Step, Hop: s.hop.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg}, Engine: true,
-			}); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
+			if err := e.fail(id, &s.hop, err); err != nil {
 				return "", "", err
 			}
 		}
@@ -156,12 +150,74 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		r.Queue = entrySteps(r.Spec)
 	}
 
-	// 1. Hops that finished: `laight done`, a failure the engine recorded, or a crashed seat.
+	// 0. Failed items a human answered: retry the step, or abort the run. An answer that can't
+	// be read is asked again, under a new item: the old one is gone from the inbox.
+	var blocked, reask []*state.Blocked
+	for _, b := range r.Blocked {
+		it, err := inbox.Answered(e.Home, b.Item)
+		switch {
+		case err != nil:
+			e.logf("warning: can't read the answer to %s, asking again: %v", b.Step, err)
+			reask = append(reask, b)
+		case it == nil:
+			blocked = append(blocked, b)
+		case it.Answer == inbox.Retry:
+			e.logf("↻ %s: retried from the inbox", b.Step)
+			r.ExtraHops++ // a human chose to go on: past max_hops if need be (rule 4)
+			r.Queue = append(r.Queue, b.Step)
+		default:
+			e.logf("✕ %s: aborted from the inbox", b.Step)
+			return state.Failed, b.Error, nil, events
+		}
+	}
+	r.Blocked = blocked
+	// block holds the run on a failed item; without one, a human would never hear of it, so the
+	// run fails instead.
+	block := func(h *state.Hop, step, reason string) bool {
+		it := inbox.Item{ID: state.NewID(time.Now()), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Step: step,
+			Kind: inbox.Failed, Title: reason, Detail: reason, Choices: []string{inbox.Retry, inbox.Abort}}
+		if h != nil {
+			it.Seat, it.Hop = h.Seat, h.N
+		}
+		if err := inbox.Put(e.Home, it); err != nil {
+			e.logf("warning: can't raise an inbox item: %v", err)
+			return false
+		}
+		r.Blocked = append(r.Blocked, &state.Blocked{Step: step, Item: it.ID, Error: reason})
+		events = append(events, state.Event{Run: r.ID, Type: "inbox.raised", Step: step,
+			Data: map[string]any{"item": it.ID, "kind": it.Kind}})
+		e.logf("  waiting in the inbox: laight inbox %s retry|abort", it.Short())
+		return true
+	}
+	for _, b := range reask {
+		if !block(nil, b.Step, b.Error) {
+			return state.Failed, b.Error, nil, events
+		}
+	}
+
+	// 1. Hops that finished: `laight done`, a failure the engine recorded, a crashed seat, or a
+	// gate a human answered.
 	var running []*state.Hop
 	for _, h := range r.Active {
 		d, err := state.ReadDone(e.Home, r.ID, h.Step, h.N)
 		if err != nil {
 			e.logf("warning: %v", err)
+		}
+		if d == nil && h.Item != "" {
+			if it, err := inbox.Answered(e.Home, h.Item); err != nil {
+				if err := e.fail(r.ID, h, fmt.Errorf("can't read the answer to item %s: %w", state.Short(h.Item), err)); err != nil {
+					e.logf("warning: %v", err)
+				}
+				d, _ = state.ReadDone(e.Home, r.ID, h.Step, h.N)
+			} else if it != nil {
+				ans := state.Done{Step: h.Step, Hop: h.N, Exit: it.Answer, Engine: true}
+				if err := state.WriteDone(e.Home, r.ID, ans); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
+					e.logf("warning: %v", err)
+				}
+				if d, _ = state.ReadDone(e.Home, r.ID, h.Step, h.N); d == nil {
+					d = &ans
+				}
+			}
 		}
 		if d == nil && h.Seat != "" && e.seatGone(r, h.Seat) {
 			// Recorded like any other ending, so `laight done` racing the crash still wins.
@@ -194,9 +250,11 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		next := st.NextHop.On[d.Exit]
 		switch {
 		case next == "" && d.Exit == spec.ExitFailed:
-			e.logf("✕ %s failed%s", h.Step, errSuffix(d.Out))
-			r.Active = nil
-			return state.Failed, "step " + h.Step + " failed" + errSuffix(d.Out), nil, events
+			reason := "step " + h.Step + " failed" + errSuffix(d.Out)
+			e.logf("✕ %s", reason)
+			if !block(h, h.Step, reason) {
+				return state.Failed, reason, nil, events
+			}
 		case next == "" || next == spec.End:
 			e.logf("✓ %s → %s (branch ends)", h.Step, d.Exit)
 		default:
@@ -227,26 +285,40 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		}
 	}
 
-	// 3. Queued steps whose seat is free (rule 5: one step per seat at a time). Shell steps have
-	// no seat: they start at once.
+	// 3. Queued steps whose seat is free (rule 5: one step per seat at a time). Shell steps and
+	// gates have no seat: they start at once.
 	var waiting []string
 	for _, id := range r.Queue {
 		st := r.Spec.Step(id)
 		s := r.Seats[st.Seat]
-		if st.Type != spec.TypeShell && (s == nil || s.Turn || r.ActiveOn(st.Seat) != nil) {
+		if st.Seat != "" && (s == nil || s.Turn || r.ActiveOn(st.Seat) != nil) {
 			waiting = append(waiting, id)
 			continue
 		}
-		if r.Hops >= r.Spec.LoopGuards.MaxHops {
-			e.logf("✕ max_hops (%d) reached before %s", r.Spec.LoopGuards.MaxHops, id)
-			return state.Failed, fmt.Sprintf("loop_guards.max_hops (%d) reached before step %s", r.Spec.LoopGuards.MaxHops, id), nil, events
+		if r.Hops >= r.Spec.LoopGuards.MaxHops+r.ExtraHops {
+			reason := fmt.Sprintf("loop_guards.max_hops (%d) reached before step %s", r.Spec.LoopGuards.MaxHops, id)
+			e.logf("✕ %s", reason)
+			if !block(nil, id, reason) {
+				return state.Failed, reason, nil, events
+			}
+			continue
 		}
 		r.Hops++
 		h := &state.Hop{Step: id, Seat: st.Seat, N: r.Hops, Started: time.Now().UTC()}
 		r.Active = append(r.Active, h)
+		ev("step.started", h, nil)
+		if st.Type == spec.TypeGate {
+			if it, err := e.gate(r, h); err != nil {
+				if err := e.fail(r.ID, h, err); err != nil {
+					e.logf("warning: %v", err)
+				}
+			} else {
+				ev("inbox.raised", h, map[string]any{"item": it.ID, "kind": it.Kind})
+			}
+			continue
+		}
 		if s == nil {
 			starts = append(starts, start{hop: *h})
-			ev("step.started", h, nil)
 			continue
 		}
 		if s.Up && e.seatGone(r, st.Seat) { // its agent exited while it was idle
@@ -256,15 +328,44 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		restart := !s.Up || (r.Spec.Seats[st.Seat].Session == "fresh" && s.Given > 0)
 		s.Step, s.Hop, s.Turn, s.Given = id, h.N, true, s.Given+1
 		starts = append(starts, start{hop: *h, restart: restart})
-		ev("step.started", h, nil)
 	}
 	r.Queue = waiting
 
-	// 4. Rule 4: nothing running or waiting, and nothing failed unrouted.
-	if len(r.Active) == 0 && len(r.Queue) == 0 {
+	// 4. Rule 4: nothing running, waiting, or held on a failed item.
+	if len(r.Active) == 0 && len(r.Queue) == 0 && len(r.Blocked) == 0 {
 		return state.Succeeded, "", nil, events
 	}
 	return "", "", starts, events
+}
+
+// gate asks a gate's question in the inbox; the answer, one of the step's exits, finishes the hop.
+func (e *Engine) gate(r *state.Run, h *state.Hop) (*inbox.Item, error) {
+	st := r.Spec.Step(h.Step)
+	title, err := spec.Render(st.ID+".ask", st.Ask, r.TemplateData())
+	if err != nil {
+		return nil, fmt.Errorf("ask: %w", err)
+	}
+	h.Item = state.NewID(time.Now())
+	it := inbox.Item{ID: h.Item, Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Step: st.ID, Hop: h.N,
+		Kind: inbox.Gate, Title: strings.TrimSpace(title), Choices: st.AllowedExits}
+	if err := inbox.Put(e.Home, it); err != nil {
+		return nil, err
+	}
+	e.logf("? %s: %s (laight inbox %s %s)", st.ID, it.Title, it.Short(), strings.Join(it.Choices, "|"))
+	return &it, nil
+}
+
+// fail finishes a hop as failed, so it goes through routing like any other ending.
+func (e *Engine) fail(id string, h *state.Hop, err error) error {
+	e.logf("✕ %s: %v", h.Step, err)
+	msg, _, _ := strings.Cut(err.Error(), "\n")
+	err = state.WriteDone(e.Home, id, state.Done{
+		Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg}, Engine: true,
+	})
+	if errors.Is(err, state.ErrAlreadyDone) {
+		return nil
+	}
+	return err
 }
 
 // deliver gives a started hop to its seat: relaunch it if needed, then paste the objective. A

@@ -302,7 +302,14 @@ func cmdAttach(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	if !srv.HasSession(r.Session) {
+	gone := !srv.HasSession(r.Session)
+	if engineDied(srv, r) {
+		fmt.Fprintf(stderr, "laight: %s\n", deadEngine(r))
+		if gone {
+			return 1
+		}
+	}
+	if gone {
 		return fail(stderr, "run %s is %s and its tmux session is gone", r.Short(), r.Status)
 	}
 	window := ""
@@ -333,6 +340,9 @@ func follow(srv tmux.Server, home string, r *state.Run, window string, stdout, s
 		return fail(stderr, "%v", err)
 	}
 	switch {
+	case engineDied(srv, r):
+		fmt.Fprintln(stdout, deadEngine(r))
+		return 1
 	case r.Live():
 		fmt.Fprintf(stdout, "run %s is %s; back with: laight attach %s\n", r.Short(), r.Status, r.Short())
 	case r.Error != "":
@@ -367,6 +377,17 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 			ws, _ := srv.Windows(r.Session)
 			plan = append(plan, fmt.Sprintf("stop tmux session %s (%s)", r.Session, strings.Join(ws, ", ")))
 		}
+		hops, err := rig.Groups(r)
+		for _, h := range hops {
+			plan = append(plan, fmt.Sprintf("stop shell step %s (process group %d)", h.Step, h.Pgid))
+		}
+		if err != nil {
+			for _, h := range r.Active {
+				if h.Pgid > 0 {
+					plan = append(plan, fmt.Sprintf("leave shell step %s running (process group %d): %v", h.Step, h.Pgid, err))
+				}
+			}
+		}
 		if r.Spec.OnFinish.Failure == "destroy" {
 			for _, wt := range worktrees {
 				plan = append(plan, "delete worktree "+wt+", with any uncommitted changes")
@@ -374,7 +395,11 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		} else if len(worktrees) > 0 {
 			plan = append(plan, fmt.Sprintf("keep %d worktree(s) (on_finish.failure: keep); `laight abort %s` again deletes them", len(worktrees), r.Short()))
 		}
-		if !confirm(fmt.Sprintf("Abort run %s (%s, %s):", r.Short(), r.Workflow, r.Status), plan, yes, stdout, stderr) {
+		status := r.Status
+		if engineDied(srv, r) {
+			status = "its engine died"
+		}
+		if !confirm(fmt.Sprintf("Abort run %s (%s, %s):", r.Short(), r.Workflow, status), plan, yes, stdout, stderr) {
 			return 1
 		}
 		if err := g.Down(r.ID, state.Aborted, ""); err != nil {
@@ -401,6 +426,21 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, "%v", errors.Join(errs...))
 	}
 	return 0
+}
+
+// engineDied reports whether a live run has lost its engine: the window exited or was closed, or
+// the tmux session or server is gone (a reboot). Such a run never ends on its own, and laight
+// doesn't resume it (CLAUDE.md §4). When tmux can't say, it says no.
+func engineDied(srv tmux.Server, r *state.Run) bool {
+	if !r.Live() {
+		return false
+	}
+	alive, err := srv.Alive(r.Session, rig.EngineWindow)
+	return !alive && (err == nil || errors.Is(err, tmux.ErrGone))
+}
+
+func deadEngine(r *state.Run) string {
+	return fmt.Sprintf("run %s: its engine died, so it will never finish; clean it up with: laight abort %s", r.Short(), r.Short())
 }
 
 // findRun resolves [run] for attach and abort: a short or full id prefix, or the project's only

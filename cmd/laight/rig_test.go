@@ -1,14 +1,19 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/state"
 	"github.com/berni23/laight/internal/tmux"
 )
@@ -354,6 +359,88 @@ func TestEngineInterrupt(t *testing.T) {
 	if e.srv.HasSession(r.Session) {
 		t.Error("the session outlived the run")
 	}
+}
+
+// A run whose engine died (killed, then the whole tmux server gone, as in a reboot) is reported
+// as such instead of looking live for ever, and abort still cleans it up.
+func TestEngineDied(t *testing.T) {
+	e := newRigEnv(t, twoShellSeats)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitFor(r.ID, "seat.up", 2)
+	e.killEngine(r)
+	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died, so it will never finish; clean it up with: laight abort "+r.Short()) {
+		t.Errorf("attach with a dead engine:\n%s", out)
+	}
+	e.srv.KillServer()
+	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died") || strings.Contains(out, "tmux session is gone") {
+		t.Errorf("attach with no tmux server:\n%s", out)
+	}
+	if out := e.mustLaight("abort", r.Short(), "--yes"); !strings.Contains(out, "(demo, its engine died)") {
+		t.Errorf("abort:\n%s", out)
+	}
+	if r := e.waitStatus(r.ID, state.Aborted); len(e.rigWorktrees(r)) != 0 {
+		t.Errorf("on_finish.failure destroy kept %v", e.rigWorktrees(r))
+	}
+}
+
+// When tmux can't say whether the engine lives (a socket it can't open), the run isn't called dead.
+func TestEngineDiedCantSay(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root connects to any socket")
+	}
+	dir, err := os.MkdirTemp("/tmp", "lt") // short: a socket path is capped near 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	sockets := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.Mkdir(sockets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A socket nobody may connect to: "Permission denied" on Linux and macOS alike. (A plain
+	// file reads as a stale socket on Linux, "no server running".)
+	l, err := net.Listen("unix", filepath.Join(sockets, "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := os.Chmod(filepath.Join(sockets, "file"), 0); err != nil {
+		t.Fatal(err)
+	}
+	r := &state.Run{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Status: state.Running, Session: "laight-demo-aaaaaa"}
+	if engineDied(tmux.Server{Socket: "file"}, r) {
+		t.Error("a socket tmux can't open reads as a dead engine")
+	}
+	if !engineDied(tmux.Server{Socket: "missing"}, r) {
+		t.Error("no tmux server reads as a live engine")
+	}
+}
+
+// killEngine kills the run's engine as a crash would, leaving its pane dead.
+func (e *rigEnv) killEngine(r *state.Run) {
+	e.t.Helper()
+	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid == 0 {
+		e.t.Fatalf("engine pid %q: %v", out, err)
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		e.t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !e.srv.PaneDead(r.Session, "engine"); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			e.t.Fatal("the engine pane never died")
+		}
+	}
+}
+
+func (e *rigEnv) rigWorktrees(r *state.Run) []string {
+	return rig.New(e.home, e.bin, nil).Worktrees(r)
 }
 
 func TestFormatDefault(t *testing.T) {

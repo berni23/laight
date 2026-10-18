@@ -47,10 +47,20 @@ type Run struct {
 	Finished *time.Time        `json:"finished,omitempty"`
 
 	// The engine's progress.
-	Hops   int                    `json:"hops"`             // step starts so far (loop_guards.max_hops)
-	Queue  []string               `json:"queue,omitempty"`  // steps routed to, waiting for their seat
-	Active []*Hop                 `json:"active,omitempty"` // steps running now
-	Steps  map[string]*StepResult `json:"steps,omitempty"`  // the latest finished hop of each step
+	Hops      int                    `json:"hops"`                 // step starts so far (loop_guards.max_hops)
+	ExtraHops int                    `json:"extra_hops,omitempty"` // hops granted past max_hops from the inbox
+	Queue     []string               `json:"queue,omitempty"`      // steps routed to, waiting for their seat
+	Active    []*Hop                 `json:"active,omitempty"`     // steps running now
+	Blocked   []*Blocked             `json:"blocked,omitempty"`    // steps waiting on a failed item
+	Steps     map[string]*StepResult `json:"steps,omitempty"`      // the latest finished hop of each step
+}
+
+// Blocked is a step that failed with no route, or that max_hops refused. The run waits on a
+// failed inbox item until a human answers retry (the step starts again) or abort (the run fails).
+type Blocked struct {
+	Step  string `json:"step"`
+	Item  string `json:"item"`
+	Error string `json:"error"` // why the run fails if aborted
 }
 
 // Hop is one start of a step.
@@ -60,6 +70,7 @@ type Hop struct {
 	N       int       `json:"hop"`
 	Started time.Time `json:"started"`
 	Pgid    int       `json:"pgid,omitempty"` // a shell step's process group, once it started
+	Item    string    `json:"item,omitempty"` // a gate's inbox item
 }
 
 // StepResult is how a step's latest hop finished: what templates see as .steps.<id>.

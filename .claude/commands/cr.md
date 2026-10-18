@@ -44,7 +44,7 @@ model silently — if one is unavailable, stop and say so.
 
 **Lenses:** both review the whole diff, but each leads with a different emphasis:
 - **A — engine, tmux & durability:** the tmux driver and its own socket, rig spin-up/tear-down,
-  worktrees and `on_finish`, crash and `--resume`, atomic state writes and the `run.json` flock,
+  worktrees and `on_finish`, crashes and a dead engine, atomic state writes and the `run.json` flock,
   who writes which file, process and pane lifecycle, hook blocking and expiry.
 - **B — spec, contract & coverage:** does the code do what `CLAUDE.md` says (and the spec say what
   the code does); the CLI surface and its messages, `--yes`/confirm; YAML, JSON Schema and

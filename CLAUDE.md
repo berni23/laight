@@ -8,8 +8,9 @@ watch agents.
 
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
-loop runs agent and shell steps (`laight done`, routing, `max_hops`); resume, the inbox and
-`needs`/`matrix` are next.
+loop runs agent and shell steps (`laight done`, routing, `max_hops`), gates, and a minimal inbox
+(`files` queue, `laight inbox`, `gate` and `failed` items); the `PermissionRequest` hook and
+`needs`/`matrix` are next. Resuming a run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -193,7 +194,7 @@ steps:
     type: shell                   # deterministic step, no agent
     run: gh pr merge {{ .steps.implement.out.pr }} --squash && gh issue close {{ .steps.implement.out.issue }}
 
-loop_guards: { max_hops: 11 }     # exceeding it → run fails → inbox item
+loop_guards: { max_hops: 11 }     # exceeding it → a `failed` inbox item: retry or abort
 timeouts: { step: 90m }           # a step over its timeout → inbox item (not a kill)
 on_finish: { success: destroy, failure: keep }   # worktrees; the tmux session always stops
 ```
@@ -230,8 +231,10 @@ steps:
    non-`failed` exit.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
    without `next_hop` simply ends its branch; `end` ends it explicitly.
-4. The run succeeds when no step is running or ready and none failed unrouted; it fails on an
-   unrouted `failed`, `max_hops`, or an `abort`.
+4. The run succeeds when no step is running, ready or held. An unrouted `failed`, or a step
+   `max_hops` refuses, is **held** on a `failed` inbox item while everything else carries on:
+   `retry` starts that step again (past `max_hops`, with one more hop), `abort` fails the run.
+   It also fails on `laight abort`. (Decided in #9: with no resume, waiting is how a run survives.)
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
    their own seat instance (`dev#1`, `dev#2`…), so parallelism is never hidden contention.
    `max_parallel` on a matrix step caps live copies (default 4).
@@ -247,7 +250,8 @@ repo's main checkout, with the workflow's `env` plus the step's own `env` (and `
 of its own: no terminal, so a command that prompts fails instead of hanging the run. When `sh`
 exits, whatever it left running is stopped (SIGTERM, then SIGKILL after 5s); so is the whole
 command when the run ends, by any branch, an abort, or an abort after the engine died (its
-process group is kept on the hop in run.json). Its output goes to `out/<step>-<hop>.log`, with
+process group is kept on the hop in run.json, and is signalled only if the hop started since
+the machine last booted: after a reboot that pid may be anyone's). Its output goes to `out/<step>-<hop>.log`, with
 the secret values its env read replaced by `***` (exact values only: an encoded copy isn't
 caught); its exit code is `.steps.<id>.out.code`.
 **A step's `env` exists only on shell steps** (#16): an agent's env is its seat's, fixed when the
@@ -258,7 +262,7 @@ implicit on every step and can be routed. **Outputs:**
 digit for digit; `null` is empty). Templates see only `.inputs`, `.steps.<id>.out`/`.exit`,
 `.matrix`, `.base`, `.run.id`/`.project`/`.workflow` and, **in `env` only**, `secret`: every other
 template can be pasted into a pane, and panes are logged. **`next_hop.mode: end`** ends the branch
-whatever the exit, except an unrouted `failed`, which still fails the run (rule 4).
+whatever the exit, except an unrouted `failed`, which is still held (rule 4).
 
 Guidance is delivered **without touching tracked files**: for Claude Code via
 `--append-system-prompt-file` / `--settings` on launch (whatever the installed version supports,
@@ -288,9 +292,14 @@ on a real issue.
   `run.json` while the engine updates it.
 - **The engine** is `laight engine <run>` running in window 0 (`engine`) of the rig's tmux session.
   When the run finishes, the engine applies `on_finish`, stops the seats and kills the session.
-  It is a loop: read state → act → append event → sleep/wake on file change. Kill it and run
-  `laight run --resume <run>`, and it continues from `run.json` + `events.jsonl`. That is the whole
-  durability story.
+  It is a loop: read state → act → append event → sleep/wake on file change.
+- **When the engine dies** (a reboot, the tmux server killed, a bug), the run is lost, not
+  resumed: `attach` and `abort` report it as "engine died", and `laight abort` cleans it up. The
+  worktrees follow `on_finish.failure` (kept by default); whatever the agents committed or pushed
+  stays; a new run starts over. **Resume is deferred (#8)**: the engine lives in tmux, so it rarely dies, and
+  recovering a step in flight is most of the engine's hard cases (§12.1). It comes back only if
+  real runs show engines dying. Keep the state in files anyway (`run.json` + `events.jsonl`), so
+  it stays possible.
 
 ## 5. Driving a seat
 
@@ -305,7 +314,8 @@ on a real issue.
   it raises an inbox item instead of looping.
 - **Fresh vs resume:** `fresh` restarts the seat's CLI before each of its steps (`/clear` is not
   enough for independence); `resume` keeps the session across steps of a run. laight gives every
-  Claude session a `--session-id`, so `laight run --resume` relaunches a crashed seat with `--resume`.
+  Claude session a `--session-id`, so a seat relaunched within a run (it crashed while idle)
+  continues its conversation with `--resume`.
 - **Idle:** a seat gets its next step only after `laight done` *and* its Stop hook (the turn ended).
 - **Launch prompts:** Claude's folder-trust dialog (new worktree) and yolo's warning are accepted by
   the driver via `capture-pane`, only for laight's own worktrees; `~/.claude.json` is never written.
@@ -335,11 +345,15 @@ Everything that needs a human becomes an **inbox item**:
 | `stuck` | step timeout, Stop hook gave up, idle with no `laight done` | choices: nudge / open pane / fail step |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | choices: retry step / abort run |
 
-An item: `{id, run, repo, workflow, step, seat, kind, title, detail, choices[], created, expires?}`.
-`detail` is a short excerpt (the command asking permission, the last lines of the pane),
-**redacted** (env values, tokens, anything matching common secret patterns).
+An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
+expires?, answer?, answered?}`. `detail` is a short excerpt (the command asking permission, the
+last lines of the pane). Title and detail are **redacted** (tokens, anything matching common
+secret patterns; the seat's env values too, once its hooks raise items from inside it, #10) and
+stripped of control characters, by the queue itself, so no producer can forget.
 
-**Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy:
+**Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy
+(`internal/inbox` is the `files` queue as plain functions today; the interface is extracted when a
+second backend arrives, not before):
 
 ```go
 type Queue interface {            // where items wait and answers come back
@@ -435,7 +449,6 @@ use that none of these covers.
 laight init                          scaffold .laight/                                    ← setup
 laight validate [workflow]           schema + semantic checks (run also does this first)
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live     ← start
-laight run --resume <run>            restart a run whose engine died (crash, reboot)
 laight watch [run]                   live pipeline view; no run = every run, one line each ← track
 laight show [run] [--export]         the web view (localhost, foreground)                 ← show
 laight inbox [<item> <answer>]       the human queue; with arguments, answer one (scripts)  ← answer
@@ -464,7 +477,7 @@ and lists what it will do; `--yes` skips it for scripts.
   a generated settings file passed at launch, never into the user's `~/.claude/settings.json`.
 - Tests: unit tests for spec parsing, routing, templating; an integration test with a fake runtime
   (`runtime: shell` running a script that calls `laight done`) exercising loops, gates, timeouts,
-  abort and resume, inside a throwaway tmux server. Real Claude runs are manual and supervised.
+  abort and a dead engine, inside a throwaway tmux server. Real Claude runs are manual and supervised.
 
 ### Distribution
 
@@ -492,7 +505,7 @@ Installing must be one command, with no runtime to install first.
 
 1. **M0** Schemas, `init`, `validate`.
 2. **M1** tmux driver, rig spin-up/tear-down per run, worktrees, `on_finish`, `attach`, `abort`.
-3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps, resume; a minimal inbox
+3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps; a minimal inbox
    (the `files` queue, `laight inbox <item> <answer>`, gates, the `PermissionRequest` hook); then `needs`
    and `matrix` (parallel). Acceptance: the
    issue cycle of section 3 on a real issue in a real repo.
@@ -544,6 +557,13 @@ The tools are:
 - **Claude Squad** (`smtg-ai/claude-squad`): manages tmux sessions in git worktrees.
 
 ### 12.1 Delivering a step exactly once (#8)
+
+**Deferred with resume (#8, §4).** Without a restarted engine, nothing re-delivers a hop, so this
+matters only once resume comes back. If it does, the user has settled the hardest case: a hop
+the agent already acked whose seat died while the engine was down continues only when the seat
+can resume its conversation (Claude with a saved transcript), with a short note to carry on, not
+the objective, and once per hop; otherwise it fails as a crashed seat would. Below is the design
+as researched.
 
 The engine records a hop, then pastes it into the pane. If the engine dies in between, a restarted
 engine can't tell whether the agent got the prompt. tmux gives no acknowledgement.
@@ -603,9 +623,11 @@ twice on the same hop raises a `failed` item instead of being respawned again (G
 
 ### 12.3 One parallel branch fails while others run (#12)
 
-Today rule 4 fails the run as soon as a step fails with no route, and the teardown kills whatever
-else is running. That is harmless in series. With `needs`/`matrix`, it throws away running
-siblings' work, and their worktrees with it.
+Before #9, rule 4 failed the run as soon as a step failed with no route, and the teardown killed
+whatever else was running: harmless in series, but with `needs`/`matrix` it would throw away
+running siblings' work, and their worktrees with it. #9 holds the failed step on a `failed` item
+while the rest carries on, and fails the run only on `abort`; #12 still decides what happens to
+the steps that `need` a held one.
 
 - **Archon** runs siblings to completion (`Promise.allSettled`). Their dependents are skipped under
   the default `trigger_rule: all_success`. A failing fan-out child "does not stop its siblings";
@@ -639,7 +661,9 @@ transcript. Since #14, `{{ secret }}` renders only into `env`.
 **For laight:** keep the current rule and extend it the way Archon does. Secrets reach an agent or
 a shell step only as env vars (seat `env`, or a shell step's `env`, as #16 settled it). A
 secret never goes into a rendered prompt or command line, so #7 should not allow `secret` in
-`run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details.
+`run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details; a bare
+long run counts only when it mixes upper case, lower case and digits, so commit SHAs and branch
+names survive.
 The values laight knows (the secrets it rendered into seat env) can also be stripped from the pane
 log as it is written, by piping `pipe-pane` through a filter instead of `cat`. **But raw pane logs
 can't be fully redacted**: an agent can print whatever it can read. So pane logs stay inside the
