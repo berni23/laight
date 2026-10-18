@@ -21,9 +21,17 @@ func Render(name, text string, data map[string]any) (string, error) {
 
 // RenderWithSecrets is Render plus `secret "x"`, which reads $LAIGHT_SECRET_X, then the OS
 // keychain (service "laight", account "x"). Only for values that never reach a pane or a log:
-// env (see SecretsAllowed).
-func RenderWithSecrets(name, text string, data map[string]any) (string, error) {
-	return render(name, text, data, template.FuncMap{"secret": Secret})
+// env. It also returns the secret values it read, so a log of what uses them can strip them.
+func RenderWithSecrets(name, text string, data map[string]any) (string, []string, error) {
+	var used []string
+	out, err := render(name, text, data, template.FuncMap{"secret": func(n string) (string, error) {
+		v, err := Secret(n)
+		if err == nil && v != "" {
+			used = append(used, v)
+		}
+		return v, err
+	}})
+	return out, used, err
 }
 
 func render(name, text string, data map[string]any, funcs template.FuncMap) (string, error) {

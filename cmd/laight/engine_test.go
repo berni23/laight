@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -212,6 +214,222 @@ steps:
 	}
 }
 
+// Shell steps: outputs into run:, a mapped exit code, a routed failure, the step's env with a
+// secret kept out of its log, run in the repo and not as a seat.
+func TestEngineShellSteps(t *testing.T) {
+	t.Setenv("LAIGHT_SECRET_TOK", "hunter2-xyz")
+	t.Setenv("LAIGHT_SEAT", "a")                 // inherited by the engine: a shell step must not be seat a
+	t.Setenv("LAIGHT_SECRET_OTHER", "other-xyz") // the engine's, but no step's env reads it
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, strings.ReplaceAll(fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - id: one
+    seat: a
+    objective: '"$L" done handoff n=3'
+    next_hop: { on: { handoff: check } }
+  - id: check
+    run: 'echo "token=$TOK greeting=$HELLO"; exit {{ .steps.one.out.n }}'
+    env: { TOK: '{{ secret "tok" }}', HELLO: hi }
+    exits: { "3": retry }
+    next_hop: { on: { retry: boom, ok: end } }
+  - id: boom
+    run: 'echo oops >&2; exit 1'
+    next_hop: { on: { failed: last } }
+  - id: last
+    run: '[ "$(pwd -P)" = "$(cd REPO && pwd -P)" ] && [ -z "$LAIGHT_SEAT" ] && [ "$LAIGHT_STEP" = last ] && [ -z "$LAIGHT_SECRET_OTHER" ] && [ -n "$LAIGHT_RUN" ]'
+`), "REPO", e.repo))
+	e.mustLaight("run", "demo")
+	r := e.waitEnded(e.onlyRun().ID)
+	if r.Status != state.Succeeded {
+		t.Fatalf("status %s: %s", r.Status, r.Error)
+	}
+	if got := strings.Join(e.stepsDone(r.ID), " "); got != "one:handoff check:retry boom:failed last:ok" {
+		t.Errorf("steps %s", got)
+	}
+	if r.Steps["check"].Out["code"] != json.Number("3") || !strings.Contains(r.Steps["boom"].Out["error"].(string), "exit code 1") {
+		t.Errorf("check %+v, boom %+v", r.Steps["check"], r.Steps["boom"])
+	}
+	logs := map[string]string{}
+	for _, f := range []string{"check-2", "boom-3"} {
+		b, err := os.ReadFile(filepath.Join(state.Dir(e.home, r.ID), "out", f+".log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		logs[f] = string(b)
+	}
+	if want := "$ echo \"token=$TOK greeting=$HELLO\"; exit 3\ntoken=*** greeting=hi\n"; logs["check-2"] != want {
+		t.Errorf("check log:\n%s\nwant:\n%s", logs["check-2"], want)
+	}
+	if !strings.Contains(logs["boom-3"], "oops") {
+		t.Errorf("boom log: %s", logs["boom-3"])
+	}
+	evs, _ := os.ReadFile(filepath.Join(state.Dir(e.home, r.ID), "events.jsonl"))
+	if strings.Contains(string(evs), "hunter2") {
+		t.Errorf("secret in events.jsonl")
+	}
+}
+
+// A shell step that runs before anything else (its run folder has no out/ yet), and an abort
+// that stops it together with what it started.
+func TestEngineShellFirstAndAbort(t *testing.T) {
+	e := newRigEnv(t, "")
+	pids := filepath.Join(t.TempDir(), "pids")
+	writeWorkflow(t, e, strings.ReplaceAll(`version: 1
+id: demo
+steps:
+  - id: wait
+    run: 'sleep 300 & echo $! > PIDS; sleep 301'
+`, "PIDS", pids))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	e.waitFor(r.ID, "step.started", 1)
+	deadline := time.Now().Add(10 * time.Second)
+	var pid int
+	for pid == 0 {
+		b, _ := os.ReadFile(pids)
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		if pid == 0 && time.Now().After(deadline) {
+			b, _ := os.ReadFile(filepath.Join(state.Dir(e.home, r.ID), "out", "wait-1.json"))
+			t.Fatalf("the command never started; out: %s", b)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	e.mustLaight("abort", r.Short(), "--yes")
+	if r := e.waitEnded(r.ID); r.Status != state.Aborted {
+		t.Errorf("status %s: %s", r.Status, r.Error)
+	}
+	waitGone(t, pid)
+	if _, err := os.Stat(filepath.Join(state.Dir(e.home, r.ID), "out", "wait-1.json")); !os.IsNotExist(err) {
+		t.Errorf("a killed command was recorded as finished: %v", err)
+	}
+}
+
+// waitGone fails the test unless process pid exits within 10s (and kills it if not).
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); syscall.Kill(pid, 0) == nil; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("process %d outlived the run", pid)
+		}
+	}
+}
+
+// readPid waits for a command to write a pid to file.
+func readPid(t *testing.T, file string) int {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		b, _ := os.ReadFile(file)
+		if pid, _ := strconv.Atoi(strings.TrimSpace(string(b))); pid != 0 {
+			return pid
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("nothing wrote a pid to %s", file)
+		}
+	}
+}
+
+// A run that fails while a shell step still runs ends at once and stops the command.
+func TestEngineShellStoppedWhenRunFails(t *testing.T) {
+	e := newRigEnv(t, "")
+	pids := filepath.Join(t.TempDir(), "pids")
+	writeWorkflow(t, e, strings.ReplaceAll(`version: 1
+id: demo
+steps:
+  - id: slow
+    run: 'sleep 300 & echo $! > PIDS; wait'
+  - id: bad
+    run: 'sleep 1; exit 1'
+`, "PIDS", pids))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	pid := readPid(t, pids)
+	start := time.Now()
+	if r := e.waitEnded(r.ID); r.Status != state.Failed {
+		t.Errorf("status %s: %s", r.Status, r.Error)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Errorf("the run took %s to end", d)
+	}
+	waitGone(t, pid)
+}
+
+// A command that exits 0 and leaves a child behind succeeded; the child is stopped with it.
+func TestEngineShellBackgroundChild(t *testing.T) {
+	e := newRigEnv(t, "")
+	pids := filepath.Join(t.TempDir(), "pids")
+	writeWorkflow(t, e, strings.ReplaceAll(`version: 1
+id: demo
+steps:
+  - id: spawn
+    run: 'sleep 300 & echo $! > PIDS'
+`, "PIDS", pids))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	pid := readPid(t, pids)
+	r = e.waitEnded(r.ID)
+	if r.Status != state.Succeeded || r.Steps["spawn"].Out["code"] != json.Number("0") {
+		t.Errorf("status %s: %s; spawn %+v", r.Status, r.Error, r.Steps["spawn"])
+	}
+	waitGone(t, pid)
+}
+
+// An abort after the engine died still stops a running command and what it started.
+func TestEngineShellAbortAfterEngineDied(t *testing.T) {
+	e := newRigEnv(t, "")
+	dir := t.TempDir()
+	writeWorkflow(t, e, strings.ReplaceAll(`version: 1
+id: demo
+steps:
+  - id: wait
+    run: 'echo $PPID > DIR/engine; sleep 300 & echo $! > DIR/pids; wait'
+`, "DIR", dir))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	pid := readPid(t, filepath.Join(dir, "pids"))
+	if err := syscall.Kill(readPid(t, filepath.Join(dir, "engine")), syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	e.mustLaight("abort", r.Short(), "--yes")
+	waitGone(t, pid)
+}
+
+// A command that wants a terminal fails at once instead of hanging the run.
+func TestEngineShellNoTerminal(t *testing.T) {
+	e := newRigEnv(t, `version: 1
+id: demo
+steps:
+  - id: ask
+    run: 'read x < /dev/tty'
+`)
+	e.mustLaight("run", "demo")
+	if r := e.waitEnded(e.onlyRun().ID); r.Status != state.Failed {
+		t.Errorf("status %s: %s", r.Status, r.Error)
+	}
+}
+
+// A `run:` that doesn't render fails its step, which routes like any failure.
+func TestEngineShellRenderFailure(t *testing.T) {
+	e := newRigEnv(t, `version: 1
+id: demo
+steps:
+  - id: one
+    run: 'echo {{ .steps.one.out.nope }}'
+    next_hop: { on: { failed: two } }
+  - id: two
+    run: 'true'
+`)
+	e.mustLaight("run", "demo")
+	r := e.waitEnded(e.onlyRun().ID)
+	if got := strings.Join(e.stepsDone(r.ID), " "); r.Status != state.Succeeded || got != "one:failed two:ok" {
+		t.Errorf("status %s (%s), steps %s", r.Status, r.Error, got)
+	}
+	if msg, _ := r.Steps["one"].Out["error"].(string); !strings.HasPrefix(msg, "run:") {
+		t.Errorf("one: %+v", r.Steps["one"])
+	}
+}
+
 func TestEngineUnsupported(t *testing.T) {
 	e := newRigEnv(t, `version: 1
 id: demo
@@ -219,10 +437,10 @@ seats:
   a: { runtime: shell, command: sh, cwd: repo }
 steps:
   - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
-  - { id: two, run: "true" }
+  - { id: two, type: gate, ask: "ok?" }
 `)
 	// Refused before a run or a tmux session exists.
-	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "shell steps are not supported yet") {
+	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "gates are not supported yet") {
 		t.Errorf("run = %v\n%s", err, out)
 	}
 	if runs, _ := state.List(e.home); len(runs) != 0 {

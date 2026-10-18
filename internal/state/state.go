@@ -59,6 +59,7 @@ type Hop struct {
 	Seat    string    `json:"seat,omitempty"`
 	N       int       `json:"hop"`
 	Started time.Time `json:"started"`
+	Pgid    int       `json:"pgid,omitempty"` // a shell step's process group, once it started
 }
 
 // StepResult is how a step's latest hop finished: what templates see as .steps.<id>.
@@ -83,8 +84,11 @@ type Seat struct {
 	Given int    `json:"given,omitempty"` // steps given to the seat in this run
 }
 
-// ActiveOn returns the hop running on seat, or nil.
+// ActiveOn returns the hop running on seat, or nil. Shell steps have no seat.
 func (r *Run) ActiveOn(seat string) *Hop {
+	if seat == "" {
+		return nil
+	}
 	for _, h := range r.Active {
 		if h.Seat == seat {
 			return h

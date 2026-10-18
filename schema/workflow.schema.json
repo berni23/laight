@@ -120,7 +120,7 @@
         "exits": {
           "type": "object",
           "description": "shell steps: exit code → exit name.",
-          "propertyNames": { "pattern": "^[0-9]+$" },
+          "propertyNames": { "pattern": "^(0|[1-9][0-9]?|1[0-9]{2}|2[0-4][0-9]|25[0-5])$" },
           "additionalProperties": { "$ref": "#/$defs/ident" }
         },
         "ask": { "type": "string", "description": "gate steps: the question for the human." },
@@ -150,7 +150,7 @@
         },
         "max_parallel": { "type": "integer", "minimum": 1, "description": "Matrix copies alive at once. Default 4." },
         "timeout": { "$ref": "#/$defs/duration" },
-        "env": { "$ref": "#/$defs/env" }
+        "env": { "$ref": "#/$defs/env", "description": "shell steps only: env of `run:`, over the workflow's env. The only place a shell step may use `secret`." }
       }
     }
   }
