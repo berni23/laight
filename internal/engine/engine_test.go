@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -211,5 +212,61 @@ func TestVerdictSavedWithState(t *testing.T) {
 	// A second engine on the same run gets the same verdict, not a success.
 	if status, reason, _ := e.tick(ctx, id); status != state.Failed || reason != "step one failed: boom" {
 		t.Errorf("second engine: %s %q", status, reason)
+	}
+}
+
+// breakAnswer leaves an item answered with a file nobody can read, as outside damage would.
+func breakAnswer(t *testing.T, home, item string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, "inbox", "answered"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "inbox", "answered", item+".json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(home, "inbox", item+".json"))
+}
+
+// A held step whose answer can't be read is asked again, under a new item: never held for ever
+// on an item nobody can see.
+func TestUnreadableRetryAnswer(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	e.step(t, id)
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Out: map[string]any{"error": "boom"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.step(t, id)
+	r := load(t, e, id)
+	if len(r.Blocked) != 1 {
+		t.Fatalf("blocked %+v", r.Blocked)
+	}
+	old := r.Blocked[0].Item
+	breakAnswer(t, e.Home, old)
+	if status, _ := e.step(t, id); status != "" {
+		t.Fatalf("status %s", status)
+	}
+	r = load(t, e, id)
+	if len(r.Blocked) != 1 || r.Blocked[0].Item == old || r.Blocked[0].Error != "step one failed: boom" {
+		t.Fatalf("blocked %+v", r.Blocked)
+	}
+	if _, err := inbox.Get(e.Home, r.Blocked[0].Item); err != nil {
+		t.Errorf("no new item: %v", err)
+	}
+}
+
+// A gate whose answer can't be read fails, through routing like any other ending.
+func TestUnreadableGateAnswer(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{{ID: "g", Type: spec.TypeGate, Ask: "Go?", AllowedExits: []string{"yes", "no"}}})
+	e.step(t, id)
+	r := load(t, e, id)
+	if len(r.Active) != 1 || r.Active[0].Item == "" {
+		t.Fatalf("active %+v", r.Active)
+	}
+	breakAnswer(t, e.Home, r.Active[0].Item)
+	e.step(t, id)
+	r = load(t, e, id)
+	if res := r.Steps["g"]; res == nil || res.Exit != spec.ExitFailed || len(r.Active) != 0 || len(r.Blocked) != 1 ||
+		!strings.Contains(r.Blocked[0].Error, "can't read the answer") {
+		t.Fatalf("steps %+v active %+v blocked %+v", r.Steps["g"], r.Active, r.Blocked)
 	}
 }

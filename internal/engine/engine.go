@@ -150,14 +150,15 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		r.Queue = entrySteps(r.Spec)
 	}
 
-	// 0. Failed items a human answered: retry the step, or abort the run.
-	var blocked []*state.Blocked
+	// 0. Failed items a human answered: retry the step, or abort the run. An answer that can't
+	// be read is asked again, under a new item: the old one is gone from the inbox.
+	var blocked, reask []*state.Blocked
 	for _, b := range r.Blocked {
 		it, err := inbox.Answered(e.Home, b.Item)
 		switch {
 		case err != nil:
-			e.logf("warning: %v", err)
-			blocked = append(blocked, b)
+			e.logf("warning: can't read the answer to %s, asking again: %v", b.Step, err)
+			reask = append(reask, b)
 		case it == nil:
 			blocked = append(blocked, b)
 		case it.Answer == inbox.Retry:
@@ -188,6 +189,11 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		e.logf("  waiting in the inbox: laight inbox %s retry|abort", it.Short())
 		return true
 	}
+	for _, b := range reask {
+		if !block(nil, b.Step, b.Error) {
+			return state.Failed, b.Error, nil, events
+		}
+	}
 
 	// 1. Hops that finished: `laight done`, a failure the engine recorded, a crashed seat, or a
 	// gate a human answered.
@@ -199,7 +205,10 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		}
 		if d == nil && h.Item != "" {
 			if it, err := inbox.Answered(e.Home, h.Item); err != nil {
-				e.logf("warning: %v", err)
+				if err := e.fail(r.ID, h, fmt.Errorf("can't read the answer to item %s: %w", state.Short(h.Item), err)); err != nil {
+					e.logf("warning: %v", err)
+				}
+				d, _ = state.ReadDone(e.Home, r.ID, h.Step, h.N)
 			} else if it != nil {
 				ans := state.Done{Step: h.Step, Hop: h.N, Exit: it.Answer, Engine: true}
 				if err := state.WriteDone(e.Home, r.ID, ans); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
