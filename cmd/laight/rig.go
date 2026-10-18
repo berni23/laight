@@ -256,7 +256,9 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			answeredInPane(home, runID, seat, in)
 		}
 	}
-	state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
+	if args[0] == "session-start" || args[0] == "stop" { // the tool hooks log what they did, as inbox events
+		state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
+	}
 	return 0
 }
 

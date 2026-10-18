@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"syscall"
@@ -97,6 +98,10 @@ func TestPermissionHookExpires(t *testing.T) {
 	}
 	if done, _ := inbox.Answered(home, it.ID); done == nil || done.Answer != inbox.Deny {
 		t.Errorf("answer recorded: %+v", done)
+	}
+	evs, _ := state.Events(home, it.Run)
+	if n := len(evs); n == 0 || evs[n-1].Type != "inbox.answered" || evs[n-1].Data["item"] != it.ID || evs[n-1].Data["answer"] != inbox.Deny || evs[n-1].Data["expired"] != true {
+		t.Errorf("events: %+v", evs) // the last one says the item expired
 	}
 }
 
@@ -200,5 +205,55 @@ func TestPermissionHookRunEnded(t *testing.T) {
 	}
 	if items, _ := inbox.Pending(home); len(items) > 0 {
 		t.Errorf("left behind: %+v", items[0])
+	}
+}
+
+// The same call asked twice is answered in order, one PostToolUse per item, and only the
+// seat's own: another seat's identical call is another prompt. A withdrawal is an answer in
+// the event log.
+func TestPermissionAnsweredInPaneOrder(t *testing.T) {
+	home, id := doneEnv(t)
+	call := hookInput{ToolName: "Bash", ToolInput: json.RawMessage(`{"command":"ls"}`)}
+	put := func(ref, seat string) {
+		it := inbox.Item{ID: "01" + ref, Run: id, Seat: seat, Kind: inbox.Permission, Title: "t",
+			Choices: []string{inbox.Allow, inbox.Deny}, Match: toolMatch(call)}
+		if err := inbox.Put(home, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("A0", "b") // the oldest, but another seat's
+	put("A1", "a")
+	put("C1", "a")
+	var out, errOut bytes.Buffer
+	cmdHook([]string{"post-tool-use"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+	var left []string
+	items, _ := inbox.Pending(home)
+	for _, it := range items {
+		left = append(left, it.ID)
+	}
+	if strings.Join(left, " ") != "01A0 01C1" {
+		t.Errorf("pending after one PostToolUse: %v", left)
+	}
+	evs, _ := state.Events(home, id)
+	var answered []string
+	for _, ev := range evs {
+		if ev.Type == "inbox.answered" {
+			answered = append(answered, fmt.Sprint(ev.Data["item"], "=", ev.Data["answer"]))
+		}
+	}
+	if strings.Join(answered, " ") != "01A1=in the pane" {
+		t.Errorf("answered events: %v", answered)
+	}
+}
+
+// PostToolUse runs after every tool call: one that withdraws nothing writes nothing, and the
+// permission hook's own events say what it did.
+func TestToolHooksLogOnlyWhatTheyDo(t *testing.T) {
+	home, id := doneEnv(t)
+	var out, errOut bytes.Buffer
+	cmdHook([]string{"post-tool-use"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+	cmdHook([]string{"permission-request"}, strings.NewReader(`not json`), &out, &errOut)
+	if evs, _ := state.Events(home, id); len(evs) > 0 {
+		t.Errorf("events: %+v", evs)
 	}
 }
