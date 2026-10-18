@@ -75,24 +75,29 @@ func Put(home string, it Item) error {
 	return writeFile(pendingFile(home, it.ID), &it, os.Rename)
 }
 
-// Pending returns the items waiting for an answer, oldest first.
+// Pending returns the items waiting for an answer, oldest first. An item that can't be read is
+// still waiting on someone: it comes back in the error, next to the items that could be read.
 func Pending(home string) ([]*Item, error) {
 	files, err := filepath.Glob(filepath.Join(dir(home), "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	var items []*Item
+	var errs []error
 	for _, f := range files {
 		id := strings.TrimSuffix(filepath.Base(f), ".json")
 		if exists(answeredFile(home, id)) {
 			continue // answered, and the answerer died before removing it
 		}
-		if it, err := read(f); err == nil {
-			items = append(items, it)
+		it, err := read(f)
+		if err != nil {
+			errs = append(errs, err)
+			continue
 		}
+		items = append(items, it)
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
-	return items, nil
+	return items, errors.Join(errs...)
 }
 
 // Get returns a pending item.

@@ -245,6 +245,9 @@ steps:
 	r := e.onlyRun()
 	it := e.waitItem(r.ID)
 	e.killEngine(r)
+	if out := e.mustLaight("inbox"); !strings.Contains(out, "its engine died: laight abort "+r.Short()) || strings.Contains(out, "answer with") {
+		t.Errorf("listed as answerable:\n%s", out)
+	}
 	if out, err := e.laight("inbox", it.Short(), "yes"); err == nil || !strings.Contains(out, "its engine died") {
 		t.Errorf("answered for a dead engine: %v\n%s", err, out)
 	}

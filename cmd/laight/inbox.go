@@ -26,23 +26,55 @@ func cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 2 {
 		return answerItem(home, args[0], args[1], stdout, stderr)
 	}
+	// An item that can't be read still holds its run: say so, never "inbox empty".
 	items, err := inbox.Pending(home)
 	if err != nil {
-		return fail(stderr, "%v", err)
+		fmt.Fprintf(stderr, "laight: can't read an inbox item: %v\n", err)
 	}
 	if len(items) == 0 {
+		if err != nil {
+			return 1
+		}
 		fmt.Fprintln(stdout, "inbox empty")
 		return 0
 	}
+	srv := tmux.Server{Socket: state.Socket(home)}
+	answerable := false
 	for _, it := range items {
 		where := filepath.Base(it.Repo) + "/" + it.Workflow + " " + state.Short(it.Run)
 		if it.Step != "" {
 			where += " " + it.Step
 		}
-		fmt.Fprintf(stdout, "%s  %-7s %s  %s  %s  [%s]\n", it.Short(), it.Kind, ago(it.Created), where, it.Title, strings.Join(it.Choices, "|"))
+		choices := "[" + strings.Join(it.Choices, "|") + "]"
+		if why := unread(home, srv, it); why != "" {
+			choices = "(" + why + ")"
+		} else {
+			answerable = true
+		}
+		fmt.Fprintf(stdout, "%s  %-7s %s  %s  %s  %s\n", it.Short(), it.Kind, ago(it.Created), where, it.Title, choices)
 	}
-	fmt.Fprintln(stdout, "\nanswer with: laight inbox <item> <answer>")
+	if answerable {
+		fmt.Fprintln(stdout, "\nanswer with: laight inbox <item> <answer>")
+	}
+	if err != nil {
+		return 1
+	}
 	return 0
+}
+
+// unread says why no engine will read an answer to the item: its run ended, or its engine died
+// (CLAUDE.md §4). It is empty when the run is live, or can't be read.
+func unread(home string, srv tmux.Server, it *inbox.Item) string {
+	r, err := state.Load(home, it.Run)
+	switch {
+	case err != nil:
+		return ""
+	case engineDied(srv, r):
+		return "its engine died: laight abort " + r.Short()
+	case !r.Live():
+		return "run " + r.Status
+	}
+	return ""
 }
 
 func answerItem(home, ref, answer string, stdout, stderr io.Writer) int {
@@ -50,10 +82,9 @@ func answerItem(home, ref, answer string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	// A run whose engine died never reads the answer (CLAUDE.md §4): say so instead.
 	if it, err := inbox.Get(home, id); err == nil {
-		if r, err := state.Load(home, it.Run); err == nil && engineDied(tmux.Server{Socket: state.Socket(home)}, r) {
-			return fail(stderr, "%s", deadEngine(r))
+		if why := unread(home, tmux.Server{Socket: state.Socket(home)}, it); why != "" {
+			return fail(stderr, "%s: nothing will read an answer (%s)", it.Short(), why)
 		}
 	}
 	it, err := inbox.Answer(home, id, answer)

@@ -44,7 +44,8 @@ All notable changes to laight are documented here. The format follows
   after the engine died) stops the command and whatever it started.
 - The inbox, minimal: `laight inbox` lists what waits for a human in every run of every project,
   oldest first, and `laight inbox <item> <answer>` answers one (the first answer wins; a later one
-  is told it was late; an item whose run lost its engine is refused). Items are files under
+  is told it was late; an item whose run ended or lost its engine is listed as such and refused;
+  an item file that can't be read is reported, never taken for an empty inbox). Items are files under
   `~/.laight/inbox/`, their title and detail redacted (a long run only when it mixes upper case, lower case and
   digits, so commit SHAs and branch names survive) and stripped of control characters.
 - Gates (`type: gate`): the rendered `ask` goes to the inbox with the step's exits as choices, and
