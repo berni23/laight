@@ -13,17 +13,9 @@ that.
 
 ## Last session — 2026-10-18
 
-**#10 — PermissionRequest hook into the inbox.** A Claude seat's prompt becomes a `permission`
-item (detail = the command, the seat's secret env values redacted via `LAIGHT_REDACT_ENV`); the
-hook blocks until `laight inbox <item> allow|deny`, denies on expiry (1 h hook timeout, item
-expires a minute earlier) or on any error. Claude shows its own dialog while the hook waits: No/Esc
-there stops the hook, Yes there is caught by a `PostToolUse` hook matching the call (spec §6 has
-the details). `make check`, plus real Claude Code 2.1.302 runs with `permissions: default`: inbox
-allow, inbox deny, pane Yes, pane No, pane Esc. The expiry deny is unit-tested only (an hour).
-
 **#29 — flaky `TestRigUpAndAbort`.** The test typed into seat `a` while the engine was delivering
-step one there; it now waits for that delivery in the pane log first. Not reproduced locally (it
-failed once, on macOS CI); passes `-race -count=5`.
+step one there; it now waits for that step's output in the pane log first. Not reproduced
+locally (it failed once, on macOS CI); passes `-race -count=10`.
 
 **#30 — an inbox abort says so:** the run's reason is `<step error>; aborted from the inbox`.
 Unit-tested, mutation checked.
@@ -32,17 +24,22 @@ Unit-tested, mutation checked.
 
 ## Do this next
 
-### 1. #11 — acceptance: the issue cycle on a real issue
+### 1. #10 — PermissionRequest hook into the inbox
 
-Every piece it uses now works (agent and shell steps, the gate, permission prompts). It proves
-M2 before `needs`/`matrix`. `CLAUDE.local.md` names the reference setup. Also check
+The first real-agent producer, on the queue #9 built: the hook blocks polling
+`inbox/answered/<id>.json` (`inbox.Answered`), expiry falls back to deny. Needs a real Claude seat
+with `permissions: default` to verify. #15 waits for it.
+
+### 2. #11 — acceptance: the issue cycle on a real issue
+
+Before `needs`/`matrix`: the issue cycle doesn't use them, and it proves M2. Its `approve` gate
+and `merge` shell step both work now. `CLAUDE.local.md` names the reference setup. Also check
 `session: fresh` with real Claude, and watch whether an engine ever dies (#8's trigger).
 
-### 2. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
+### 3. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
 
 #12 is decided (its last comment), but rule 4 now holds a failed step instead of failing the run
-(§12.3 says so): decide what a step that `needs` a held one does. #15 can now build on the
-permission hook's blocking pattern.
+(§12.3 says so): decide what a step that `needs` a held one does.
 
 ---
 

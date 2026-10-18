@@ -167,7 +167,7 @@ seats:
     env: { GREETING: "hi {{ .inputs.who }}" }
   b: { runtime: shell, command: sh, cwd: repo }
 steps:
-  - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
+  - { id: one, seat: a, objective: 'echo one-$((40+2))', next_hop: { on: { handoff: two } } }
   - { id: two, seat: b, objective: y }
 `)
 	out := e.mustLaight("run", "demo", "who=tests")
@@ -194,8 +194,9 @@ steps:
 	}
 
 	// The seat has the run's env, rendered, and its pane is logged. The engine delivers step
-	// one (`x`) to the same pane: wait until sh has run it, or the two pastes share a line.
-	waitLog(t, e.home, r.ID, "a", "not found") // bash: "x: command not found", dash: "x: not found"
+	// one to the same pane: wait until sh has run it, or the two pastes share a line. Its output
+	// (42), unlike the pasted line, proves it ran, whatever the shell or locale.
+	waitLog(t, e.home, r.ID, "a", "one-42")
 	if err := e.srv.Paste(r.Session, "a", `echo "$GREETING/$LAIGHT_SEAT/$LAIGHT_RUN"`); err != nil {
 		t.Fatal(err)
 	}
