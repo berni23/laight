@@ -283,11 +283,11 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 // Groups returns the run's shell steps whose process group is still the one their command
 // started: the pgid in run.json, from a hop that started since the machine last booted. After
 // a reboot pids are reused, so that number may be any process of the user's; when the boot
-// time is unknown, no group is trusted.
-func Groups(r *state.Run) []*state.Hop {
-	boot, err := proc.BootTime()
+// time is unknown, no group is trusted, and the error says why.
+func Groups(r *state.Run) ([]*state.Hop, error) {
+	boot, err := bootTime()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("can't read the boot time: %w", err)
 	}
 	var hops []*state.Hop
 	for _, h := range r.Active {
@@ -295,8 +295,10 @@ func Groups(r *state.Run) []*state.Hop {
 			hops = append(hops, h)
 		}
 	}
-	return hops
+	return hops, nil
 }
+
+var bootTime = proc.BootTime // a test can make it fail
 
 // Down ends the run: it stops the engine (unless Down runs in it) and the seats, applies
 // on_finish to the worktrees, records the final status and stops the tmux session last. The
@@ -322,7 +324,11 @@ func (g *Rig) Down(id, status, reason string) error {
 	}
 	// A shell step's command has its own process group, which closing the engine's window
 	// doesn't reach. A live engine stops it itself; this is for one that died.
-	for _, h := range Groups(r) {
+	hops, err := Groups(r)
+	if err != nil {
+		g.logf("shell steps left running: %v", err)
+	}
+	for _, h := range hops {
 		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
 	policy := r.Spec.OnFinish.Failure

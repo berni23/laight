@@ -377,8 +377,16 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 			ws, _ := srv.Windows(r.Session)
 			plan = append(plan, fmt.Sprintf("stop tmux session %s (%s)", r.Session, strings.Join(ws, ", ")))
 		}
-		for _, h := range rig.Groups(r) {
+		hops, err := rig.Groups(r)
+		for _, h := range hops {
 			plan = append(plan, fmt.Sprintf("stop shell step %s (process group %d)", h.Step, h.Pgid))
+		}
+		if err != nil {
+			for _, h := range r.Active {
+				if h.Pgid > 0 {
+					plan = append(plan, fmt.Sprintf("leave shell step %s running (process group %d): %v", h.Step, h.Pgid, err))
+				}
+			}
 		}
 		if r.Spec.OnFinish.Failure == "destroy" {
 			for _, wt := range worktrees {

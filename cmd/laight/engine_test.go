@@ -552,7 +552,9 @@ steps:
 	if err := syscall.Kill(readPid(t, filepath.Join(dir, "engine")), syscall.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	e.mustLaight("abort", r.Short(), "--yes")
+	if out := e.mustLaight("abort", r.Short(), "--yes"); !strings.Contains(out, "stop shell step wait (process group ") {
+		t.Errorf("the plan doesn't say it stops the command:\n%s", out)
+	}
 	waitGone(t, pid)
 }
 

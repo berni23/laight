@@ -1,6 +1,7 @@
 package rig
 
 import (
+	"errors"
 	"io"
 	"os/exec"
 	"syscall"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/berni23/laight/internal/inbox"
+	"github.com/berni23/laight/internal/proc"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
 )
@@ -40,9 +42,15 @@ func TestDownSparesGroupsFromBeforeBoot(t *testing.T) {
 	if err := state.Create(home, r); err != nil {
 		t.Fatal(err)
 	}
-	if hops := Groups(r); len(hops) != 1 || hops[0].Step != "since" {
-		t.Errorf("groups = %+v", hops)
+	if hops, err := Groups(r); err != nil || len(hops) != 1 || hops[0].Step != "since" {
+		t.Errorf("groups = %+v, %v", hops, err)
 	}
+	// With no boot time, no group is trusted, and the caller hears why.
+	bootTime = func() (time.Time, error) { return time.Time{}, errors.New("no sysctl") }
+	if hops, err := Groups(r); err == nil || len(hops) != 0 {
+		t.Errorf("groups without a boot time = %+v, %v", hops, err)
+	}
+	bootTime = proc.BootTime
 	if err := New(home, "laight", io.Discard).Down(r.ID, state.Aborted, ""); err != nil {
 		t.Fatal(err)
 	}

@@ -58,7 +58,7 @@ All notable changes to laight are documented here. The format follows
 - A live run whose engine died (killed, or the tmux server gone after a reboot) is reported as
   such by `attach` and `abort` instead of looking live for ever; `laight abort` cleans it up.
   Such a run is not resumed: `laight run --resume` is deferred (#8). Its abort lists the shell
-  commands it will stop, and never signals a process group recorded before the last reboot
+  commands it will stop (or leave running, when the boot time can't be read), and never signals a process group recorded before the last reboot
   (that pid may be one of yours now). A tmux socket laight can't open is no longer taken for a
   dead engine or a crashed seat.
 - `validate` rejects `env` on agent steps and gates (an agent's env is its seat's), an
