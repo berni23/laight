@@ -198,8 +198,10 @@ func (s Server) Alive(session, window string) (bool, error) {
 	out, err := s.run("list-windows", "-t", "="+session, "-F", "#{window_name}\t#{pane_dead}")
 	if err != nil {
 		msg := err.Error()
+		// tmux says "error connecting to <socket> (No such file or directory)" when the socket
+		// is missing; any other connect error (a socket it can't open) is not "gone".
 		if strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") ||
-			strings.Contains(msg, "error connecting to") {
+			strings.Contains(msg, "error connecting to") && strings.Contains(msg, "No such file or directory") {
 			return false, ErrGone
 		}
 		return false, err
