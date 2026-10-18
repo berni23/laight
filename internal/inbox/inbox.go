@@ -152,7 +152,10 @@ func lost(home, id string) (*Item, error) {
 // Find resolves what someone typed to one item: a prefix of its short or its full id, among the
 // pending items and then the answered ones (so a late answer hears that it was late).
 func Find(home, ref string) (string, error) {
-	ref = strings.ToLower(ref)
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	if ref == "" {
+		return "", errors.New("no inbox item given")
+	}
 	var match []string
 	for _, pattern := range []string{"*.json", filepath.Join("answered", "*.json")} {
 		files, _ := filepath.Glob(filepath.Join(dir(home), pattern))

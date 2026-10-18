@@ -81,6 +81,9 @@ func TestPutAnswer(t *testing.T) {
 	if items, _ := Pending(home); len(items) != 1 || items[0].ID != b.ID {
 		t.Errorf("pending after the answer: %v", items)
 	}
+	if id, err := Find(home, ""); err == nil { // an unset variable in a script must not pick one
+		t.Errorf("an empty ref found %s", id)
+	}
 	if err := Put(home, a); err != nil {
 		t.Fatal(err)
 	}
