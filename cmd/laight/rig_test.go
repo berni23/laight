@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -383,7 +384,7 @@ func TestEngineDied(t *testing.T) {
 		t.Errorf("attach with a dead engine:\n%s", out)
 	}
 	e.srv.KillServer()
-	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died") || !strings.Contains(out, "tmux session is gone") {
+	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died") || strings.Contains(out, "tmux session is gone") {
 		t.Errorf("attach with no tmux server:\n%s", out)
 	}
 	if out := e.mustLaight("abort", r.Short(), "--yes"); !strings.Contains(out, "(demo, its engine died)") {
@@ -391,6 +392,33 @@ func TestEngineDied(t *testing.T) {
 	}
 	if r := e.waitStatus(r.ID, state.Aborted); len(e.rigWorktrees(r)) != 0 {
 		t.Errorf("on_finish.failure destroy kept %v", e.rigWorktrees(r))
+	}
+}
+
+// When tmux can't say whether the engine lives (a socket it can't open), the run isn't called dead.
+func TestEngineDiedCantSay(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	dir, err := os.MkdirTemp("/tmp", "lt") // short: a socket path is capped near 104 bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	t.Setenv("TMUX_TMPDIR", dir)
+	sockets := filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()))
+	if err := os.Mkdir(sockets, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sockets, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &state.Run{ID: "01AAAAAAAAAAAAAAAAAAAAAAAA", Status: state.Running, Session: "laight-demo-aaaaaa"}
+	if engineDied(tmux.Server{Socket: "file"}, r) {
+		t.Error("a socket tmux can't open reads as a dead engine")
+	}
+	if !engineDied(tmux.Server{Socket: "missing"}, r) {
+		t.Error("no tmux server reads as a live engine")
 	}
 }
 

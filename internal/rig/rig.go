@@ -101,8 +101,8 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	}
 	runDir := state.Dir(g.Home, r.ID)
 
-	// Where the agent works. A seat started before (a crash, an engine restart) keeps its
-	// session id, so the runtime can resume the conversation, and its setup record.
+	// Where the agent works. A seat started before (it crashed while idle) keeps its session
+	// id, so the runtime can resume the conversation, and its setup record.
 	// The engine's record of the seat (its step, turn…) carries over too.
 	st := &state.Seat{}
 	resume := false
@@ -279,6 +279,24 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	return env, nil
 }
 
+// Groups returns the run's shell steps whose process group is still the one their command
+// started: the pgid in run.json, from a hop that started since the machine last booted. After
+// a reboot pids are reused, so that number may be any process of the user's; when the boot
+// time is unknown, no group is trusted.
+func Groups(r *state.Run) []*state.Hop {
+	boot, err := proc.BootTime()
+	if err != nil {
+		return nil
+	}
+	var hops []*state.Hop
+	for _, h := range r.Active {
+		if h.Pgid > 0 && h.Started.After(boot) {
+			hops = append(hops, h)
+		}
+	}
+	return hops
+}
+
 // Down ends the run: it stops the engine (unless Down runs in it) and the seats, applies
 // on_finish to the worktrees, records the final status and stops the tmux session last. The
 // window Down itself runs in (the engine, or a seat where someone typed `laight abort`) is
@@ -303,7 +321,7 @@ func (g *Rig) Down(id, status, reason string) error {
 	}
 	// A shell step's command has its own process group, which closing the engine's window
 	// doesn't reach. A live engine stops it itself; this is for one that died.
-	for _, h := range r.Active {
+	for _, h := range Groups(r) {
 		proc.StopGroup(h.Pgid, 5*time.Second)
 	}
 	policy := r.Spec.OnFinish.Failure

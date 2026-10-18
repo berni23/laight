@@ -1,6 +1,6 @@
 // Package engine runs a workflow's steps on its rig: the loop of CLAUDE.md section 4. Each tick
 // reads run.json and the files agents write (out/, seats/*.idle), acts, and appends events. Only
-// the engine writes run.json, so a restarted engine continues from the files alone.
+// the engine writes run.json.
 package engine
 
 import (

@@ -247,7 +247,8 @@ repo's main checkout, with the workflow's `env` plus the step's own `env` (and `
 of its own: no terminal, so a command that prompts fails instead of hanging the run. When `sh`
 exits, whatever it left running is stopped (SIGTERM, then SIGKILL after 5s); so is the whole
 command when the run ends, by any branch, an abort, or an abort after the engine died (its
-process group is kept on the hop in run.json). Its output goes to `out/<step>-<hop>.log`, with
+process group is kept on the hop in run.json, and is signalled only if the hop started since
+the machine last booted: after a reboot that pid may be anyone's). Its output goes to `out/<step>-<hop>.log`, with
 the secret values its env read replaced by `***` (exact values only: an encoded copy isn't
 caught); its exit code is `.steps.<id>.out.code`.
 **A step's `env` exists only on shell steps** (#16): an agent's env is its seat's, fixed when the
@@ -291,8 +292,8 @@ on a real issue.
   It is a loop: read state → act → append event → sleep/wake on file change.
 - **When the engine dies** (a reboot, the tmux server killed, a bug), the run is lost, not
   resumed: `attach` and `abort` report it as "engine died", and `laight abort` cleans it up. The
-  worktrees stay (`on_finish.failure`), and so does whatever the agents committed or pushed; a new
-  run starts over. **Resume is deferred (#8)**: the engine lives in tmux, so it rarely dies, and
+  worktrees follow `on_finish.failure` (kept by default); whatever the agents committed or pushed
+  stays; a new run starts over. **Resume is deferred (#8)**: the engine lives in tmux, so it rarely dies, and
   recovering a step in flight is most of the engine's hard cases (§12.1). It comes back only if
   real runs show engines dying. Keep the state in files anyway (`run.json` + `events.jsonl`), so
   it stays possible.

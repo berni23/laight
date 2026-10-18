@@ -302,10 +302,14 @@ func cmdAttach(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	gone := !srv.HasSession(r.Session)
 	if engineDied(srv, r) {
 		fmt.Fprintf(stderr, "laight: %s\n", deadEngine(r))
+		if gone {
+			return 1
+		}
 	}
-	if !srv.HasSession(r.Session) {
+	if gone {
 		return fail(stderr, "run %s is %s and its tmux session is gone", r.Short(), r.Status)
 	}
 	window := ""
@@ -372,6 +376,9 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		if srv.HasSession(r.Session) {
 			ws, _ := srv.Windows(r.Session)
 			plan = append(plan, fmt.Sprintf("stop tmux session %s (%s)", r.Session, strings.Join(ws, ", ")))
+		}
+		for _, h := range rig.Groups(r) {
+			plan = append(plan, fmt.Sprintf("stop shell step %s (process group %d)", h.Step, h.Pgid))
 		}
 		if r.Spec.OnFinish.Failure == "destroy" {
 			for _, wt := range worktrees {
