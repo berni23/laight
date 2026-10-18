@@ -35,6 +35,13 @@ permission items stay unanswerable once the engine died (§4: the run is lost; a
 them). Not done: a Stop-hook sweep of leftover items, because a background subagent can ask
 after the turn ends.
 
+**#29 — flaky `TestRigUpAndAbort`.** The test typed into seat `a` while the engine was delivering
+step one there; it now waits for that step's output in the pane log first. Not reproduced
+locally (it failed once, on macOS CI); passes `-race -count=10`.
+
+**#30 — an inbox abort says so:** the run's reason is `<step error>; aborted from the inbox`.
+Unit-tested, mutation checked.
+
 ---
 
 ## Do this next
@@ -45,13 +52,13 @@ Three questions only a real run settles: does `tool_input` match across the two 
 non-Bash tools, which signal does Claude send on Esc, and does it honour the 1 h timeout? Do it
 in the same supervised session as #11.
 
-### 1. #11 — acceptance: the issue cycle on a real issue
+### 2. #11 — acceptance: the issue cycle on a real issue
 
 Every piece it uses now works (agent and shell steps, the gate, permission prompts). It proves
 M2 before `needs`/`matrix`. `CLAUDE.local.md` names the reference setup. Also check
 `session: fresh` with real Claude, and watch whether an engine ever dies (#8's trigger).
 
-### 2. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
+### 3. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
 
 #12 is decided (its last comment), but rule 4 now holds a failed step instead of failing the run
 (§12.3 says so): decide what a step that `needs` a held one does. #15 can now build on the
@@ -61,6 +68,4 @@ permission hook's blocking pattern.
 
 ## Waiting on the user
 
-- #19 review, open question: should an abort answered from the inbox say so in the run's reason
-  (e.g. `<step error>; aborted from the inbox`), or keep the step's error alone?
 - #17 (shell step `cwd`) waits for a workflow that needs it.

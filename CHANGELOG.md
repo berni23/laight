@@ -57,7 +57,8 @@ All notable changes to laight are documented here. The format follows
   the run routes on the answer.
 - A step that fails with no route, or that `max_hops` refuses, no longer ends the run: it raises a
   `failed` item and the run waits, everything else carrying on. `retry` starts the step again
-  and grants one more hop past `max_hops`; `abort` fails the run. An aborted run withdraws its items.
+  and grants one more hop past `max_hops`; `abort` fails the run, its reason ending in
+  `aborted from the inbox`. An aborted run withdraws its items.
   An answer file that can't be read raises the item again (a gate's fails the gate) instead of
   holding the run silently.
 - A live run whose engine died (killed, or the tmux server gone after a reboot) is reported as

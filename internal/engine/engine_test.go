@@ -206,11 +206,11 @@ func TestVerdictSavedWithState(t *testing.T) {
 	if status != state.Failed || err != nil {
 		t.Fatalf("tick: %s %q %v", status, reason, err)
 	}
-	if r := load(t, e, id); r.Status != state.Failed || r.Error != "step one failed: boom" {
+	if r := load(t, e, id); r.Status != state.Failed || r.Error != "step one failed: boom; aborted from the inbox" {
 		t.Errorf("run.json: %s %q", r.Status, r.Error)
 	}
 	// A second engine on the same run gets the same verdict, not a success.
-	if status, reason, _ := e.tick(ctx, id); status != state.Failed || reason != "step one failed: boom" {
+	if status, reason, _ := e.tick(ctx, id); status != state.Failed || reason != "step one failed: boom; aborted from the inbox" {
 		t.Errorf("second engine: %s %q", status, reason)
 	}
 }

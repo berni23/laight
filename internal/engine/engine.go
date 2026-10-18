@@ -167,7 +167,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 			r.Queue = append(r.Queue, b.Step)
 		default:
 			e.logf("✕ %s: aborted from the inbox", b.Step)
-			return state.Failed, b.Error, nil, events
+			return state.Failed, b.Error + "; aborted from the inbox", nil, events
 		}
 	}
 	r.Blocked = blocked
