@@ -194,11 +194,22 @@ var secretPatterns = regexp.MustCompile(strings.Join([]string{
 	`gh[pousr]_[A-Za-z0-9]{20,}`,
 	`github_pat_[A-Za-z0-9_]{20,}`,
 	`(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}`,
-	`[A-Za-z0-9_=-]{40,}`, // long tokens; not `/`, so paths survive
 }, "|"))
 
-// Redact replaces anything that looks like a token with ***.
-func Redact(s string) string { return secretPatterns.ReplaceAllString(s, "***") }
+// longToken is a long run that may be a token; not `/`, so paths survive.
+var longToken = regexp.MustCompile(`[A-Za-z0-9_=-]{40,}`)
+
+// Redact replaces anything that looks like a token with ***. A long run counts only when it mixes
+// upper case, lower case and digits, as random keys do: a commit SHA or a branch name doesn't.
+func Redact(s string) string {
+	s = secretPatterns.ReplaceAllString(s, "***")
+	return longToken.ReplaceAllStringFunc(s, func(m string) string {
+		if strings.ContainsAny(m, "ABCDEFGHIJKLMNOPQRSTUVWXYZ") && strings.ContainsAny(m, "abcdefghijklmnopqrstuvwxyz") && strings.ContainsAny(m, "0123456789") {
+			return "***"
+		}
+		return m
+	})
+}
 
 // clean replaces control characters (an escape sequence an agent printed, say) with spaces;
 // newlines and tabs are kept when lines is set.

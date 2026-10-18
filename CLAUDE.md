@@ -661,7 +661,9 @@ transcript. Since #14, `{{ secret }}` renders only into `env`.
 **For laight:** keep the current rule and extend it the way Archon does. Secrets reach an agent or
 a shell step only as env vars (seat `env`, or a shell step's `env`, as #16 settled it). A
 secret never goes into a rendered prompt or command line, so #7 should not allow `secret` in
-`run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details.
+`run:`. Redact by key name and by pattern (OpenRig's list) in `events.jsonl` and inbox details; a bare
+long run counts only when it mixes upper case, lower case and digits, so commit SHAs and branch
+names survive.
 The values laight knows (the secrets it rendered into seat env) can also be stripped from the pane
 log as it is written, by piping `pipe-pane` through a filter instead of `cat`. **But raw pane logs
 can't be fully redacted**: an agent can print whatever it can read. So pane logs stay inside the
