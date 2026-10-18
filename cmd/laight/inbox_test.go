@@ -55,3 +55,20 @@ func TestInboxUnreadable(t *testing.T) {
 		t.Errorf("an unreadable item: %d\n%s%s", code, out.String(), errs.String())
 	}
 }
+
+// An expired item's hook has denied, or is gone: an answer to it is refused, not reported as
+// given.
+func TestInboxExpired(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LAIGHT_HOME", home)
+	past := time.Now().Add(-time.Second)
+	it := inbox.Item{ID: state.NewID(time.Now()), Run: "01NOSUCHRUN000000000000000", Kind: inbox.Permission, Title: "a wants to use Bash",
+		Choices: []string{inbox.Allow, inbox.Deny}, Expires: &past}
+	if err := inbox.Put(home, it); err != nil {
+		t.Fatal(err)
+	}
+	var out, errs bytes.Buffer
+	if code := cmdInbox([]string{it.Short(), "allow"}, &out, &errs); code == 0 || !strings.Contains(errs.String(), "expired") {
+		t.Errorf("answered an expired item: %d\n%s%s", code, out.String(), errs.String())
+	}
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,6 +31,11 @@ var (
 // gives Claude the answer. Whatever goes wrong, it denies: an agent is never left waiting on a
 // dialog without an inbox item, and nothing is allowed that nobody allowed.
 func permissionHook(home, runID, seat string, in hookInput, unread error, stdout, stderr io.Writer) {
+	// Claude cancels a hook it stops waiting for (No or Esc in the pane): the item goes with it,
+	// since nobody would read the answer. Caught from before the item exists, so it can't be
+	// left behind.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer stop()
 	decide := func(behavior, message string) {
 		d := map[string]any{"behavior": behavior}
 		if message != "" {
@@ -44,7 +50,7 @@ func permissionHook(home, runID, seat string, in hookInput, unread error, stdout
 		decide(inbox.Deny, "laight couldn't read the permission request")
 		return
 	}
-	behavior, message, err := askPermission(home, runID, seat, in)
+	behavior, message, err := askPermission(ctx, home, runID, seat, in)
 	if err != nil {
 		fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		behavior, message = inbox.Deny, "laight couldn't ask a human: "+err.Error()
@@ -52,7 +58,7 @@ func permissionHook(home, runID, seat string, in hookInput, unread error, stdout
 	decide(behavior, message)
 }
 
-func askPermission(home, runID, seat string, in hookInput) (behavior, message string, err error) {
+func askPermission(ctx context.Context, home, runID, seat string, in hookInput) (behavior, message string, err error) {
 	r, err := state.Load(home, runID)
 	if err != nil {
 		return "", "", err
@@ -71,14 +77,15 @@ func askPermission(home, runID, seat string, in hookInput) (behavior, message st
 	if err := inbox.Put(home, it); err != nil {
 		return "", "", err
 	}
+	// The run may have ended since it was read, after its items were withdrawn: nobody would
+	// withdraw this one. Ending records the status first, so this read sees it.
+	if r, err := state.Load(home, runID); err != nil || !r.Live() {
+		inbox.Drop(home, it.ID)
+		return inbox.Deny, "the run ended", nil
+	}
 	state.Append(home, state.Event{Run: r.ID, Type: "inbox.raised", Step: it.Step, Seat: seat, Hop: it.Hop,
 		Data: map[string]any{"item": it.ID, "kind": it.Kind, "tool": in.ToolName}})
 
-	// Claude cancels a hook it stops waiting for (the user pressed Esc in the pane): the item
-	// goes with it, since nobody would read the answer.
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
 	tick := time.NewTicker(pollEvery)
 	defer tick.Stop()
 	for {
@@ -109,7 +116,7 @@ func askPermission(home, runID, seat string, in hookInput) (behavior, message st
 			return answered(done)
 		}
 		select {
-		case <-sigs:
+		case <-ctx.Done():
 			inbox.Drop(home, it.ID)
 			return inbox.Deny, "cancelled", nil
 		case <-tick.C:

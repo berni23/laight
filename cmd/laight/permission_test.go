@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/berni23/laight/internal/inbox"
+	"github.com/berni23/laight/internal/state"
 )
 
 // permission runs the hook in the background and answers its item with answer (or not, when
@@ -163,5 +165,40 @@ func TestPermissionHookUnreadable(t *testing.T) {
 	cmdHook([]string{"post-tool-use"}, strings.NewReader(`{"tool_name":"Write","tool_input":{"content":"`+strings.Repeat("x", 300)+`"}}`), &out, &errOut)
 	if _, err := inbox.Get(home, it.ID); err != nil {
 		t.Errorf("an unreadable PostToolUse withdrew an item: %v", err)
+	}
+}
+
+// Claude stops a hook it no longer waits for (No or Esc in the pane): the hook drops its item,
+// records no answer, and denies.
+func TestPermissionHookCancelled(t *testing.T) {
+	home, _ := doneEnv(t)
+	it, d := permission(t, home, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, func(*inbox.Item) {
+		syscall.Kill(os.Getpid(), syscall.SIGHUP)
+	})
+	if d["behavior"] != "deny" || d["message"] != "cancelled" {
+		t.Errorf("cancelled: %v", d)
+	}
+	if _, err := inbox.Get(home, it.ID); err == nil {
+		t.Error("the item is still pending")
+	}
+	if done, _ := inbox.Answered(home, it.ID); done != nil {
+		t.Errorf("an answer was recorded: %+v", done)
+	}
+}
+
+// A run that ended before the item was raised has withdrawn its items already: the hook drops
+// its own and denies, instead of leaving it to expire.
+func TestPermissionHookRunEnded(t *testing.T) {
+	home, id := doneEnv(t)
+	if _, err := state.Update(home, id, func(r *state.Run) error { r.Status = state.Aborted; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	cmdHook([]string{"permission-request"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+	if !strings.Contains(out.String(), `"behavior":"deny"`) || !strings.Contains(out.String(), "run ended") {
+		t.Errorf("hook: %q %q", out.String(), errOut.String())
+	}
+	if items, _ := inbox.Pending(home); len(items) > 0 {
+		t.Errorf("left behind: %+v", items[0])
 	}
 }

@@ -62,9 +62,13 @@ func cmdInbox(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// unread says why no engine will read an answer to the item: its run ended, or its engine died
-// (CLAUDE.md §4). It is empty when the run is live, or can't be read.
+// unread says why nothing will read an answer to the item: it expired (its hook denied, or was
+// killed), its run ended, or its engine died (CLAUDE.md §4). It is empty when the run is live,
+// or can't be read.
 func unread(home string, srv tmux.Server, it *inbox.Item) string {
+	if it.Expires != nil && time.Now().After(*it.Expires) {
+		return "it expired"
+	}
 	r, err := state.Load(home, it.Run)
 	switch {
 	case err != nil:
