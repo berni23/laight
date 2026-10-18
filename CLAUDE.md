@@ -350,13 +350,17 @@ An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choice
 expires?, answer?, answered?, match?}`. `detail` is a short excerpt (the command asking permission, the
 last lines of the pane). Title and detail are **redacted** (tokens, anything matching common
 secret patterns, and the exact values of the seat's secret env, for an item raised inside a seat)
-and stripped of control characters, by the queue itself, so no producer can forget. A seat's env
-names its secret-bearing keys in `LAIGHT_REDACT_ENV` (names, never values); a hook strips those
-keys' whole values, so a secret embedded in a longer value is caught only where the whole value
-appears.
+and stripped of control characters, by the queue itself, so no producer can forget; the detail
+is cut to 2000 bytes only after that, so a cut can't leave half a secret. A seat's env
+names its secret-bearing keys in `LAIGHT_REDACT_ENV` (names, never values), and the queue reads
+them from the env of the process putting the item; it strips those keys' whole values, as they
+are and JSON-escaped, so a secret embedded in a longer value is caught only where the whole
+value appears.
 
 **Permission items** (#10, verified against Claude Code 2.1.302). The title is `<seat> wants to
 use <tool>` (it may leave the machine), the detail is the Bash command or the tool's input.
+A request the hook can't read (malformed, or over 64 MiB) is denied at once, with no item: an
+item would show nothing, and an allow would allow what nobody saw.
 Claude shows its own dialog in the pane *while* the hook waits, so either answer counts:
 - answered in the inbox: the hook returns allow or deny (with a message saying so) to Claude;
 - *No* or Esc in the pane interrupts the turn and Claude stops the hook, which drops its item;
@@ -364,10 +368,15 @@ Claude shows its own dialog in the pane *while* the hook waits, so either answer
   gets a `tool_use_id`, so the item carries `match`, a hash of the tool and its re-encoded input,
   and the seat's `PostToolUse`/`PostToolUseFailure` hook withdraws the oldest pending item that
   matches (event `inbox.answered`, answer `in the pane`); the hook sees it gone and returns.
+  Until the tool ends, the item is still open: an inbox answer given meanwhile is recorded, but
+  the tool runs anyway. An identical call of the same seat that ran meanwhile (a subagent's, or
+  one Claude allowed by a rule) withdraws it too, and that hook denies.
 - The hook's `timeout` in the generated settings is 1 hour; the item expires a minute earlier,
   and the hook records `deny` as its answer and denies. A hook Claude times out leaves only
   Claude's dialog in a pane nobody may watch, so laight must answer first. Any error raising the item also denies.
-- A run that ends withdraws its items: a waiting hook denies.
+- A run that ends withdraws its items: a waiting hook denies. A hook whose item lands after
+  that sees the run ended when it re-reads it, and drops its item and denies.
+- An expired item can't be answered (`laight inbox` refuses it): its hook has denied, or is gone.
 
 **Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy
 (`internal/inbox` is the `files` queue as plain functions today; the interface is extracted when a
@@ -437,8 +446,8 @@ should make `yolo` unnecessary for most workflows; that is a design goal, measur
 
 - `events.jsonl` per run, one JSON object per line: `ts, run, type, step?, seat?, hop?, data`.
   Types: `run.started|finished|aborted`, `step.started|done|timeout`, `seat.up|down|crashed`,
-  `inbox.raised|answered`, `hook.<name>`, `tool` (from `PostToolUse`: tool name + duration, not
-  arguments), `usage` (tokens/cost per seat per step, read from the runtime's transcript).
+  `inbox.raised|answered`, `hook.<name>` (session start and stop; the tool hooks log their
+  inbox events instead), `tool` (from `PostToolUse`: tool name + duration, not arguments), `usage` (tokens/cost per seat per step, read from the runtime's transcript).
 - `laight watch` with no run: every run, one line each (project, workflow, step, hop, age, waiting items).
 - `laight watch [run]`: a live CI-style view: the steps as a pipeline (✓ ● ✕ ○, ×N for loops),
   per-step duration and cost, the last events, the open inbox items. Default view of the engine window.

@@ -51,7 +51,8 @@ All notable changes to laight are documented here. The format follows
 - Permission prompts go to the inbox: a Claude Code seat's `PermissionRequest` hook raises a
   `permission` item (the command, with the seat's secret env values redacted) and waits for
   `laight inbox <item> allow|deny`. Unanswered for an hour, it denies; an item answered in the
-  seat's own dialog leaves the inbox by itself.
+  seat's own dialog leaves the inbox by itself. A request the hook can't read (over 64 MiB, or
+  malformed) is denied at once, never shown as an empty item; an expired item can't be answered.
 - Gates (`type: gate`): the rendered `ask` goes to the inbox with the step's exits as choices, and
   the run routes on the answer.
 - A step that fails with no route, or that `max_hops` refuses, no longer ends the run: it raises a

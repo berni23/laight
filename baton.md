@@ -21,9 +21,29 @@ there stops the hook, Yes there is caught by a `PostToolUse` hook matching the c
 the details). `make check`, plus real Claude Code 2.1.302 runs with `permissions: default`: inbox
 allow, inbox deny, pane Yes, pane No, pane Esc. The expiry deny is unit-tested only (an hour).
 
+**#28's review answered** (one commit per finding, each test seen red first). Fixed:
+- the hook denies an input it can't read, with no item;
+- `inbox.Put` strips the seat's secrets itself, JSON-escaped too, and cuts the detail only after
+  redacting;
+- the cancel signals are caught before the item exists, and a run that ended meanwhile drops
+  the item;
+- an expired item can't be answered;
+- the tool hooks no longer log a data-less event per call.
+
+New tests cover cancel, answer order, other seats, events and the generated settings. Rejected:
+permission items stay unanswerable once the engine died (§4: the run is lost; abort withdraws
+them). Not done: a Stop-hook sweep of leftover items, because a background subagent can ask
+after the turn ends.
+
 ---
 
 ## Do this next
+
+### 1. #32 — check the permission hook against real Claude, then #11
+
+Three questions only a real run settles: does `tool_input` match across the two hooks for
+non-Bash tools, which signal does Claude send on Esc, and does it honour the 1 h timeout? Do it
+in the same supervised session as #11.
 
 ### 1. #11 — acceptance: the issue cycle on a real issue
 
