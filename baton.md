@@ -23,6 +23,9 @@ reuse within one boot).
 gates routed on the answer, and **rule 4 changed (decided with the user, on #9)**: an unrouted
 `failed` or a `max_hops` refusal holds the run on a `failed` item (`retry`/`abort`) instead of
 ending it. `make check` plus a manual run of the built binary (gate → yes → held failure → abort).
+Its review (posted on #20) is answered: every retry grants a hop, titles are redacted and
+cleaned, a dead engine's items refuse answers, `Down` withdraws after its final status. Filed
+#25 (redact events/run.json), #26 (engine records answers), #27 (prune `~/.laight`).
 
 ---
 

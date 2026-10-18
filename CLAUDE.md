@@ -345,9 +345,11 @@ Everything that needs a human becomes an **inbox item**:
 | `stuck` | step timeout, Stop hook gave up, idle with no `laight done` | choices: nudge / open pane / fail step |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | choices: retry step / abort run |
 
-An item: `{id, run, repo, workflow, step, seat, kind, title, detail, choices[], created, expires?}`.
-`detail` is a short excerpt (the command asking permission, the last lines of the pane),
-**redacted** (env values, tokens, anything matching common secret patterns).
+An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
+expires?, answer?, answered?}`. `detail` is a short excerpt (the command asking permission, the
+last lines of the pane). Title and detail are **redacted** (tokens, anything matching common
+secret patterns; the seat's env values too, once its hooks raise items from inside it, #10) and
+stripped of control characters, by the queue itself, so no producer can forget.
 
 **Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy
 (`internal/inbox` is the `files` queue as plain functions today; the interface is extracted when a

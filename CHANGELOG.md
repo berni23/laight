@@ -44,12 +44,13 @@ All notable changes to laight are documented here. The format follows
   after the engine died) stops the command and whatever it started.
 - The inbox, minimal: `laight inbox` lists what waits for a human in every run of every project,
   oldest first, and `laight inbox <item> <answer>` answers one (the first answer wins; a later one
-  is told it was late). Items are files under `~/.laight/inbox/`, their detail redacted.
+  is told it was late; an item whose run lost its engine is refused). Items are files under
+  `~/.laight/inbox/`, their title and detail redacted and stripped of control characters.
 - Gates (`type: gate`): the rendered `ask` goes to the inbox with the step's exits as choices, and
   the run routes on the answer.
 - A step that fails with no route, or that `max_hops` refuses, no longer ends the run: it raises a
   `failed` item and the run waits, everything else carrying on. `retry` starts the step again
-  (past `max_hops`, with one more hop); `abort` fails the run. An aborted run withdraws its items.
+  and grants one more hop past `max_hops`; `abort` fails the run. An aborted run withdraws its items.
 - A live run whose engine died (killed, or the tmux server gone after a reboot) is reported as
   such by `attach` and `abort` instead of looking live for ever; `laight abort` cleans it up.
   Such a run is not resumed: `laight run --resume` is deferred (#8). Its abort lists the shell
