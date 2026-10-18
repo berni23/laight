@@ -3,6 +3,7 @@ package tmux
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +51,9 @@ func TestAliveCantConnect(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
+	if os.Getuid() == 0 {
+		t.Skip("root connects to any socket")
+	}
 	dir, err := os.MkdirTemp("/tmp", "lt") // short: a socket path is capped near 104 bytes
 	if err != nil {
 		t.Fatal(err)
@@ -63,7 +67,14 @@ func TestAliveCantConnect(t *testing.T) {
 	if _, err := (Server{Socket: "missing"}).Alive("s", "w"); !errors.Is(err, ErrGone) {
 		t.Errorf("no server: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(sockets, "file"), nil, 0o600); err != nil {
+	// A socket nobody may connect to: "Permission denied" on Linux and macOS alike. (A plain
+	// file reads as a stale socket on Linux, "no server running".)
+	l, err := net.Listen("unix", filepath.Join(sockets, "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	if err := os.Chmod(filepath.Join(sockets, "file"), 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := (Server{Socket: "file"}).Alive("s", "w"); err == nil || errors.Is(err, ErrGone) {
