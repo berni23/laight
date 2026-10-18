@@ -15,7 +15,10 @@ that.
 
 **#8 — deferred, decided with the user.** No `run --resume` in M2. Instead, `attach` and
 `abort` report a live run whose engine died. Spec §4/§8/§10/§12.1 amended; the answer for the
-day it comes back is on #8.
+day it comes back is on #8. #19's review is answered: abort no longer signals a process group
+recorded before the last reboot, and a tmux socket laight can't open isn't read as "gone".
+Filed from it: #21 (test the `--resume` relaunch), #22 (concurrent abort teardown), #23 (pid
+reuse within one boot).
 **#9 — minimal inbox + gates.** `files` queue (`internal/inbox`), `laight inbox [<item> <answer>]`,
 gates routed on the answer, and **rule 4 changed (decided with the user, on #9)**: an unrouted
 `failed` or a `max_hops` refusal holds the run on a `failed` item (`retry`/`abort`) instead of
