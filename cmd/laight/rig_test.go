@@ -138,6 +138,22 @@ func (e *rigEnv) waitFor(id, typ string, n int) {
 	e.t.Fatalf("no %d× %s event; status %s %q; events %+v\nengine:\n%s", n, typ, r.Status, r.Error, evs, screen)
 }
 
+// waitLog waits up to 5s for want in the seat's pane log.
+func waitLog(t *testing.T, home, run, seat, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		b, _ := os.ReadFile(filepath.Join(state.Dir(home, run), "seats", seat+".log"))
+		if strings.Contains(string(b), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s.log has no %q:\n%s", seat, want, b)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func TestRigUpAndAbort(t *testing.T) {
 	e := newRigEnv(t, `version: 1
 id: demo
@@ -151,7 +167,7 @@ seats:
     env: { GREETING: "hi {{ .inputs.who }}" }
   b: { runtime: shell, command: sh, cwd: repo }
 steps:
-  - { id: one, seat: a, objective: x, next_hop: { on: { handoff: two } } }
+  - { id: one, seat: a, objective: 'echo one-$((40+2))', next_hop: { on: { handoff: two } } }
   - { id: two, seat: b, objective: y }
 `)
 	out := e.mustLaight("run", "demo", "who=tests")
@@ -177,22 +193,14 @@ steps:
 		t.Errorf("seat b: %+v", r.Seats["b"])
 	}
 
-	// The seat has the run's env, rendered, and its pane is logged.
+	// The seat has the run's env, rendered, and its pane is logged. The engine delivers step
+	// one to the same pane: wait until sh has run it, or the two pastes share a line. Its output
+	// (42), unlike the pasted line, proves it ran, whatever the shell or locale.
+	waitLog(t, e.home, r.ID, "a", "one-42")
 	if err := e.srv.Paste(r.Session, "a", `echo "$GREETING/$LAIGHT_SEAT/$LAIGHT_RUN"`); err != nil {
 		t.Fatal(err)
 	}
-	want := "hi tests/a/" + r.ID
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		b, _ := os.ReadFile(filepath.Join(state.Dir(e.home, r.ID), "seats", "a.log"))
-		if strings.Contains(string(b), want) {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("a.log has no %q:\n%s", want, b)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	waitLog(t, e.home, r.ID, "a", "hi tests/a/"+r.ID)
 
 	// The seat's env file, which can hold secrets, is gone once the seat has read it.
 	if _, err := os.Stat(filepath.Join(state.Dir(e.home, r.ID), "seats", "a.env")); !os.IsNotExist(err) {

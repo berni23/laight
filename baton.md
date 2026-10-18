@@ -13,24 +13,12 @@ that.
 
 ## Last session — 2026-10-18
 
-**#8 — deferred, decided with the user.** No `run --resume` in M2. Instead, `attach` and
-`abort` report a live run whose engine died. Spec §4/§8/§10/§12.1 amended; the answer for the
-day it comes back is on #8. #19's review is answered: abort no longer signals a process group
-recorded before the last reboot, and a tmux socket laight can't open isn't read as "gone".
-Filed from it: #21 (test the `--resume` relaunch), #22 (concurrent abort teardown), #23 (pid
-reuse within one boot).
-**#9 — minimal inbox + gates.** `files` queue (`internal/inbox`), `laight inbox [<item> <answer>]`,
-gates routed on the answer, and **rule 4 changed (decided with the user, on #9)**: an unrouted
-`failed` or a `max_hops` refusal holds the run on a `failed` item (`retry`/`abort`) instead of
-ending it. `make check` plus a manual run of the built binary (gate → yes → held failure → abort).
-Its review (posted on #20) is answered: every retry grants a hop, titles are redacted and
-cleaned, a dead engine's items refuse answers, `Down` withdraws after its final status. Filed
-#25 (redact events/run.json), #26 (engine records answers), #27 (prune `~/.laight`).
-**#19's second review (5564328626) answered.** Redaction keeps SHAs and branch names (a long run
-counts only when it mixes cases and digits); `laight inbox` refuses and marks items of an ended
-or dead run, reports unreadable item files, rejects an empty ref; an unreadable answer re-raises
-the `failed` item (a gate's fails the gate); abort says when it leaves a shell step running
-because the boot time is unknown. Redacting `run.json`/events stays on #25, pid reuse on #23.
+**#29 — flaky `TestRigUpAndAbort`.** The test typed into seat `a` while the engine was delivering
+step one there; it now waits for that step's output in the pane log first. Not reproduced
+locally (it failed once, on macOS CI); passes `-race -count=10`.
+
+**#30 — an inbox abort says so:** the run's reason is `<step error>; aborted from the inbox`.
+Unit-tested, mutation checked.
 
 ---
 
@@ -57,6 +45,4 @@ and `merge` shell step both work now. `CLAUDE.local.md` names the reference setu
 
 ## Waiting on the user
 
-- #19 review, open question: should an abort answered from the inbox say so in the run's reason
-  (e.g. `<step error>; aborted from the inbox`), or keep the step's error alone?
 - #17 (shell step `cwd`) waits for a workflow that needs it.

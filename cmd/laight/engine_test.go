@@ -197,7 +197,7 @@ steps:
 	}
 	e.mustLaight("inbox", it.Short(), "abort")
 	r = e.waitEnded(r.ID)
-	if r.Status != state.Failed || r.Error != "step one failed: boom" {
+	if r.Status != state.Failed || r.Error != "step one failed: boom; aborted from the inbox" {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
 	}
 	if got := strings.Join(e.stepsDone(r.ID), " "); got != "one:failed" {
