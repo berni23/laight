@@ -109,8 +109,8 @@ func Answered(home, id string) (*Item, error) {
 func Answer(home, id, choice string) (*Item, error) {
 	it, err := read(pendingFile(home, id))
 	if errors.Is(err, os.ErrNotExist) {
-		if done, _ := Answered(home, id); done != nil {
-			return done, ErrAlreadyAnswered
+		if exists(answeredFile(home, id)) {
+			return lost(home, id)
 		}
 		return nil, fmt.Errorf("no item %s", id)
 	}
@@ -124,14 +124,26 @@ func Answer(home, id, choice string) (*Item, error) {
 	it.Answer, it.Answered = choice, &now
 	err = writeFile(answeredFile(home, id), it, os.Link)
 	if errors.Is(err, os.ErrExist) {
-		done, _ := Answered(home, id)
-		return done, ErrAlreadyAnswered
+		return lost(home, id)
 	}
 	if err != nil {
 		return nil, err
 	}
 	os.Remove(pendingFile(home, id))
 	return it, nil
+}
+
+// lost is Answer's reply to a late answer: the winning one, and ErrAlreadyAnswered. An answer
+// that can't be read is a plain error, so ErrAlreadyAnswered always comes with an item.
+func lost(home, id string) (*Item, error) {
+	done, err := Answered(home, id)
+	if err != nil {
+		return nil, err
+	}
+	if done == nil {
+		return nil, fmt.Errorf("item %s: its answer disappeared", id)
+	}
+	return done, ErrAlreadyAnswered
 }
 
 // Find resolves what someone typed to one item: a prefix of its short or its full id, among the

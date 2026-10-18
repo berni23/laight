@@ -88,6 +88,19 @@ func TestPutAnswer(t *testing.T) {
 		t.Errorf("an answered item came back: %v", items)
 	}
 
+	// An answered file that can't be read is an error, never "already answered" with no item.
+	c := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAC3", Run: "r2", Kind: Gate, Title: "c", Choices: []string{"yes"}}
+	if err := Put(home, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(answeredFile(home, c.ID), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if it, err := Answer(home, c.ID, "yes"); it == nil && (err == nil || errors.Is(err, ErrAlreadyAnswered)) {
+		t.Errorf("a broken answer: %v, %v", it, err)
+	}
+	os.Remove(answeredFile(home, c.ID))
+
 	Withdraw(home, "r2")
 	if items, _ := Pending(home); len(items) != 0 {
 		t.Errorf("withdrawn: %v", items)
