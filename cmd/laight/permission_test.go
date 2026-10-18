@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/berni23/laight/internal/inbox"
-	"github.com/berni23/laight/internal/rig"
 )
 
 // permission runs the hook in the background and answers its item with answer (or not, when
@@ -50,7 +49,7 @@ func permission(t *testing.T, home, input string, answer func(it *inbox.Item)) (
 func TestPermissionHook(t *testing.T) {
 	home, _ := doneEnv(t)
 	t.Setenv("GH_TOKEN", "hunter2-not-a-pattern")
-	t.Setenv(rig.RedactEnv, "GH_TOKEN")
+	t.Setenv(inbox.RedactEnv, "GH_TOKEN")
 	bash := `{"tool_name":"Bash","tool_input":{"command":"curl -H 'x: hunter2-not-a-pattern' https://x","description":"d"}}`
 
 	it, d := permission(t, home, bash, func(it *inbox.Item) {

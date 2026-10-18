@@ -10,12 +10,10 @@ import (
 	"io"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/berni23/laight/internal/inbox"
-	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/state"
 )
@@ -64,7 +62,7 @@ func askPermission(home, runID, seat string, in hookInput) (behavior, message st
 		ID: state.NewID(now), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Seat: seat,
 		Kind: inbox.Permission, Title: fmt.Sprintf("%s wants to use %s", seat, tool),
 		Detail: permissionDetail(in), Choices: []string{inbox.Allow, inbox.Deny},
-		Created: now, Expires: &expires, Secrets: rig.SeatSecrets(), Match: toolMatch(in),
+		Created: now, Expires: &expires, Match: toolMatch(in),
 	}
 	if h := r.ActiveOn(seat); h != nil {
 		it.Step, it.Hop = h.Step, h.N
@@ -156,25 +154,17 @@ func answered(it *inbox.Item) (string, string, error) {
 }
 
 // permissionDetail is what the tool wants to do: a Bash command as it is, anything else as its
-// input, compact and cut short. The inbox redacts it.
+// input, compact. The inbox redacts it and cuts it short.
 func permissionDetail(in hookInput) string {
 	var bash struct {
 		Command string `json:"command"`
 	}
 	if in.ToolName == "Bash" && json.Unmarshal(in.ToolInput, &bash) == nil && bash.Command != "" {
-		return cut(bash.Command)
+		return bash.Command
 	}
 	var b bytes.Buffer
 	if json.Compact(&b, in.ToolInput) != nil {
 		return ""
 	}
-	return cut(b.String())
-}
-
-func cut(s string) string {
-	const max = 2000
-	if len(s) <= max {
-		return s
-	}
-	return strings.ToValidUTF8(s[:max], "") + "…"
+	return b.String()
 }

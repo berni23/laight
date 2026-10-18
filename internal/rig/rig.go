@@ -264,7 +264,7 @@ func (g *Rig) Restart(ctx context.Context, id, name string) error {
 	return g.seatUp(ctx, r, name)
 }
 
-// seatEnv renders the workflow's and the seat's env (the seat's wins). RedactEnv names the keys
+// seatEnv renders the workflow's and the seat's env (the seat's wins). inbox.RedactEnv names the keys
 // that hold a secret, never the values, so the seat's hooks can strip them from what they raise.
 func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	data := r.TemplateData()
@@ -287,23 +287,9 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	}
 	if len(keys) > 0 {
 		sort.Strings(keys)
-		env[RedactEnv] = strings.Join(keys, ",")
+		env[inbox.RedactEnv] = strings.Join(keys, ",")
 	}
 	return env, nil
-}
-
-// RedactEnv is the seat env variable that names the keys holding a secret.
-const RedactEnv = "LAIGHT_REDACT_ENV"
-
-// SeatSecrets returns the secret values in this process's env, for a hook running in a seat.
-func SeatSecrets() []string {
-	var vals []string
-	for _, k := range strings.Split(os.Getenv(RedactEnv), ",") {
-		if v := os.Getenv(k); k != "" && v != "" {
-			vals = append(vals, v)
-		}
-	}
-	return vals
 }
 
 // Groups returns the run's shell steps whose process group is still the one their command
