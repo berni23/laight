@@ -11,8 +11,9 @@ import (
 func TestPutAnswer(t *testing.T) {
 	home := t.TempDir()
 	a := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAA1", Run: "r1", Kind: Gate, Title: "merge?", Choices: []string{"yes", "no"}}
-	b := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAB2", Run: "r2", Kind: Failed, Title: "x", Choices: []string{Retry, Abort},
-		Detail: "token ghp_abcdefghijklmnopqrstuvwxyz0123 in /Users/someone/a/long/path/without/any/dots/at/all"}
+	b := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAB2", Run: "r2", Kind: Failed, Choices: []string{Retry, Abort},
+		Title:  "step x failed: \x1b[2Jtoken ghp_abcdefghijklmnopqrstuvwxyz0123\nnext",
+		Detail: "token ghp_abcdefghijklmnopqrstuvwxyz0123 in /Users/someone/a/long/path/without/any/dots/at/all\n\x07line two"}
 	for _, it := range []Item{b, a, a} { // a twice: putting it again does nothing
 		if err := Put(home, it); err != nil {
 			t.Fatal(err)
@@ -24,6 +25,13 @@ func TestPutAnswer(t *testing.T) {
 	}
 	if d := items[1].Detail; strings.Contains(d, "ghp_") || !strings.Contains(d, "/Users/someone/a/long/path/without/any/dots/at/all") {
 		t.Errorf("detail not redacted right: %s", d)
+	}
+	// The title leaves the machine (§6) and both reach a terminal: no token, no control characters.
+	if ti := items[1].Title; ti != "step x failed:  [2Jtoken *** next" {
+		t.Errorf("title = %q", ti)
+	}
+	if d := items[1].Detail; !strings.HasSuffix(d, "\n line two") {
+		t.Errorf("detail = %q", d)
 	}
 
 	if _, err := Answer(home, a.ID, "maybe"); err == nil || !strings.Contains(err.Error(), "choose one of: yes, no") {

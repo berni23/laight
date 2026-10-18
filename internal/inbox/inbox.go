@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Item kinds.
@@ -59,8 +60,9 @@ func dir(home string) string { return filepath.Join(home, "inbox") }
 func pendingFile(home, id string) string  { return filepath.Join(dir(home), id+".json") }
 func answeredFile(home, id string) string { return filepath.Join(dir(home), "answered", id+".json") }
 
-// Put queues an item. Its detail is redacted here, so no caller can forget. Putting an item that
-// is already queued or answered does nothing.
+// Put queues an item. Its title and detail are redacted and cleaned here, so no caller can
+// forget: the title leaves the machine (§6), and both reach a terminal. Putting an item that is
+// already queued or answered does nothing.
 func Put(home string, it Item) error {
 	if exists(pendingFile(home, it.ID)) || exists(answeredFile(home, it.ID)) {
 		return nil
@@ -68,7 +70,8 @@ func Put(home string, it Item) error {
 	if it.Created.IsZero() {
 		it.Created = time.Now().UTC()
 	}
-	it.Detail = Redact(it.Detail)
+	it.Title = clean(Redact(it.Title), false)
+	it.Detail = clean(Redact(it.Detail), true)
 	return writeFile(pendingFile(home, it.ID), &it, os.Rename)
 }
 
@@ -181,6 +184,20 @@ var secretPatterns = regexp.MustCompile(strings.Join([]string{
 
 // Redact replaces anything that looks like a token with ***.
 func Redact(s string) string { return secretPatterns.ReplaceAllString(s, "***") }
+
+// clean replaces control characters (an escape sequence an agent printed, say) with spaces;
+// newlines and tabs are kept when lines is set.
+func clean(s string, lines bool) string {
+	return strings.Map(func(r rune) rune {
+		if lines && (r == '\n' || r == '\t') {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+}
 
 func exists(file string) bool {
 	_, err := os.Stat(file)
