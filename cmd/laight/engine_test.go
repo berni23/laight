@@ -216,7 +216,9 @@ id: demo
 steps:
   - { id: flaky, run: 'if [ -e tried ]; then exit 0; fi; touch tried; exit 1', next_hop: { on: { ok: last } } }
   - { id: last, run: 'rm tried' }
+loop_guards: { max_hops: 2 }
 `)
+	// The retry is the third hop of two: it grants one more, so it isn't held again on the last step.
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
 	it := e.waitItem(r.ID)

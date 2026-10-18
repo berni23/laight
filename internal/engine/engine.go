@@ -162,9 +162,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 			blocked = append(blocked, b)
 		case it.Answer == inbox.Retry:
 			e.logf("↻ %s: retried from the inbox", b.Step)
-			if b.Guard {
-				r.ExtraHops++
-			}
+			r.ExtraHops++ // a human chose to go on: past max_hops if need be (rule 4)
 			r.Queue = append(r.Queue, b.Step)
 		default:
 			e.logf("✕ %s: aborted from the inbox", b.Step)
@@ -174,7 +172,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 	r.Blocked = blocked
 	// block holds the run on a failed item; without one, a human would never hear of it, so the
 	// run fails instead.
-	block := func(h *state.Hop, step, reason string, guard bool) bool {
+	block := func(h *state.Hop, step, reason string) bool {
 		it := inbox.Item{ID: state.NewID(time.Now()), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Step: step,
 			Kind: inbox.Failed, Title: reason, Detail: reason, Choices: []string{inbox.Retry, inbox.Abort}}
 		if h != nil {
@@ -184,7 +182,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 			e.logf("warning: can't raise an inbox item: %v", err)
 			return false
 		}
-		r.Blocked = append(r.Blocked, &state.Blocked{Step: step, Item: it.ID, Error: reason, Guard: guard})
+		r.Blocked = append(r.Blocked, &state.Blocked{Step: step, Item: it.ID, Error: reason})
 		events = append(events, state.Event{Run: r.ID, Type: "inbox.raised", Step: step,
 			Data: map[string]any{"item": it.ID, "kind": it.Kind}})
 		e.logf("  waiting in the inbox: laight inbox %s retry|abort", it.Short())
@@ -245,7 +243,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		case next == "" && d.Exit == spec.ExitFailed:
 			reason := "step " + h.Step + " failed" + errSuffix(d.Out)
 			e.logf("✕ %s", reason)
-			if !block(h, h.Step, reason, false) {
+			if !block(h, h.Step, reason) {
 				return state.Failed, reason, nil, events
 			}
 		case next == "" || next == spec.End:
@@ -291,7 +289,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 		if r.Hops >= r.Spec.LoopGuards.MaxHops+r.ExtraHops {
 			reason := fmt.Sprintf("loop_guards.max_hops (%d) reached before step %s", r.Spec.LoopGuards.MaxHops, id)
 			e.logf("✕ %s", reason)
-			if !block(nil, id, reason, true) {
+			if !block(nil, id, reason) {
 				return state.Failed, reason, nil, events
 			}
 			continue

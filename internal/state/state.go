@@ -60,8 +60,7 @@ type Run struct {
 type Blocked struct {
 	Step  string `json:"step"`
 	Item  string `json:"item"`
-	Error string `json:"error"`           // why the run fails if aborted
-	Guard bool   `json:"guard,omitempty"` // refused by max_hops: a retry grants one more hop
+	Error string `json:"error"` // why the run fails if aborted
 }
 
 // Hop is one start of a step.
