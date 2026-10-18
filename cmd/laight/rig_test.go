@@ -195,7 +195,7 @@ steps:
 
 	// The seat has the run's env, rendered, and its pane is logged. The engine delivers step
 	// one (`x`) to the same pane: wait until sh has run it, or the two pastes share a line.
-	waitLog(t, e.home, r.ID, "a", "x: command not found")
+	waitLog(t, e.home, r.ID, "a", "not found") // bash: "x: command not found", dash: "x: not found"
 	if err := e.srv.Paste(r.Session, "a", `echo "$GREETING/$LAIGHT_SEAT/$LAIGHT_RUN"`); err != nil {
 		t.Fatal(err)
 	}
