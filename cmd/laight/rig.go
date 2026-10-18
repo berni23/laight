@@ -238,7 +238,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 0
 	}
 	var in hookInput
-	json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in)
+	unread := json.NewDecoder(io.LimitReader(stdin, hookInputMax)).Decode(&in)
 	switch args[0] {
 	case "session-start":
 		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "ts": time.Now().UTC()})
@@ -250,13 +250,19 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
 	case "permission-request":
-		permissionHook(home, runID, seat, in, stdout, stderr)
+		permissionHook(home, runID, seat, in, unread, stdout, stderr)
 	case "post-tool-use":
-		answeredInPane(home, runID, seat, in)
+		if unread == nil && in.ToolName != "" { // can't tell which call it was: withdraw nothing
+			answeredInPane(home, runID, seat, in)
+		}
 	}
 	state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
 	return 0
 }
+
+// hookInputMax caps what a hook reads from stdin. A PostToolUse carries the tool's output, and
+// a Write its whole file; past this the input is unreadable, and handled as such.
+var hookInputMax int64 = 64 << 20
 
 // hookInput is what the runtime's hooks send on stdin, the fields laight reads.
 type hookInput struct {

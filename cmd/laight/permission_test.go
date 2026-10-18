@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,5 +128,40 @@ func TestPermissionAnsweredInPane(t *testing.T) {
 	})
 	if d["behavior"] != "deny" || !strings.Contains(d["message"].(string), "withdrawn") {
 		t.Errorf("withdrawn: %v", d)
+	}
+}
+
+// A request the hook can't read (too big, not JSON, no tool) is denied at once: an item would
+// show nothing, and an allow would allow what nobody saw. A PostToolUse it can't read withdraws
+// nothing.
+func TestPermissionHookUnreadable(t *testing.T) {
+	home, _ := doneEnv(t)
+	defer func(n int64) { hookInputMax = n }(hookInputMax)
+	hookInputMax = 200
+	for _, input := range []string{
+		`{"tool_name":"Write","tool_input":{"content":"` + strings.Repeat("x", 300) + `"}}`,
+		`not json`,
+		`{"tool_input":{"command":"ls"}}`,
+	} {
+		var out, errOut bytes.Buffer
+		cmdHook([]string{"permission-request"}, strings.NewReader(input), &out, &errOut)
+		if !strings.Contains(out.String(), `"behavior":"deny"`) {
+			t.Errorf("%.20s…: %q %q", input, out.String(), errOut.String())
+		}
+		if items, _ := inbox.Pending(home); len(items) > 0 {
+			t.Errorf("%.20s…: raised %+v", input, items[0])
+			inbox.Drop(home, items[0].ID)
+		}
+	}
+
+	it := inbox.Item{ID: "01ZERO", Run: os.Getenv("LAIGHT_RUN"), Seat: "a", Kind: inbox.Permission, Title: "t",
+		Choices: []string{inbox.Allow, inbox.Deny}, Match: toolMatch(hookInput{})}
+	if err := inbox.Put(home, it); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	cmdHook([]string{"post-tool-use"}, strings.NewReader(`{"tool_name":"Write","tool_input":{"content":"`+strings.Repeat("x", 300)+`"}}`), &out, &errOut)
+	if _, err := inbox.Get(home, it.ID); err != nil {
+		t.Errorf("an unreadable PostToolUse withdrew an item: %v", err)
 	}
 }

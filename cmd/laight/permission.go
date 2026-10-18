@@ -29,7 +29,7 @@ var (
 // permissionHook puts a permission prompt in the inbox and blocks until someone answers it, then
 // gives Claude the answer. Whatever goes wrong, it denies: an agent is never left waiting on a
 // dialog without an inbox item, and nothing is allowed that nobody allowed.
-func permissionHook(home, runID, seat string, in hookInput, stdout, stderr io.Writer) {
+func permissionHook(home, runID, seat string, in hookInput, unread error, stdout, stderr io.Writer) {
 	decide := func(behavior, message string) {
 		d := map[string]any{"behavior": behavior}
 		if message != "" {
@@ -38,6 +38,11 @@ func permissionHook(home, runID, seat string, in hookInput, stdout, stderr io.Wr
 		json.NewEncoder(stdout).Encode(map[string]any{"hookSpecificOutput": map[string]any{
 			"hookEventName": "PermissionRequest", "decision": d,
 		}})
+	}
+	if unread != nil || in.ToolName == "" {
+		// An item would show nothing, and an allow would allow what nobody saw.
+		decide(inbox.Deny, "laight couldn't read the permission request")
+		return
 	}
 	behavior, message, err := askPermission(home, runID, seat, in)
 	if err != nil {
@@ -54,13 +59,9 @@ func askPermission(home, runID, seat string, in hookInput) (behavior, message st
 	}
 	now := time.Now().UTC()
 	expires := now.Add(permissionWait)
-	tool := in.ToolName
-	if tool == "" {
-		tool = "a tool"
-	}
 	it := inbox.Item{
 		ID: state.NewID(now), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Seat: seat,
-		Kind: inbox.Permission, Title: fmt.Sprintf("%s wants to use %s", seat, tool),
+		Kind: inbox.Permission, Title: fmt.Sprintf("%s wants to use %s", seat, in.ToolName),
 		Detail: permissionDetail(in), Choices: []string{inbox.Allow, inbox.Deny},
 		Created: now, Expires: &expires, Match: toolMatch(in),
 	}
