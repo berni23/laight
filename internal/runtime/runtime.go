@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/tmux"
@@ -88,18 +89,33 @@ func transcriptExists(id string) bool {
 	return len(m) > 0
 }
 
+// PermissionTimeout is how long Claude waits for the PermissionRequest hook, which waits for a
+// human to answer in the inbox. Claude's default (10 minutes) is short for someone away from the
+// desk; the hook denies a little before this, so a timeout never leaves only Claude's dialog in the pane.
+const PermissionTimeout = time.Hour
+
 // Settings lets the seat finish steps without a prompt, reports ready through SessionStart and
-// the end of each turn through Stop.
+// the end of each turn through Stop, and sends every permission prompt to the inbox through
+// PermissionRequest.
 // Passed with --settings, so the user's own ~/.claude/settings.json is never written.
 func (claude) Settings(laight string) []byte {
-	hook := func(event string) []any {
-		return []any{map[string]any{"hooks": []any{map[string]any{
-			"type": "command", "command": tmux.Quote(laight) + " hook " + event,
-		}}}}
+	hook := func(event string, timeout time.Duration) []any {
+		h := map[string]any{"type": "command", "command": tmux.Quote(laight) + " hook " + event}
+		if timeout > 0 {
+			h["timeout"] = int(timeout.Seconds())
+		}
+		return []any{map[string]any{"hooks": []any{h}}}
 	}
 	b, _ := json.MarshalIndent(map[string]any{
 		"permissions": map[string]any{"allow": []string{"Bash(" + laight + " done:*)", "Bash(laight done:*)"}},
-		"hooks":       map[string]any{"SessionStart": hook("session-start"), "Stop": hook("stop")},
+		"hooks": map[string]any{
+			"SessionStart":      hook("session-start", 0),
+			"Stop":              hook("stop", 0),
+			"PermissionRequest": hook("permission-request", PermissionTimeout),
+			// A prompt allowed in the pane: withdraw its inbox item.
+			"PostToolUse":        hook("post-tool-use", 0),
+			"PostToolUseFailure": hook("post-tool-use", 0),
+		},
 	}, "", "  ")
 	return b
 }

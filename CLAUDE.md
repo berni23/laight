@@ -9,8 +9,9 @@ watch agents.
 This file is the spec. README.md is the user-facing overview. Status: **M1 done** (`init`,
 `validate`, `run`, `attach`, `abort`: rigs spin up and tear down); **M2 in progress**: the engine
 loop runs agent and shell steps (`laight done`, routing, `max_hops`), gates, and a minimal inbox
-(`files` queue, `laight inbox`, `gate` and `failed` items); the `PermissionRequest` hook and
-`needs`/`matrix` are next. Resuming a run whose engine died is deferred (#8, §4).
+(`files` queue, `laight inbox`, `gate`, `failed` and `permission` items, the last from the
+`PermissionRequest` hook); `needs`/`matrix` and the acceptance run are next. Resuming a run
+whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -339,17 +340,34 @@ Everything that needs a human becomes an **inbox item**:
 
 | Kind | Source | Answer goes back via |
 |---|---|---|
-| `permission` | Claude Code `PermissionRequest` hook | the hook process itself: it blocks, polling the item file, and returns allow/deny JSON to Claude |
+| `permission` | Claude Code `PermissionRequest` hook | the hook process itself: it blocks, polling the item file, and returns allow/deny JSON to Claude (details below the table) |
 | `question` | a `PreToolUse` hook on `AskUserQuestion` (blocks like `permission`); a plain-text question caught by the Stop hook | the hook returns the answer to the agent; for plain text, paste it into the seat |
 | `gate` | a `type: gate` step | the engine routes on the chosen exit |
 | `stuck` | step timeout, Stop hook gave up, idle with no `laight done` | choices: nudge / open pane / fail step |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | choices: retry step / abort run |
 
 An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
-expires?, answer?, answered?}`. `detail` is a short excerpt (the command asking permission, the
+expires?, answer?, answered?, match?}`. `detail` is a short excerpt (the command asking permission, the
 last lines of the pane). Title and detail are **redacted** (tokens, anything matching common
-secret patterns; the seat's env values too, once its hooks raise items from inside it, #10) and
-stripped of control characters, by the queue itself, so no producer can forget.
+secret patterns, and the exact values of the seat's secret env, for an item raised inside a seat)
+and stripped of control characters, by the queue itself, so no producer can forget. A seat's env
+names its secret-bearing keys in `LAIGHT_REDACT_ENV` (names, never values); a hook strips those
+keys' whole values, so a secret embedded in a longer value is caught only where the whole value
+appears.
+
+**Permission items** (#10, verified against Claude Code 2.1.302). The title is `<seat> wants to
+use <tool>` (it may leave the machine), the detail is the Bash command or the tool's input.
+Claude shows its own dialog in the pane *while* the hook waits, so either answer counts:
+- answered in the inbox: the hook returns allow or deny (with a message saying so) to Claude;
+- *No* or Esc in the pane interrupts the turn and Claude stops the hook, which drops its item;
+- *Yes* in the pane runs the tool, but Claude neither waits for nor stops the hook. Neither hook
+  gets a `tool_use_id`, so the item carries `match`, a hash of the tool and its re-encoded input,
+  and the seat's `PostToolUse`/`PostToolUseFailure` hook withdraws the oldest pending item that
+  matches (event `inbox.answered`, answer `in the pane`); the hook sees it gone and returns.
+- The hook's `timeout` in the generated settings is 1 hour; the item expires a minute earlier,
+  and the hook records `deny` as its answer and denies. A hook Claude times out leaves only
+  Claude's dialog in a pane nobody may watch, so laight must answer first. Any error raising the item also denies.
+- A run that ends withdraws its items: a waiting hook denies.
 
 **Queue and channels.** Two small Go interfaces keep this pluggable without making the core heavy
 (`internal/inbox` is the `files` queue as plain functions today; the interface is extracted when a

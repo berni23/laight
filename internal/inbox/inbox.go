@@ -20,8 +20,15 @@ import (
 
 // Item kinds.
 const (
-	Gate   = "gate"
-	Failed = "failed"
+	Permission = "permission"
+	Gate       = "gate"
+	Failed     = "failed"
+)
+
+// The choices of a permission item.
+const (
+	Allow = "allow"
+	Deny  = "deny"
 )
 
 // The choices of a failed item.
@@ -47,6 +54,13 @@ type Item struct {
 	Expires  *time.Time `json:"expires,omitempty"`
 	Answer   string     `json:"answer,omitempty"` // set once answered
 	Answered *time.Time `json:"answered,omitempty"`
+	// Match identifies what a permission item asks about (a hash of the tool and its input), so
+	// the seat's PostToolUse hook can withdraw it when the prompt was answered in the pane.
+	Match string `json:"match,omitempty"`
+
+	// Secrets are exact values Put strips from the title and the detail (the seat's secret env,
+	// for an item raised inside a seat). Never written.
+	Secrets []string `json:"-"`
 }
 
 // Short is the id people type: the item's last six characters, lower case.
@@ -70,6 +84,12 @@ func Put(home string, it Item) error {
 	if it.Created.IsZero() {
 		it.Created = time.Now().UTC()
 	}
+	for _, v := range it.Secrets {
+		if v != "" {
+			it.Title, it.Detail = strings.ReplaceAll(it.Title, v, "***"), strings.ReplaceAll(it.Detail, v, "***")
+		}
+	}
+	it.Secrets = nil
 	it.Title = clean(Redact(it.Title), false)
 	it.Detail = clean(Redact(it.Detail), true)
 	return writeFile(pendingFile(home, it.ID), &it, os.Rename)
@@ -185,6 +205,10 @@ func Find(home, ref string) (string, error) {
 	}
 	return "", fmt.Errorf("%q matches %d items; type more of the id", ref, len(match))
 }
+
+// Drop removes a pending item nobody waits on any more (its hook was cancelled). An answer that
+// won the race is kept.
+func Drop(home, id string) { os.Remove(pendingFile(home, id)) }
 
 // Withdraw drops the run's pending items: the run ended, so nobody is waiting on them.
 func Withdraw(home, run string) {

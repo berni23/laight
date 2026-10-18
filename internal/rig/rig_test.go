@@ -100,3 +100,22 @@ func TestDownWithdrawsLateItems(t *testing.T) {
 		t.Errorf("left behind: %+v", items[0])
 	}
 }
+
+// A seat's env names the keys that hold a secret, never the values, and its hooks read them back.
+func TestSeatEnvNamesSecrets(t *testing.T) {
+	t.Setenv("LAIGHT_SECRET_GH", "s3cret-value")
+	r := &state.Run{Spec: &spec.Workflow{Env: spec.StringMap{"PLAIN": "x", "TOKEN": `{{ secret "gh" }}`}}}
+	env, err := seatEnv(r, &spec.Seat{Env: spec.StringMap{"OTHER": `pre-{{ secret "gh" }}`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env[RedactEnv] != "OTHER,TOKEN" {
+		t.Errorf("%s = %q", RedactEnv, env[RedactEnv])
+	}
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	if got := SeatSecrets(); len(got) != 2 || got[0] != "pre-s3cret-value" || got[1] != "s3cret-value" {
+		t.Errorf("SeatSecrets = %q", got)
+	}
+}

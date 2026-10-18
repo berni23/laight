@@ -237,11 +237,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		return 0
 	}
-	var in struct {
-		SessionID      string `json:"session_id"`
-		Source         string `json:"source"`
-		StopHookActive bool   `json:"stop_hook_active"`
-	}
+	var in hookInput
 	json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in)
 	switch args[0] {
 	case "session-start":
@@ -253,9 +249,22 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err := stopHook(home, runID, seat, in.StopHookActive, stdout); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
+	case "permission-request":
+		permissionHook(home, runID, seat, in, stdout, stderr)
+	case "post-tool-use":
+		answeredInPane(home, runID, seat, in)
 	}
 	state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
 	return 0
+}
+
+// hookInput is what the runtime's hooks send on stdin, the fields laight reads.
+type hookInput struct {
+	SessionID      string          `json:"session_id"`
+	Source         string          `json:"source"`
+	StopHookActive bool            `json:"stop_hook_active"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
 }
 
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
