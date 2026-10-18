@@ -1,6 +1,8 @@
 package inbox
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -125,5 +127,57 @@ func TestRedact(t *testing.T) {
 		if got := Redact(in); got != want {
 			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// Put strips the seat's secret env values itself: an item raised inside a seat can't leak them
+// because its producer forgot to pass them.
+func TestPutStripsSeatSecrets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("K", "v4lue-x")
+	t.Setenv(RedactEnv, "K,UNSET")
+	if err := Put(home, Item{ID: "01S", Run: "r", Kind: Permission, Title: "uses v4lue-x", Detail: "a v4lue-x b", Choices: []string{Allow}}); err != nil {
+		t.Fatal(err)
+	}
+	it, err := Get(home, "01S")
+	if err != nil || it.Title != "uses ***" || it.Detail != "a *** b" {
+		t.Errorf("item %+v %v", it, err)
+	}
+}
+
+// A detail can be JSON (a tool's input), where a secret appears escaped, with or without HTML
+// escaping.
+func TestPutStripsEscapedSecrets(t *testing.T) {
+	home := t.TempDir()
+	secret := "ab\"cd\\ef<"
+	t.Setenv("K", secret)
+	t.Setenv(RedactEnv, "K")
+	html, _ := json.Marshal(map[string]string{"c": secret})
+	var plain bytes.Buffer
+	enc := json.NewEncoder(&plain)
+	enc.SetEscapeHTML(false)
+	enc.Encode(map[string]string{"d": secret})
+	detail := string(html) + strings.TrimSpace(plain.String())
+	if err := Put(home, Item{ID: "01E", Run: "r", Kind: Permission, Title: "t", Detail: detail, Choices: []string{Allow}}); err != nil {
+		t.Fatal(err)
+	}
+	if it, err := Get(home, "01E"); err != nil || it.Detail != `{"c":"***"}{"d":"***"}` {
+		t.Errorf("detail %q from %q: %v", it.Detail, detail, err)
+	}
+}
+
+// A long detail is cut short after redaction, so a secret the cut runs through can't leave its
+// first half behind.
+func TestPutRedactsBeforeCut(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("K", "hunter2-not-a-pattern")
+	t.Setenv(RedactEnv, "K")
+	detail := strings.Repeat("x", 1990) + "hunter2-not-a-pattern" + strings.Repeat("y", 100)
+	if err := Put(home, Item{ID: "01C", Run: "r", Kind: Permission, Title: "t", Detail: detail, Choices: []string{Allow}}); err != nil {
+		t.Fatal(err)
+	}
+	it, err := Get(home, "01C")
+	if err != nil || strings.Contains(it.Detail, "hunt") || !strings.HasSuffix(it.Detail, "…") || len(it.Detail) > 2000+len("…") {
+		t.Errorf("detail ends %q: %v", it.Detail[max(0, len(it.Detail)-30):], err)
 	}
 }

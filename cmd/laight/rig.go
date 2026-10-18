@@ -237,12 +237,8 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		return 0
 	}
-	var in struct {
-		SessionID      string `json:"session_id"`
-		Source         string `json:"source"`
-		StopHookActive bool   `json:"stop_hook_active"`
-	}
-	json.NewDecoder(io.LimitReader(stdin, 1<<20)).Decode(&in)
+	var in hookInput
+	unread := json.NewDecoder(io.LimitReader(stdin, hookInputMax)).Decode(&in)
 	switch args[0] {
 	case "session-start":
 		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "ts": time.Now().UTC()})
@@ -253,9 +249,30 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		if err := stopHook(home, runID, seat, in.StopHookActive, stdout); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
+	case "permission-request":
+		permissionHook(home, runID, seat, in, unread, stdout, stderr)
+	case "post-tool-use":
+		if unread == nil && in.ToolName != "" { // can't tell which call it was: withdraw nothing
+			answeredInPane(home, runID, seat, in)
+		}
 	}
-	state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
+	if args[0] == "session-start" || args[0] == "stop" { // the tool hooks log what they did, as inbox events
+		state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
+	}
 	return 0
+}
+
+// hookInputMax caps what a hook reads from stdin. A PostToolUse carries the tool's output, and
+// a Write its whole file; past this the input is unreadable, and handled as such.
+var hookInputMax int64 = 64 << 20
+
+// hookInput is what the runtime's hooks send on stdin, the fields laight reads.
+type hookInput struct {
+	SessionID      string          `json:"session_id"`
+	Source         string          `json:"source"`
+	StopHookActive bool            `json:"stop_hook_active"`
+	ToolName       string          `json:"tool_name"`
+	ToolInput      json.RawMessage `json:"tool_input"`
 }
 
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and

@@ -20,8 +20,15 @@ import (
 
 // Item kinds.
 const (
-	Gate   = "gate"
-	Failed = "failed"
+	Permission = "permission"
+	Gate       = "gate"
+	Failed     = "failed"
+)
+
+// The choices of a permission item.
+const (
+	Allow = "allow"
+	Deny  = "deny"
 )
 
 // The choices of a failed item.
@@ -47,6 +54,9 @@ type Item struct {
 	Expires  *time.Time `json:"expires,omitempty"`
 	Answer   string     `json:"answer,omitempty"` // set once answered
 	Answered *time.Time `json:"answered,omitempty"`
+	// Match identifies what a permission item asks about (a hash of the tool and its input), so
+	// the seat's PostToolUse hook can withdraw it when the prompt was answered in the pane.
+	Match string `json:"match,omitempty"`
 }
 
 // Short is the id people type: the item's last six characters, lower case.
@@ -61,8 +71,9 @@ func pendingFile(home, id string) string  { return filepath.Join(dir(home), id+"
 func answeredFile(home, id string) string { return filepath.Join(dir(home), "answered", id+".json") }
 
 // Put queues an item. Its title and detail are redacted and cleaned here, so no caller can
-// forget: the title leaves the machine (§6), and both reach a terminal. Putting an item that is
-// already queued or answered does nothing.
+// forget: the title leaves the machine (§6), and both reach a terminal. Inside a seat, that
+// includes the seat's secret env values. Putting an item that is already queued or answered
+// does nothing.
 func Put(home string, it Item) error {
 	if exists(pendingFile(home, it.ID)) || exists(answeredFile(home, it.ID)) {
 		return nil
@@ -70,8 +81,11 @@ func Put(home string, it Item) error {
 	if it.Created.IsZero() {
 		it.Created = time.Now().UTC()
 	}
+	for _, v := range secretForms(SeatSecrets()) {
+		it.Title, it.Detail = strings.ReplaceAll(it.Title, v, "***"), strings.ReplaceAll(it.Detail, v, "***")
+	}
 	it.Title = clean(Redact(it.Title), false)
-	it.Detail = clean(Redact(it.Detail), true)
+	it.Detail = cut(clean(Redact(it.Detail), true)) // cut last: a cut secret no longer matches
 	return writeFile(pendingFile(home, it.ID), &it, os.Rename)
 }
 
@@ -186,6 +200,10 @@ func Find(home, ref string) (string, error) {
 	return "", fmt.Errorf("%q matches %d items; type more of the id", ref, len(match))
 }
 
+// Drop removes a pending item nobody waits on any more (its hook was cancelled). An answer that
+// won the race is kept.
+func Drop(home, id string) { os.Remove(pendingFile(home, id)) }
+
 // Withdraw drops the run's pending items: the run ended, so nobody is waiting on them.
 func Withdraw(home, run string) {
 	items, _ := Pending(home)
@@ -194,6 +212,43 @@ func Withdraw(home, run string) {
 			os.Remove(pendingFile(home, it.ID))
 		}
 	}
+}
+
+// RedactEnv is the seat env variable that names the keys holding a secret (never the values).
+const RedactEnv = "LAIGHT_REDACT_ENV"
+
+// SeatSecrets returns the secret values in this process's env: a seat's, for a hook running in
+// it; none in the engine's.
+func SeatSecrets() []string {
+	var vals []string
+	for _, k := range strings.Split(os.Getenv(RedactEnv), ",") {
+		if v := os.Getenv(k); k != "" && v != "" {
+			vals = append(vals, v)
+		}
+	}
+	return vals
+}
+
+// secretForms is each secret as it may appear in a detail: as is, and inside a JSON string (a
+// tool's input), with and without HTML escaping. Longest first, so a secret that contains
+// another is stripped whole.
+func secretForms(secrets []string) []string {
+	var forms []string
+	for _, v := range secrets {
+		forms = append(forms, v)
+		html, _ := json.Marshal(v)
+		var plain bytes.Buffer
+		enc := json.NewEncoder(&plain)
+		enc.SetEscapeHTML(false)
+		enc.Encode(v)
+		for _, b := range [][]byte{html, bytes.TrimSpace(plain.Bytes())} {
+			if f := string(b[1 : len(b)-1]); !slices.Contains(forms, f) {
+				forms = append(forms, f)
+			}
+		}
+	}
+	sort.SliceStable(forms, func(i, j int) bool { return len(forms[i]) > len(forms[j]) })
+	return forms
 }
 
 // secretPatterns are what a token looks like (OpenRig's list, CLAUDE.md §12.4).
@@ -231,6 +286,15 @@ func clean(s string, lines bool) string {
 		}
 		return r
 	}, s)
+}
+
+// cut keeps a detail to an excerpt (§6).
+func cut(s string) string {
+	const max = 2000
+	if len(s) <= max {
+		return s
+	}
+	return strings.ToValidUTF8(s[:max], "") + "…"
 }
 
 func exists(file string) bool {

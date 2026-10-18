@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -36,5 +37,33 @@ func TestClaudeCommand(t *testing.T) {
 	}
 	if _, err := For("codex"); err == nil {
 		t.Error("For(codex): want not supported yet")
+	}
+}
+
+// Every hook the seat relies on is in its settings: without PermissionRequest, prompts sit in
+// the pane; without its timeout, Claude gives up after 10 minutes; without the PostToolUse
+// pair, a prompt allowed in the pane stays in the inbox.
+func TestClaudeSettings(t *testing.T) {
+	var s struct {
+		Hooks map[string][]struct {
+			Hooks []struct {
+				Command string `json:"command"`
+				Timeout int    `json:"timeout"`
+			} `json:"hooks"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(claude{}.Settings("/bin/laight"), &s); err != nil {
+		t.Fatal(err)
+	}
+	for event, want := range map[string]string{
+		"SessionStart": "session-start", "Stop": "stop", "PermissionRequest": "permission-request",
+		"PostToolUse": "post-tool-use", "PostToolUseFailure": "post-tool-use",
+	} {
+		if h := s.Hooks[event]; len(h) != 1 || len(h[0].Hooks) != 1 || h[0].Hooks[0].Command != "/bin/laight hook "+want {
+			t.Errorf("%s: %+v", event, h)
+		}
+	}
+	if h := s.Hooks["PermissionRequest"]; len(h) == 1 && h[0].Hooks[0].Timeout != 3600 {
+		t.Errorf("PermissionRequest timeout %d, want 3600", h[0].Hooks[0].Timeout)
 	}
 }

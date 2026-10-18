@@ -264,18 +264,30 @@ func (g *Rig) Restart(ctx context.Context, id, name string) error {
 	return g.seatUp(ctx, r, name)
 }
 
-// seatEnv renders the workflow's and the seat's env (the seat's wins).
+// seatEnv renders the workflow's and the seat's env (the seat's wins). inbox.RedactEnv names the keys
+// that hold a secret, never the values, so the seat's hooks can strip them from what they raise.
 func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	data := r.TemplateData()
 	env := map[string]string{}
+	secret := map[string]bool{}
 	for _, m := range []spec.StringMap{r.Spec.Env, seat.Env} {
 		for k, v := range m {
-			out, _, err := spec.RenderWithSecrets("env "+k, v, data)
+			out, used, err := spec.RenderWithSecrets("env "+k, v, data)
 			if err != nil {
 				return nil, fmt.Errorf("env %s: %w", k, err)
 			}
-			env[k] = out
+			env[k], secret[k] = out, len(used) > 0
 		}
+	}
+	var keys []string
+	for k, s := range secret {
+		if s {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) > 0 {
+		sort.Strings(keys)
+		env[inbox.RedactEnv] = strings.Join(keys, ",")
 	}
 	return env, nil
 }
