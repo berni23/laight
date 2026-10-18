@@ -95,6 +95,9 @@ func Pending(home string) ([]*Item, error) {
 	return items, nil
 }
 
+// Get returns a pending item.
+func Get(home, id string) (*Item, error) { return read(pendingFile(home, id)) }
+
 // Answered returns the answered item, or nil while it is pending.
 func Answered(home, id string) (*Item, error) {
 	it, err := read(answeredFile(home, id))

@@ -368,19 +368,7 @@ func TestEngineDied(t *testing.T) {
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
 	e.waitFor(r.ID, "seat.up", 2)
-	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil || pid == 0 {
-		t.Fatalf("engine pid %q: %v", out, err)
-	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-		t.Fatal(err)
-	}
-	for deadline := time.Now().Add(5 * time.Second); !e.srv.PaneDead(r.Session, "engine"); time.Sleep(50 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("the engine pane never died")
-		}
-	}
+	e.killEngine(r)
 	if out, _ := e.laight("attach", r.Short()); !strings.Contains(out, "its engine died, so it will never finish; clean it up with: laight abort "+r.Short()) {
 		t.Errorf("attach with a dead engine:\n%s", out)
 	}
@@ -430,6 +418,24 @@ func TestEngineDiedCantSay(t *testing.T) {
 	}
 	if !engineDied(tmux.Server{Socket: "missing"}, r) {
 		t.Error("no tmux server reads as a live engine")
+	}
+}
+
+// killEngine kills the run's engine as a crash would, leaving its pane dead.
+func (e *rigEnv) killEngine(r *state.Run) {
+	e.t.Helper()
+	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || pid == 0 {
+		e.t.Fatalf("engine pid %q: %v", out, err)
+	}
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		e.t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); !e.srv.PaneDead(r.Session, "engine"); time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			e.t.Fatal("the engine pane never died")
+		}
 	}
 }
 

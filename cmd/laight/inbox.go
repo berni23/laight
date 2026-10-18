@@ -10,6 +10,7 @@ import (
 
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/state"
+	"github.com/berni23/laight/internal/tmux"
 )
 
 // cmdInbox lists what is waiting for a human, from every run of every project, oldest first; with
@@ -48,6 +49,12 @@ func answerItem(home, ref, answer string, stdout, stderr io.Writer) int {
 	id, err := inbox.Find(home, ref)
 	if err != nil {
 		return fail(stderr, "%v", err)
+	}
+	// A run whose engine died never reads the answer (CLAUDE.md §4): say so instead.
+	if it, err := inbox.Get(home, id); err == nil {
+		if r, err := state.Load(home, it.Run); err == nil && engineDied(tmux.Server{Socket: state.Socket(home)}, r) {
+			return fail(stderr, "%s", deadEngine(r))
+		}
 	}
 	it, err := inbox.Answer(home, id, answer)
 	if errors.Is(err, inbox.ErrAlreadyAnswered) {

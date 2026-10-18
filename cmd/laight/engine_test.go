@@ -233,6 +233,26 @@ loop_guards: { max_hops: 2 }
 	}
 }
 
+// An item whose run lost its engine can't be answered: nothing would ever read the answer.
+func TestInboxEngineDied(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, `version: 1
+id: demo
+steps:
+  - { id: approve, type: gate, ask: 'Go?' }
+`)
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	e.killEngine(r)
+	if out, err := e.laight("inbox", it.Short(), "yes"); err == nil || !strings.Contains(out, "its engine died") {
+		t.Errorf("answered for a dead engine: %v\n%s", err, out)
+	}
+	if done, _ := inbox.Answered(e.home, it.ID); done != nil {
+		t.Errorf("answer recorded: %+v", done)
+	}
+}
+
 // A gate asks in the inbox and routes on the answer; the first answer wins.
 func TestEngineGate(t *testing.T) {
 	e := newRigEnv(t, "")
