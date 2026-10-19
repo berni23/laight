@@ -11,7 +11,15 @@ that.
 
 ---
 
-## Last session — 2026-10-18
+## Last session — 2026-10-20
+
+**CLAUDE.md simplified (677 → 433 lines), no design change.** Section numbers kept, so every `§N`
+reference still lands. The OpenRig history, the other-orchestrator research of §12, the full
+shell-step, redaction and permission-item rules, the queue/channel interfaces and per-channel
+details, the `show` pages and the release details moved to `scratch.docs/scratch.spec_parked.md`
+(local, gitignored). The code is the authority for the detailed rules it already implements.
+
+### Also still relevant, from 2026-10-18
 
 **#10 — PermissionRequest hook into the inbox.** A Claude seat's prompt becomes a `permission`
 item (detail = the command, the seat's secret env values redacted via `LAIGHT_REDACT_ENV`); the
