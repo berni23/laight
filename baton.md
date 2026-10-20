@@ -20,8 +20,11 @@ No typing into panes. The second run's gate waited ~23 h and the engine survived
 raised an `AskUserQuestion` permission item (that is #34). No engine died, so nothing for #8.
 
 **Found on the first real run, fixed:** `laight done: command not found` when laight isn't
-installed. A seat's `PATH` now starts with the folder of the binary running its rig (spec §5).
-Regression test `TestSeatFindsLaightOnPath`, seen red with the fix removed.
+installed. A seat's `PATH` now starts with `<run>/bin/`, holding only a `laight` link to
+the binary running its rig (spec §5). #35's review caught the first version prepending the
+binary's whole folder (with brew, `/opt/homebrew/bin`, whose `claude` would shadow the user's).
+`TestSeatFindsLaightOnPath` pins a renamed binary and no sibling leaking in, and was seen red on the
+old code. Spec §5 now also names the bare `Bash(laight done:*)` allow rule (unit-tested).
 
 ---
 
@@ -29,7 +32,8 @@ Regression test `TestSeatFindsLaightOnPath`, seen red with the fix removed.
 
 ### 1. #32 — check the permission hook against real Claude
 
-Still not run. Three questions: does `tool_input` match across `PermissionRequest` and
+Still not run. Four questions (the fourth, from #35's review, is in an issue comment: does a
+real Claude seat's Bash find the rig's `laight`, or an older one from the user's rc). The others: does `tool_input` match across `PermissionRequest` and
 `PostToolUse` for Edit, Write, WebFetch and an MCP tool; which signal Claude sends on No/Esc; does
 it honour the 1 h hook timeout. Needs a supervised run with hooks that `tee` their stdin.
 

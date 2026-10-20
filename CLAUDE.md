@@ -233,9 +233,11 @@ pasted into a pane, and panes are logged.
 ## 5. Driving a seat
 
 - **Start:** a tmux window running the runtime with the seat's flags, env `LAIGHT_RUN`,
-  `LAIGHT_SEAT`, `LAIGHT_HOME`, the laight binary's folder first on `PATH` (agents type
-  `laight done`, installed or not), and a generated per-seat settings file with laight's hooks. Ready
-  when the `SessionStart` hook reports it (fallback: prompt glyph via `capture-pane`, timeout).
+  `LAIGHT_SEAT`, `LAIGHT_HOME`, `PATH` (the seat's `env` one, else the engine's) with a run
+  folder first that holds only a `laight` link to the binary running the rig (agents type
+  `laight done`, installed or not; nothing else from its folder), and a generated per-seat
+  settings file with laight's hooks. Ready when the `SessionStart` hook reports it (fallback:
+  prompt glyph via `capture-pane`, timeout).
 - **Give a step:** `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + `Enter`. Never
   `send-keys` long text.
 - **Finish a step:** the agent runs `laight done <exit> [k=v…]` (no flags; it reads env). If it
@@ -246,8 +248,9 @@ pasted into a pane, and panes are logged.
   within a run continues its conversation with `--resume`.
 - **Guidance and settings** are passed at launch (`--append-system-prompt-file`, `--settings`),
   never written into tracked files, `CLAUDE.md` or `~/.claude/settings.json`. The settings allow
-  `Bash(<abs path to laight> done:*)`. Permission modes map to `--permission-mode`: `default` →
-  `manual`, `auto` → `auto`, `yolo` → `bypassPermissions`.
+  `Bash(<abs path to laight> done:*)` and `Bash(laight done:*)` (what agents type). Permission
+  modes map to `--permission-mode`: `default` → `manual`, `auto` → `auto`, `yolo` →
+  `bypassPermissions`.
 - **Launch prompts:** the folder-trust dialog and yolo's warning are accepted via `capture-pane`,
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.

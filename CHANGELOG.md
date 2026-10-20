@@ -8,8 +8,8 @@ All notable changes to laight are documented here. The format follows
 
 ### Added
 
-- A seat finds `laight` on its `PATH` (the binary that runs its rig comes first), so `laight done`
-  works even when laight isn't installed, e.g. a build in `bin/`.
+- A seat finds `laight` on its `PATH` (a link to the binary that runs its rig comes first), so
+  `laight done` works even when laight isn't installed or has another name, e.g. a build in `bin/`.
 - The design specification (CLAUDE.md), project scaffolding, CI and the release pipeline.
 - `laight version`.
 - `laight init`: scaffolds `.laight/` with an issue-cycle workflow and guidance.
