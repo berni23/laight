@@ -147,6 +147,35 @@ func (e *rigEnv) abortItem(id string) {
 	e.mustLaight("inbox", it.Short(), "abort")
 }
 
+// Agents learn `laight done` by name: the seat finds the binary running its rig on PATH, even
+// when laight isn't installed anywhere (#11's first real run stopped on "command not found"),
+// or is built under another name; nothing else from the binary's folder comes along (with brew,
+// that folder is /opt/homebrew/bin, and its `claude` would shadow the user's).
+func TestSeatFindsLaightOnPath(t *testing.T) {
+	e := newRigEnv(t, "")
+	dir := t.TempDir()
+	b, err := os.ReadFile(e.bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.bin = filepath.Join(dir, "laight-dev")
+	for name, data := range map[string][]byte{"laight-dev": b, "sibling": []byte("#!/bin/sh\n")} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - { id: one, seat: a, objective: '! command -v sibling && [ "$(readlink "$(command -v laight)")" = "$L" ] && laight done handoff || "$L" done failed', next_hop: { on: { failed: end } } }
+`))
+	e.mustLaight("run", "demo")
+	r := e.waitEnded(e.onlyRun().ID)
+	if got := strings.Join(e.stepsDone(r.ID), " "); got != "one:handoff" {
+		t.Errorf("steps %s; want one:handoff (status %s: %s)", got, r.Status, r.Error)
+	}
+}
+
 // max_hops holds the run on a failed item: retry grants one more hop, abort fails the run.
 func TestEngineMaxHops(t *testing.T) {
 	e := newRigEnv(t, "")

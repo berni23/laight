@@ -3,11 +3,13 @@
 package rig
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -167,6 +169,20 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 		return err
 	}
 	env["LAIGHT_RUN"], env["LAIGHT_SEAT"], env["LAIGHT_HOME"] = r.ID, name, g.Home
+	if g.Laight != "" {
+		// Agents learn `laight done`: the binary running this rig is the one they find first,
+		// even when it isn't installed or has another name (a build in bin/). Only a link to it
+		// goes first, never its folder: with brew that is /opt/homebrew/bin, whose `claude`
+		// would shadow the user's.
+		bin := filepath.Join(runDir, "bin")
+		if err := os.MkdirAll(bin, 0o700); err != nil {
+			return err
+		}
+		if err := os.Symlink(g.Laight, filepath.Join(bin, "laight")); err != nil && !errors.Is(err, fs.ErrExist) {
+			return err
+		}
+		env["PATH"] = bin + string(os.PathListSeparator) + cmp.Or(env["PATH"], os.Getenv("PATH"))
+	}
 	if st.SessionID == "" {
 		st.SessionID = uuid()
 	}

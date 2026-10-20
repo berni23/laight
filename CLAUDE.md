@@ -11,8 +11,9 @@ later milestones are parked in `scratch.docs/scratch.spec_parked.md` (local, unt
 Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up and tear down);
 **M2 in progress**: the engine loop runs agent and shell steps (`laight done`, routing,
 `max_hops`), gates, and a minimal inbox (`files` queue, `laight inbox`, `gate`, `failed` and
-`permission` items, the last from the `PermissionRequest` hook); `needs`/`matrix` and the
-acceptance run are next. Resuming a run whose engine died is deferred (#8, §4).
+`permission` items, the last from the `PermissionRequest` hook). The acceptance run passed (#11:
+two real issues to merged PRs, one review/fix round each); `needs`/`matrix` are next. Resuming a
+run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -232,8 +233,11 @@ pasted into a pane, and panes are logged.
 ## 5. Driving a seat
 
 - **Start:** a tmux window running the runtime with the seat's flags, env `LAIGHT_RUN`,
-  `LAIGHT_SEAT`, `LAIGHT_HOME`, and a generated per-seat settings file with laight's hooks. Ready
-  when the `SessionStart` hook reports it (fallback: prompt glyph via `capture-pane`, timeout).
+  `LAIGHT_SEAT`, `LAIGHT_HOME`, `PATH` (the seat's `env` one, else the engine's) with a run
+  folder first that holds only a `laight` link to the binary running the rig (agents type
+  `laight done`, installed or not; nothing else from its folder), and a generated per-seat
+  settings file with laight's hooks. Ready when the `SessionStart` hook reports it (fallback:
+  prompt glyph via `capture-pane`, timeout).
 - **Give a step:** `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + `Enter`. Never
   `send-keys` long text.
 - **Finish a step:** the agent runs `laight done <exit> [k=v…]` (no flags; it reads env). If it
@@ -244,8 +248,9 @@ pasted into a pane, and panes are logged.
   within a run continues its conversation with `--resume`.
 - **Guidance and settings** are passed at launch (`--append-system-prompt-file`, `--settings`),
   never written into tracked files, `CLAUDE.md` or `~/.claude/settings.json`. The settings allow
-  `Bash(<abs path to laight> done:*)`. Permission modes map to `--permission-mode`: `default` →
-  `manual`, `auto` → `auto`, `yolo` → `bypassPermissions`.
+  `Bash(<abs path to laight> done:*)` and `Bash(laight done:*)` (what agents type). Permission
+  modes map to `--permission-mode`: `default` → `manual`, `auto` → `auto`, `yolo` →
+  `bypassPermissions`.
 - **Launch prompts:** the folder-trust dialog and yolo's warning are accepted via `capture-pane`,
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.

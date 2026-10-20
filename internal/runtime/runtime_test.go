@@ -32,7 +32,7 @@ func TestClaudeCommand(t *testing.T) {
 	if got != want {
 		t.Errorf("Command =\n %s\nwant\n %s", got, want)
 	}
-	if s := string(claude{}.Settings("/bin/laight")); !strings.Contains(s, `"Bash(/bin/laight done:*)"`) || !strings.Contains(s, "/bin/laight hook session-start") {
+	if s := string(claude{}.Settings("/bin/laight")); !strings.Contains(s, `"Bash(/bin/laight done:*)"`) || !strings.Contains(s, `"Bash(laight done:*)"`) || !strings.Contains(s, "/bin/laight hook session-start") {
 		t.Errorf("Settings = %s", s)
 	}
 	if _, err := For("codex"); err == nil {
