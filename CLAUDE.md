@@ -11,8 +11,9 @@ later milestones are parked in `scratch.docs/scratch.spec_parked.md` (local, unt
 Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up and tear down);
 **M2 in progress**: the engine loop runs agent and shell steps (`laight done`, routing,
 `max_hops`), gates, and a minimal inbox (`files` queue, `laight inbox`, `gate`, `failed` and
-`permission` items, the last from the `PermissionRequest` hook); `needs`/`matrix` and the
-acceptance run are next. Resuming a run whose engine died is deferred (#8, §4).
+`permission` items, the last from the `PermissionRequest` hook). The acceptance run passed (#11:
+two real issues to merged PRs, one review/fix round each); `needs`/`matrix` are next. Resuming a
+run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -232,7 +233,8 @@ pasted into a pane, and panes are logged.
 ## 5. Driving a seat
 
 - **Start:** a tmux window running the runtime with the seat's flags, env `LAIGHT_RUN`,
-  `LAIGHT_SEAT`, `LAIGHT_HOME`, and a generated per-seat settings file with laight's hooks. Ready
+  `LAIGHT_SEAT`, `LAIGHT_HOME`, the laight binary's folder first on `PATH` (agents type
+  `laight done`, installed or not), and a generated per-seat settings file with laight's hooks. Ready
   when the `SessionStart` hook reports it (fallback: prompt glyph via `capture-pane`, timeout).
 - **Give a step:** `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + `Enter`. Never
   `send-keys` long text.

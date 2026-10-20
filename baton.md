@@ -13,67 +13,41 @@ that.
 
 ## Last session — 2026-10-20
 
-**CLAUDE.md simplified (677 → 433 lines), no design change.** Section numbers kept, so every `§N`
-reference still lands. The OpenRig history, the other-orchestrator research of §12, the full
-shell-step, redaction and permission-item rules, the queue/channel interfaces and per-channel
-details, the `show` pages and the release details moved to `scratch.docs/scratch.spec_parked.md`
-(local, gitignored). The code is the authority for the detailed rules it already implements.
+**#11 — M2 acceptance passed.** The §3 issue cycle ran twice on go-orchestrator with real Claude
+Code seats: #138 → PR #149 and #120 → PR #151, each implement → review → fix → verify (pass) →
+gate (answered from `laight inbox`) → merge shell step, rig torn down with `on_finish: destroy`.
+No typing into panes. The second run's gate waited ~23 h and the engine survived it. The first run
+raised an `AskUserQuestion` permission item (that is #34). No engine died, so nothing for #8.
 
-### Also still relevant, from 2026-10-18
-
-**#10 — PermissionRequest hook into the inbox.** A Claude seat's prompt becomes a `permission`
-item (detail = the command, the seat's secret env values redacted via `LAIGHT_REDACT_ENV`); the
-hook blocks until `laight inbox <item> allow|deny`, denies on expiry (1 h hook timeout, item
-expires a minute earlier) or on any error. Claude shows its own dialog while the hook waits: No/Esc
-there stops the hook, Yes there is caught by a `PostToolUse` hook matching the call (spec §6 has
-the details). `make check`, plus real Claude Code 2.1.302 runs with `permissions: default`: inbox
-allow, inbox deny, pane Yes, pane No, pane Esc. The expiry deny is unit-tested only (an hour).
-
-**#28's review answered** (one commit per finding, each test seen red first). Fixed:
-- the hook denies an input it can't read, with no item;
-- `inbox.Put` strips the seat's secrets itself, JSON-escaped too, and cuts the detail only after
-  redacting;
-- the cancel signals are caught before the item exists, and a run that ended meanwhile drops
-  the item;
-- an expired item can't be answered;
-- the tool hooks no longer log a data-less event per call.
-
-New tests cover cancel, answer order, other seats, events and the generated settings. Rejected:
-permission items stay unanswerable once the engine died (§4: the run is lost; abort withdraws
-them). Not done: a Stop-hook sweep of leftover items, because a background subagent can ask
-after the turn ends.
-
-**#29 — flaky `TestRigUpAndAbort`.** The test typed into seat `a` while the engine was delivering
-step one there; it now waits for that step's output in the pane log first. Not reproduced
-locally (it failed once, on macOS CI); passes `-race -count=10`.
-
-**#30 — an inbox abort says so:** the run's reason is `<step error>; aborted from the inbox`.
-Unit-tested, mutation checked.
+**Found on the first real run, fixed:** `laight done: command not found` when laight isn't
+installed. A seat's `PATH` now starts with the folder of the binary running its rig (spec §5).
+Regression test `TestSeatFindsLaightOnPath`, seen red with the fix removed.
 
 ---
 
 ## Do this next
 
-### 1. #32 — check the permission hook against real Claude, then #11
+### 1. #32 — check the permission hook against real Claude
 
-Three questions only a real run settles: does `tool_input` match across the two hooks for
-non-Bash tools, which signal does Claude send on Esc, and does it honour the 1 h timeout? Do it
-in the same supervised session as #11.
+Still not run. Three questions: does `tool_input` match across `PermissionRequest` and
+`PostToolUse` for Edit, Write, WebFetch and an MCP tool; which signal Claude sends on No/Esc; does
+it honour the 1 h hook timeout. Needs a supervised run with hooks that `tee` their stdin.
 
-### 2. #11 — acceptance: the issue cycle on a real issue
-
-Every piece it uses now works (agent and shell steps, the gate, permission prompts). It proves
-M2 before `needs`/`matrix`. `CLAUDE.local.md` names the reference setup. Also check
-`session: fresh` with real Claude, and watch whether an engine ever dies (#8's trigger).
-
-### 3. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
+### 2. #12 — `needs` and `matrix`, then #15 — stuck detection (M3)
 
 #12 is decided (its last comment), but rule 4 now holds a failed step instead of failing the run
-(§12.3 says so): decide what a step that `needs` a held one does. #15 can now build on the
-permission hook's blocking pattern.
+(§12.3 says so): decide what a step that `needs` a held one does. #15 can build on the permission
+hook's blocking pattern; a gate is not timed today (the 23 h wait raised nothing), decide in #15
+whether it should be.
+
+### 3. #34 — AskUserQuestion as a real `question` item (M3)
+
+Seen in the acceptance run: it arrives as a permission item, so the answer can't be given there.
 
 ---
 
 ## Waiting on the user
 
 - #17 (shell step `cwd`) waits for a workflow that needs it.
+- `session: fresh` was exercised (the reviewer relaunched for verify) but not checked for an
+  independent conversation; say if that needs its own check.

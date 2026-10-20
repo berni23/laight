@@ -3,6 +3,7 @@
 package rig
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -167,6 +168,11 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 		return err
 	}
 	env["LAIGHT_RUN"], env["LAIGHT_SEAT"], env["LAIGHT_HOME"] = r.ID, name, g.Home
+	if g.Laight != "" {
+		// Agents learn `laight done`: the binary running this rig is the one they find first,
+		// even when it isn't installed (a build in bin/, go run).
+		env["PATH"] = filepath.Dir(g.Laight) + string(os.PathListSeparator) + cmp.Or(env["PATH"], os.Getenv("PATH"))
+	}
 	if st.SessionID == "" {
 		st.SessionID = uuid()
 	}
