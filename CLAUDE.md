@@ -283,7 +283,10 @@ detail to 2000 bytes, so no producer can forget.
 either place can answer: the inbox (the hook returns allow/deny), *No*/Esc in the pane (Claude
 stops the hook, which drops its item), or *Yes* in the pane (a `PostToolUse` hook withdraws the
 matching item by a hash of tool + input). The item expires a minute before the hook's 1 h timeout
-and then denies; so does an unreadable request, any error, or the run ending.
+and then denies; so does an unreadable request, any error, or the run ending. Checked on 2.1.305
+(#32): the hash matches across both hooks for Bash, Write, Edit, WebFetch and MCP tools; No, Esc,
+a hook timeout and a session that exits all stop the hook with SIGTERM; a 1 h timeout is honoured.
+A seat's Bash keeps the run's `laight` ahead of whatever the user's rc puts on `PATH`.
 
 - The item's state always lives with its run. A queue backend only *carries* items and answers.
   First answer wins, enforced with an atomic rename, so duplicate deliveries are harmless.
@@ -423,9 +426,10 @@ being respawned again.
 ### 12.3 One parallel branch fails while others run (#12)
 
 Archon's model: when a parallel copy fails with no route, running siblings finish and their exits
-are recorded; every step that `needs` the failed one is skipped; the held step's `failed` item is
-the one thing the human answers. Stopping siblings stays explicit (`laight abort`, or later an
-opt-in `on_failure: cancel`). **This changes rule 4 of §3**, so it is decided in #12.
+are recorded; the failed one is held on its `failed` item (rule 4 of §3), the one thing the human
+answers, and every step that `needs` it waits: `retry` can still let them run, `abort` fails the
+run and they never start (decided in #12, 2026-10-21). Stopping siblings stays explicit
+(`laight abort`, or later an opt-in `on_failure: cancel`).
 
 ### 12.4 Secrets and agent panes (#7, #16)
 
