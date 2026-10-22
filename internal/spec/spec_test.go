@@ -1,6 +1,7 @@
 package spec
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -269,6 +270,74 @@ func TestParallel(t *testing.T) {
 				t.Errorf("no error; problems: %v", probs)
 			}
 		})
+	}
+}
+
+// The matrix errors say what to do instead.
+func TestMatrixErrors(t *testing.T) {
+	bad := map[string]struct{ src, msg string }{
+		"gate with a matrix": {strings.Replace(parallel, "objective: integrate", "objective: integrate\n  - { id: ok, type: gate, ask: Go, needs: [plan], matrix: { k: [1, 2] } }", 1),
+			"a gate can't have a matrix"},
+		"matrix reads .matrix": {strings.Replace(parallel, `task: "{{ .steps.plan.out.tasks }}"`, `task: "{{ .matrix.task }}"`, 1),
+			"a matrix value can't use .matrix"},
+		"out key of a matrix step": {strings.Replace(parallel, "objective: integrate", "objective: '{{ .steps.build.out.pr }}'", 1),
+			"a matrix step's .out is a list, one per copy: use {{ range .steps.build.out }}{{ .pr }}{{ end }}"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			dir, file := project(t, c.src)
+			_, probs := Load(dir, file)
+			if !strings.Contains(fmt.Sprint(probs), c.msg) {
+				t.Errorf("want %q; problems: %v", c.msg, probs)
+			}
+		})
+	}
+	// Ranging over the list is the way, and is fine.
+	dir, file := project(t, strings.Replace(parallel, "objective: integrate", "objective: '{{ range .steps.build.out }}{{ .pr }}{{ end }}'", 1))
+	if _, probs := Load(dir, file); HasErrors(probs) {
+		t.Errorf("range: %v", probs)
+	}
+}
+
+func TestCopies(t *testing.T) {
+	data := map[string]any{
+		"inputs": map[string]any{"list": `["x", 2]`, "word": "nope"},
+		"steps":  map[string]any{"plan": map[string]any{"out": map[string]any{"tasks": []any{"a", "b"}, "n": json.Number("3"), "deep": []any{[]any{"a"}}}}},
+	}
+	good := []struct {
+		matrix map[string]any
+		want   string
+	}{
+		{map[string]any{"os": []any{"linux", "mac"}, "go": []any{json.Number("1"), json.Number("2")}},
+			"[map[go:1 os:linux] map[go:1 os:mac] map[go:2 os:linux] map[go:2 os:mac]]"},
+		{map[string]any{"task": "{{ .steps.plan.out.tasks }}"}, "[map[task:a] map[task:b]]"},
+		{map[string]any{"task": " {{ .inputs.list }}\n"}, "[map[task:x] map[task:2]]"},
+		{map[string]any{"task": `["{{ .inputs.word }}", "b"]`}, "[map[task:nope] map[task:b]]"},
+	}
+	for _, c := range good {
+		got, err := Copies(&Step{ID: "s", Matrix: c.matrix}, data)
+		if err != nil || fmt.Sprint(got) != c.want {
+			t.Errorf("Copies(%v) = %v, %v; want %s", c.matrix, got, err, c.want)
+		}
+	}
+	bad := map[string]any{
+		"empty":       []any{},
+		"not a list":  "{{ .steps.plan.out.n }}",
+		"not JSON":    "{{ .inputs.word }}",
+		"non-scalar":  "{{ .steps.plan.out.deep }}",
+		"missing key": "{{ .steps.plan.out.nope }}",
+	}
+	for name, v := range bad {
+		if got, err := Copies(&Step{ID: "s", Matrix: map[string]any{"k": v}}, data); err == nil {
+			t.Errorf("%s: no error, got %v", name, got)
+		}
+	}
+	big := make([]any, 6)
+	for i := range big {
+		big[i] = i
+	}
+	if _, err := Copies(&Step{ID: "s", Matrix: map[string]any{"a": big, "b": big}}, data); err == nil || !strings.Contains(err.Error(), "more than 32 copies") {
+		t.Errorf("36 copies: %v", err)
 	}
 }
 

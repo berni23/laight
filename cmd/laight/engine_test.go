@@ -625,24 +625,6 @@ steps:
 	}
 }
 
-func TestEngineUnsupported(t *testing.T) {
-	e := newRigEnv(t, `version: 1
-id: demo
-seats:
-  a: { runtime: shell, command: sh, cwd: repo }
-steps:
-  - { id: one, seat: a, objective: x }
-  - { id: two, seat: a, objective: y, needs: [one], matrix: { k: [1, 2] } }
-`)
-	// Refused before a run or a tmux session exists.
-	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "matrix is not supported yet") {
-		t.Errorf("run = %v\n%s", err, out)
-	}
-	if runs, _ := state.List(e.home); len(runs) != 0 {
-		t.Errorf("an unsupported workflow left %d runs", len(runs))
-	}
-}
-
 // needsWorkflow is plan → build (seat a) and security (seat b) in parallel → integrate (seat a).
 // build waits for a file security writes, so the two overlap whatever the timing. security fails
 // once when the run is given fail=1.
@@ -748,6 +730,78 @@ func TestEngineNeedsHeldThenAbort(t *testing.T) {
 	}
 }
 
+// The §3 example: plan lists the tasks, build runs one copy per task (two at a time) while
+// security runs, and integrate sees every copy's output. Copy b fails once and is retried alone.
+func TestEngineMatrix(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  lead: { runtime: shell, command: sh, cwd: repo }
+  sec: { runtime: shell, command: sh, cwd: repo }
+  dev: { runtime: shell, command: sh }
+steps:
+  - id: plan
+    seat: lead
+    objective: |
+      "$L" done handoff 'tasks=["a","b","c"]'
+  - id: build
+    needs: [plan]
+    matrix: { task: "{{ .steps.plan.out.tasks }}" }
+    max_parallel: 2
+    seat: dev
+    objective: 'sleep 0.3; if [ "{{ .matrix.task }}" = b ] && [ ! -e failed-b ]; then touch failed-b; "$L" done failed error=boom; else "$L" done handoff pr={{ .matrix.task }}; fi'
+  - { id: security, needs: [plan], seat: sec, objective: '"$L" done handoff' }
+  - id: integrate
+    needs: [build, security]
+    seat: lead
+    objective: '[ "{{ range .steps.build.out }}{{ .pr }}{{ end }}" = abc ] && "$L" done handoff || "$L" done failed'
+`))
+	e.mustLaight("run", "demo")
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	if it.Kind != inbox.Failed || it.Step != "build" || it.Seat != "dev#2" || it.Title != "step build#2 failed: boom" {
+		t.Fatalf("item %+v", it)
+	}
+	e.waitFor(r.ID, "step.done", 5) // plan, security and the three copies
+	time.Sleep(3 * engine.Poll)
+	if got := e.stepEvents(r.ID); slices.Index(got, "started:integrate") >= 0 {
+		t.Fatalf("integrate started with build#2 held: %v", got)
+	}
+	e.mustLaight("inbox", it.Short(), "retry")
+	r = e.waitEnded(r.ID)
+	if r.Status != state.Succeeded {
+		t.Fatalf("status %s: %s; steps %v", r.Status, r.Error, e.stepsDone(r.ID))
+	}
+	evs, _ := state.Events(e.home, r.ID)
+	live, most, hops := 0, 0, map[string]int{}
+	for _, ev := range evs {
+		if ev.Step != "build" {
+			continue
+		}
+		switch ev.Type {
+		case "step.started":
+			live++
+			most = max(most, live)
+			hops[ev.Seat]++
+		case "step.done":
+			live--
+		}
+	}
+	if most != 2 || hops["dev#1"] != 1 || hops["dev#2"] != 2 || hops["dev#3"] != 1 {
+		t.Errorf("at most %d copies live (want 2), hops per instance %v", most, hops)
+	}
+	if n := countEvents(evs, "seat.down", ""); n < 4 { // each instance after its copy, dev#2 twice
+		t.Errorf("%d seat.down events", n)
+	}
+	if countEvents(evs, "seat.up", "dev") != 0 {
+		t.Errorf("seat dev started on its own")
+	}
+	for k := 1; k <= 3; k++ {
+		if _, err := os.Stat(filepath.Join(state.Dir(e.home, r.ID), "worktrees", spec.Instance("dev", k))); !os.IsNotExist(err) {
+			t.Errorf("worktree of dev#%d kept after success: %v", k, err)
+		}
+	}
+}
+
 func writeWorkflow(t *testing.T, e *rigEnv, body string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(e.repo, ".laight", "workflows", "demo.yaml"), []byte(body), 0o644); err != nil {
@@ -802,7 +856,7 @@ func TestDone(t *testing.T) {
 	}
 	// What a later objective sees: numbers digit for digit, null as nothing.
 	r := &state.Run{Spec: &spec.Workflow{}, Steps: map[string]*state.StepResult{"verify": {Exit: d.Exit, Out: d.Out}}}
-	if got, err := spec.Render("t", "{{ .steps.verify.out.big }}/{{ .steps.verify.out.nil }}/", r.TemplateData()); err != nil || got != "12345678901234567890//" {
+	if got, err := spec.Render("t", "{{ .steps.verify.out.big }}/{{ .steps.verify.out.nil }}/", r.TemplateData(nil)); err != nil || got != "12345678901234567890//" {
 		t.Errorf("rendered %q, %v", got, err)
 	}
 
