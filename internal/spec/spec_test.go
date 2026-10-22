@@ -155,6 +155,9 @@ func TestLoadProblems(t *testing.T) {
 		{"yolo warns", func(s string) string { return strings.Replace(s, "permissions: auto", "permissions: yolo", 1) }, "yolo", 13, true},
 		{"cwd repo warns", func(s string) string { return strings.Replace(s, "cwd: worktree", "cwd: repo", 1) }, "share the main checkout", 0, true},
 		{"unrouted exit warns", func(s string) string { return strings.Replace(s, "yes: merge, no: end", "yes: merge", 1) }, `exit "no" has no route`, 0, true},
+		{"needs a gate warns", func(s string) string {
+			return strings.Replace(s, "\nloop_guards:", "\n  - id: notify\n    needs: [approve]\n    type: shell\n    run: echo merged\nloop_guards:", 1)
+		}, `step "notify" needs gate "approve"`, 0, true},
 		{"id must match file name", func(s string) string { return strings.Replace(s, "id: issue-cycle", "id: cycle", 1) }, "must match the file name", 0, false},
 		{"range body sees the element", func(s string) string {
 			return strings.Replace(s, "Review {{ .steps", "Review {{ range .steps.implement.out.prs }}{{ .url }}{{ $.base }}{{ end }}{{ .steps", 1)

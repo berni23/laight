@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -268,5 +269,178 @@ func TestUnreadableGateAnswer(t *testing.T) {
 	if res := r.Steps["g"]; res == nil || res.Exit != spec.ExitFailed || len(r.Active) != 0 || len(r.Blocked) != 1 ||
 		!strings.Contains(r.Blocked[0].Error, "can't read the answer") {
 		t.Fatalf("steps %+v active %+v blocked %+v", r.Steps["g"], r.Active, r.Blocked)
+	}
+}
+
+// finish ends a hop as its agent would: `laight done`, then the Stop hook's idle mark.
+func finish(t *testing.T, e *Engine, id string, h state.Hop, exit string) {
+	t.Helper()
+	if err := state.WriteDone(e.Home, id, state.Done{Step: h.Step, Hop: h.N, Exit: exit}); err != nil {
+		t.Fatal(err)
+	}
+	mark := filepath.Join(state.Dir(e.Home, id), "seats", h.Seat+".idle")
+	if err := os.WriteFile(mark, []byte(IdleMark(h.Step, h.N)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// started returns the ids of the steps a tick started, in order.
+func started(starts []start) []string {
+	var ids []string
+	for _, s := range starts {
+		ids = append(ids, s.hop.Step)
+	}
+	return ids
+}
+
+func agent(id, seat string, on map[string]string, needs ...string) *spec.Step {
+	return &spec.Step{ID: id, Type: spec.TypeAgent, Seat: seat, Objective: "true",
+		AllowedExits: []string{"handoff", "pass", "fail"}, NextHop: spec.NextHop{On: on}, Needs: needs}
+}
+
+// Rule 2: a step with needs starts once every needed step has finished, not before.
+func TestNeedsWaitForEvery(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{agent("one", "a", nil), agent("two", "b", nil), agent("join", "c", nil, "one", "two")}, "a", "b", "c")
+	_, starts := e.step(t, id)
+	if got := started(starts); strings.Join(got, ",") != "one,two" {
+		t.Fatalf("started %v", got)
+	}
+	finish(t, e, id, starts[0].hop, "handoff")
+	if _, s := e.step(t, id); len(s) != 0 {
+		t.Fatalf("join started with two still running: %v", started(s))
+	}
+	finish(t, e, id, starts[1].hop, "handoff")
+	if _, s := e.step(t, id); strings.Join(started(s), ",") != "join" {
+		t.Fatalf("started %v", started(s))
+	}
+}
+
+// A needed step held on a failed item hasn't finished: its dependents wait, and run once a retry
+// of it succeeds (§12.3).
+func TestNeedsWaitOnHeldStep(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{agent("one", "a", nil), agent("two", "b", nil), agent("join", "c", nil, "one", "two")}, "a", "b", "c")
+	_, starts := e.step(t, id)
+	finish(t, e, id, starts[0].hop, spec.ExitFailed)
+	finish(t, e, id, starts[1].hop, "handoff")
+	if _, s := e.step(t, id); len(s) != 0 {
+		t.Fatalf("started %v", started(s))
+	}
+	r := load(t, e, id)
+	if len(r.Blocked) != 1 || r.Blocked[0].Step != "one" || len(r.Queue) != 0 {
+		t.Fatalf("blocked %+v queue %v", r.Blocked, r.Queue)
+	}
+	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Retry); err != nil {
+		t.Fatal(err)
+	}
+	_, s := e.step(t, id)
+	if strings.Join(started(s), ",") != "one" {
+		t.Fatalf("retry started %v", started(s))
+	}
+	finish(t, e, id, s[0].hop, "handoff")
+	if _, s := e.step(t, id); strings.Join(started(s), ",") != "join" {
+		t.Fatalf("started %v", started(s))
+	}
+}
+
+// A needed step inside a loop has finished only once the loop has left it: a `fail` that routes
+// back to the fixer doesn't release the step that needs the check.
+func TestNeedsWaitForLoop(t *testing.T) {
+	steps := []*spec.Step{
+		agent("fix", "a", map[string]string{"handoff": "check"}),
+		agent("check", "b", map[string]string{"fail": "fix", "pass": "end"}),
+		agent("ship", "c", nil, "check"),
+	}
+	e, id := hooked(t, steps, "a", "b", "c")
+	_, s := e.step(t, id)
+	finish(t, e, id, s[0].hop, "handoff") // fix
+	_, s = e.step(t, id)
+	finish(t, e, id, s[0].hop, "fail") // check → fix
+	if _, s = e.step(t, id); strings.Join(started(s), ",") != "fix" {
+		t.Fatalf("after check failed, started %v", started(s))
+	}
+	finish(t, e, id, s[0].hop, "handoff")
+	_, s = e.step(t, id)
+	finish(t, e, id, s[0].hop, "pass")
+	if _, s = e.step(t, id); strings.Join(started(s), ",") != "ship" {
+		t.Fatalf("after check passed, started %v", started(s))
+	}
+}
+
+// Steps whose needs are met in the same tick are released independently of their order in the
+// file: one that can send the needed step round again (y) holds the other (z) until it ends.
+func TestNeedsReleaseIgnoresFileOrder(t *testing.T) {
+	for _, order := range []string{"x,z,y", "x,y,z"} {
+		byID := map[string]*spec.Step{
+			"x": agent("x", "a", nil),
+			"y": agent("y", "b", map[string]string{"fail": "x"}, "x"),
+			"z": agent("z", "c", nil, "x"),
+		}
+		var steps []*spec.Step
+		for _, id := range strings.Split(order, ",") {
+			steps = append(steps, byID[id])
+		}
+		e, id := hooked(t, steps, "a", "b", "c")
+		_, s := e.step(t, id)
+		finish(t, e, id, s[0].hop, "handoff") // x
+		if _, s = e.step(t, id); strings.Join(started(s), ",") != "y" {
+			t.Fatalf("%s: after x, started %v", order, started(s))
+		}
+		finish(t, e, id, s[0].hop, "handoff") // y ends its branch
+		if _, s = e.step(t, id); strings.Join(started(s), ",") != "z" {
+			t.Fatalf("%s: after y, started %v", order, started(s))
+		}
+	}
+}
+
+// Two steps in the same loop back to what they need don't hold each other: both are released.
+func TestNeedsLoopMembersReleaseTogether(t *testing.T) {
+	steps := []*spec.Step{
+		agent("x", "a", nil),
+		agent("y1", "b", map[string]string{"fail": "x"}, "x"),
+		agent("y2", "c", map[string]string{"fail": "x"}, "x"),
+	}
+	e, id := hooked(t, steps, "a", "b", "c")
+	_, s := e.step(t, id)
+	finish(t, e, id, s[0].hop, "handoff")
+	if _, s = e.step(t, id); strings.Join(started(s), ",") != "y1,y2" {
+		t.Fatalf("started %v", started(s))
+	}
+}
+
+// A step whose needs can never be met (the needed step failed and was routed elsewhere) is
+// skipped when the run ends, and the run still succeeds.
+func TestNeedsUnmetIsSkipped(t *testing.T) {
+	steps := []*spec.Step{
+		agent("one", "a", map[string]string{"failed": "cleanup"}),
+		agent("cleanup", "b", nil),
+		agent("join", "c", nil, "one"),
+	}
+	e, id := hooked(t, steps, "a", "b", "c")
+	_, s := e.step(t, id)
+	finish(t, e, id, s[0].hop, spec.ExitFailed)
+	_, s = e.step(t, id)
+	if strings.Join(started(s), ",") != "cleanup" {
+		t.Fatalf("started %v", started(s))
+	}
+	finish(t, e, id, s[0].hop, "handoff")
+	var status string
+	var events []state.Event
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		status, _, _, events = e.advance(r)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if status != state.Succeeded {
+		t.Fatalf("status %q", status)
+	}
+	var skipped []state.Event
+	for _, ev := range events {
+		if ev.Type == "step.skipped" {
+			skipped = append(skipped, ev)
+		}
+	}
+	if len(skipped) != 1 || skipped[0].Step != "join" || fmt.Sprint(skipped[0].Data["needs"]) != "[one]" {
+		t.Fatalf("skipped %+v", skipped)
 	}
 }

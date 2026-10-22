@@ -8,6 +8,12 @@ All notable changes to laight are documented here. The format follows
 
 ### Added
 
+- `needs`: a step starts once every step it needs has finished (not `failed`, and out of any loop
+  that could run it again), so steps on different seats run in parallel and a later step joins
+  them. A needed step held on a `failed` item makes its dependents wait for the retry. A step
+  whose needs can never be met is skipped when the run ends (`step.skipped` event). Steps released
+  in the same tick don't depend on their order in the file. `validate` warns when a step needs a
+  gate, since it runs whatever the answer. `matrix` is still refused at `laight run`.
 - A seat finds `laight` on its `PATH` (a link to the binary that runs its rig comes first), so
   `laight done` works even when laight isn't installed or has another name, e.g. a build in `bin/`.
 - The design specification (CLAUDE.md), project scaffolding, CI and the release pipeline.
