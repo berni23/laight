@@ -689,10 +689,17 @@ func TestEngineNeeds(t *testing.T) {
 		t.Fatalf("status %s: %s", r.Status, r.Error)
 	}
 	got := e.stepEvents(r.ID)
-	if slices.Index(got, "started:security") > slices.Index(got, "done:build") || slices.Index(got, "started:build") < slices.Index(got, "done:plan") {
+	at := func(ev string) int {
+		i := slices.Index(got, ev)
+		if i < 0 {
+			t.Fatalf("no %s: %v", ev, got)
+		}
+		return i
+	}
+	if at("started:security") > at("done:build") || at("started:build") < at("done:plan") {
 		t.Errorf("build and security didn't overlap after plan: %v", got)
 	}
-	if i := slices.Index(got, "started:integrate"); i < slices.Index(got, "done:build") || i < slices.Index(got, "done:security") || i < 0 {
+	if i := at("started:integrate"); i < at("done:build") || i < at("done:security") {
 		t.Errorf("integrate didn't wait for both: %v", got)
 	}
 }
