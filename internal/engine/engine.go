@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -271,12 +272,31 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 	}
 	r.Active = running
 
-	// 1b. Steps whose needs are all met (rule 2) join the queue.
+	// 1b. Steps whose needs are all met (rule 2) join the queue. Every candidate is judged on the
+	// state before this pass, so the order of the file doesn't matter: another candidate that can
+	// route back to a need holds it, unless this one can too (then both are in that loop).
+	var ready []*spec.Step
 	for _, st := range r.Spec.Steps {
 		if len(st.Needs) > 0 && r.Steps[st.ID] == nil && !live(r, st.ID) && len(unmet(r, st)) == 0 {
-			e.logf("✓ %s: needs met (%s)", st.ID, strings.Join(st.Needs, ", "))
-			r.Queue = append(r.Queue, st.ID)
+			ready = append(ready, st)
 		}
+	}
+	for _, st := range ready {
+		var others, own []string
+		for _, o := range ready {
+			if o != st {
+				others = append(others, o.ID)
+			}
+		}
+		for _, next := range st.NextHop.On {
+			own = append(own, next)
+		}
+		held, loop := reach(r, others...), reach(r, own...)
+		if slices.ContainsFunc(st.Needs, func(n string) bool { return held[n] && !loop[n] }) {
+			continue
+		}
+		e.logf("✓ %s: needs met (%s)", st.ID, strings.Join(st.Needs, ", "))
+		r.Queue = append(r.Queue, st.ID)
 	}
 
 	// 2. Seats whose turn ended after their step finished, or whose agent exited instead.
@@ -462,24 +482,13 @@ func live(r *state.Run, step string) bool {
 // its latest hop ended on an exit other than failed and no live step can route back to it, so a
 // step in a review/fix loop counts only once the loop has left it.
 func unmet(r *state.Run, st *spec.Step) []string {
-	again := map[string]bool{} // steps that can still start: the live ones and every route from them
-	var walk func(string)
-	walk = func(id string) {
-		if again[id] {
-			return
-		}
-		again[id] = true
-		if s := r.Spec.Step(id); s != nil {
-			for _, next := range s.NextHop.On {
-				walk(next)
-			}
-		}
-	}
+	var running []string
 	for _, s := range r.Spec.Steps {
 		if live(r, s.ID) {
-			walk(s.ID)
+			running = append(running, s.ID)
 		}
 	}
+	again := reach(r, running...) // steps that can still start: the live ones and every route from them
 	var miss []string
 	for _, n := range st.Needs {
 		if res := r.Steps[n]; res == nil || res.Exit == spec.ExitFailed || again[n] {
@@ -487,6 +496,27 @@ func unmet(r *state.Run, st *spec.Step) []string {
 		}
 	}
 	return miss
+}
+
+// reach returns the steps from and every step their routes can lead to.
+func reach(r *state.Run, from ...string) map[string]bool {
+	seen := map[string]bool{}
+	var walk func(string)
+	walk = func(id string) {
+		if seen[id] {
+			return
+		}
+		seen[id] = true
+		if s := r.Spec.Step(id); s != nil {
+			for _, next := range s.NextHop.On {
+				walk(next)
+			}
+		}
+	}
+	for _, id := range from {
+		walk(id)
+	}
+	return seen
 }
 
 // IdleMark is what a seat's Stop hook writes to seats/<seat>.idle once the agent's turn ends

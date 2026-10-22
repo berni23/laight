@@ -366,6 +366,47 @@ func TestNeedsWaitForLoop(t *testing.T) {
 	}
 }
 
+// Steps whose needs are met in the same tick are released independently of their order in the
+// file: one that can send the needed step round again (y) holds the other (z) until it ends.
+func TestNeedsReleaseIgnoresFileOrder(t *testing.T) {
+	for _, order := range []string{"x,z,y", "x,y,z"} {
+		byID := map[string]*spec.Step{
+			"x": agent("x", "a", nil),
+			"y": agent("y", "b", map[string]string{"fail": "x"}, "x"),
+			"z": agent("z", "c", nil, "x"),
+		}
+		var steps []*spec.Step
+		for _, id := range strings.Split(order, ",") {
+			steps = append(steps, byID[id])
+		}
+		e, id := hooked(t, steps, "a", "b", "c")
+		_, s := e.step(t, id)
+		finish(t, e, id, s[0].hop, "handoff") // x
+		if _, s = e.step(t, id); strings.Join(started(s), ",") != "y" {
+			t.Fatalf("%s: after x, started %v", order, started(s))
+		}
+		finish(t, e, id, s[0].hop, "handoff") // y ends its branch
+		if _, s = e.step(t, id); strings.Join(started(s), ",") != "z" {
+			t.Fatalf("%s: after y, started %v", order, started(s))
+		}
+	}
+}
+
+// Two steps in the same loop back to what they need don't hold each other: both are released.
+func TestNeedsLoopMembersReleaseTogether(t *testing.T) {
+	steps := []*spec.Step{
+		agent("x", "a", nil),
+		agent("y1", "b", map[string]string{"fail": "x"}, "x"),
+		agent("y2", "c", map[string]string{"fail": "x"}, "x"),
+	}
+	e, id := hooked(t, steps, "a", "b", "c")
+	_, s := e.step(t, id)
+	finish(t, e, id, s[0].hop, "handoff")
+	if _, s = e.step(t, id); strings.Join(started(s), ",") != "y1,y2" {
+		t.Fatalf("started %v", started(s))
+	}
+}
+
 // A step whose needs can never be met (the needed step failed and was routed elsewhere) is
 // skipped when the run ends, and the run still succeeds.
 func TestNeedsUnmetIsSkipped(t *testing.T) {
