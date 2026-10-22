@@ -213,8 +213,10 @@ func (c *checker) graph() {
 		for k, n := range st.Needs {
 			if n == st.ID {
 				c.add(Error, at("needs", strconv.Itoa(k)), "a step can't need itself")
-			} else if _, ok := index[n]; !ok {
+			} else if j, ok := index[n]; !ok {
 				c.add(Error, at("needs", strconv.Itoa(k)), "unknown step %q", n)
+			} else if c.w.Steps[j].Type == TypeGate {
+				c.add(Warning, at("needs", strconv.Itoa(k)), "step %q needs gate %q, so it runs whatever the answer; route on %s's exit instead", st.ID, n, n)
 			}
 		}
 	}

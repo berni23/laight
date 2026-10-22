@@ -177,8 +177,12 @@ steps:
    target), and every other step with no `needs` and no incoming route.
 2. A step with `needs` starts when every needed step (every matrix copy) has finished with a
    non-`failed` exit, and no queued, running or held step can route back to it (a step in a
-   review/fix loop counts once the loop has left it). One whose needs can't be met by the time
-   the run ends is skipped (`step.skipped`); the run still succeeds.
+   review/fix loop counts once the loop has left it); nor can another step whose needs are met
+   in the same tick, unless this one can too (both are in that loop), so file order never
+   matters. It runs at most once, even if a loop later runs a needed step again. Any non-`failed`
+   exit counts, a gate's `no` too: to act on a decision, route on the gate's exit (`validate`
+   warns). One whose needs can't be met by the time the run ends is skipped (`step.skipped`);
+   the run still succeeds.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
    without `next_hop` ends its branch; `end` ends it explicitly.
 4. The run succeeds when no step is running, ready or held. An unrouted `failed`, or a step
