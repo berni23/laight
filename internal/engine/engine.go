@@ -52,8 +52,8 @@ func (e *Engine) event(ev state.Event) {
 // Supported reports the first thing in the workflow this engine can't run yet, or nil.
 func Supported(w *spec.Workflow) error {
 	for _, st := range w.Steps {
-		if len(st.Needs) > 0 || len(st.Matrix) > 0 {
-			return fmt.Errorf("step %s: needs and matrix are not supported yet (#12)", st.ID)
+		if len(st.Matrix) > 0 {
+			return fmt.Errorf("step %s: matrix is not supported yet (#12)", st.ID)
 		}
 	}
 	return nil
@@ -271,6 +271,14 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 	}
 	r.Active = running
 
+	// 1b. Steps whose needs are all met (rule 2) join the queue.
+	for _, st := range r.Spec.Steps {
+		if len(st.Needs) > 0 && r.Steps[st.ID] == nil && !live(r, st.ID) && len(unmet(r, st)) == 0 {
+			e.logf("✓ %s: needs met (%s)", st.ID, strings.Join(st.Needs, ", "))
+			r.Queue = append(r.Queue, st.ID)
+		}
+	}
+
 	// 2. Seats whose turn ended after their step finished, or whose agent exited instead.
 	for name, s := range r.Seats {
 		if s.Turn && r.ActiveOn(name) == nil {
@@ -331,8 +339,17 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, e
 	}
 	r.Queue = waiting
 
-	// 4. Rule 4: nothing running, waiting, or held on a failed item.
+	// 4. Rule 4: nothing running, waiting, or held on a failed item. A step whose needs were
+	// never met (a needed step ended on an exit routed elsewhere, or never ran) is skipped.
 	if len(r.Active) == 0 && len(r.Queue) == 0 && len(r.Blocked) == 0 {
+		for _, st := range r.Spec.Steps {
+			if len(st.Needs) > 0 && r.Steps[st.ID] == nil {
+				miss := unmet(r, st)
+				e.logf("⊘ %s skipped: needs %s", st.ID, strings.Join(miss, ", "))
+				events = append(events, state.Event{Run: r.ID, Type: "step.skipped", Step: st.ID,
+					Data: map[string]any{"needs": miss}})
+			}
+		}
 		return state.Succeeded, "", nil, events
 	}
 	return "", "", starts, events
@@ -419,6 +436,57 @@ func entrySteps(w *spec.Workflow) []string {
 		}
 	}
 	return ids
+}
+
+// live reports whether step is queued, running or held on a failed item.
+func live(r *state.Run, step string) bool {
+	for _, id := range r.Queue {
+		if id == step {
+			return true
+		}
+	}
+	for _, h := range r.Active {
+		if h.Step == step {
+			return true
+		}
+	}
+	for _, b := range r.Blocked {
+		if b.Step == step {
+			return true
+		}
+	}
+	return false
+}
+
+// unmet returns the needs of st that haven't finished (rule 2): a needed step has finished when
+// its latest hop ended on an exit other than failed and no live step can route back to it, so a
+// step in a review/fix loop counts only once the loop has left it.
+func unmet(r *state.Run, st *spec.Step) []string {
+	again := map[string]bool{} // steps that can still start: the live ones and every route from them
+	var walk func(string)
+	walk = func(id string) {
+		if again[id] {
+			return
+		}
+		again[id] = true
+		if s := r.Spec.Step(id); s != nil {
+			for _, next := range s.NextHop.On {
+				walk(next)
+			}
+		}
+	}
+	for _, s := range r.Spec.Steps {
+		if live(r, s.ID) {
+			walk(s.ID)
+		}
+	}
+	var miss []string
+	for _, n := range st.Needs {
+		if res := r.Steps[n]; res == nil || res.Exit == spec.ExitFailed || again[n] {
+			miss = append(miss, n)
+		}
+	}
+	return miss
 }
 
 // IdleMark is what a seat's Stop hook writes to seats/<seat>.idle once the agent's turn ends

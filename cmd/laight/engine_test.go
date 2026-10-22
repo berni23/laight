@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/berni23/laight/internal/engine"
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -630,14 +632,112 @@ seats:
   a: { runtime: shell, command: sh, cwd: repo }
 steps:
   - { id: one, seat: a, objective: x }
-  - { id: two, seat: a, objective: y, needs: [one] }
+  - { id: two, seat: a, objective: y, needs: [one], matrix: { k: [1, 2] } }
 `)
 	// Refused before a run or a tmux session exists.
-	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "needs and matrix are not supported yet") {
+	if out, err := e.laight("run", "demo"); err == nil || !strings.Contains(out, "matrix is not supported yet") {
 		t.Errorf("run = %v\n%s", err, out)
 	}
 	if runs, _ := state.List(e.home); len(runs) != 0 {
 		t.Errorf("an unsupported workflow left %d runs", len(runs))
+	}
+}
+
+// needsWorkflow is plan → build (seat a) and security (seat b) in parallel → integrate (seat a).
+// build waits for a file security writes, so the two overlap whatever the timing. security fails
+// once when the run is given fail=1.
+const needsWorkflow = `seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+  b: { runtime: shell, command: sh, cwd: repo }
+inputs:
+  fail: { required: false }
+steps:
+  - { id: plan, seat: a, objective: '"$L" done handoff' }
+  - id: build
+    seat: a
+    needs: [plan]
+    objective: 'while [ ! -e sec ]; do sleep 0.1; done; "$L" done handoff'
+  - id: security
+    seat: b
+    needs: [plan]
+    objective: 'touch sec; if [ "{{ .inputs.fail }}" = 1 ] && [ ! -e failed-once ]; then touch failed-once; "$L" done failed error=boom; else "$L" done handoff; fi'
+  - id: integrate
+    seat: a
+    needs: [build, security]
+    objective: '"$L" done handoff'
+`
+
+// stepEvents lists the run's step.started and step.done events as started:step and done:step.
+func (e *rigEnv) stepEvents(id string) []string {
+	evs, _ := state.Events(e.home, id)
+	var got []string
+	for _, ev := range evs {
+		if typ, ok := strings.CutPrefix(ev.Type, "step."); ok && (typ == "started" || typ == "done") {
+			got = append(got, typ+":"+ev.Step)
+		}
+	}
+	return got
+}
+
+// Steps with needs run in parallel once their needs finish, and a join waits for every one.
+func TestEngineNeeds(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, needsWorkflow))
+	e.mustLaight("run", "demo")
+	r := e.waitEnded(e.onlyRun().ID)
+	if r.Status != state.Succeeded {
+		t.Fatalf("status %s: %s", r.Status, r.Error)
+	}
+	got := e.stepEvents(r.ID)
+	if slices.Index(got, "started:security") > slices.Index(got, "done:build") || slices.Index(got, "started:build") < slices.Index(got, "done:plan") {
+		t.Errorf("build and security didn't overlap after plan: %v", got)
+	}
+	if i := slices.Index(got, "started:integrate"); i < slices.Index(got, "done:build") || i < slices.Index(got, "done:security") || i < 0 {
+		t.Errorf("integrate didn't wait for both: %v", got)
+	}
+}
+
+// A needed step that fails is held: its sibling finishes, the join waits, and a retry lets it run.
+func TestEngineNeedsHeldThenRetry(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, needsWorkflow))
+	e.mustLaight("run", "demo", "fail=1")
+	r := e.onlyRun()
+	it := e.waitItem(r.ID)
+	if it.Kind != inbox.Failed || it.Step != "security" {
+		t.Fatalf("item %+v", it)
+	}
+	e.waitFor(r.ID, "step.done", 3) // plan, security, then build finishes too
+	time.Sleep(3 * engine.Poll)     // a few ticks: integrate must still not start
+	if got := e.stepEvents(r.ID); slices.Index(got, "done:build") < 0 || slices.Index(got, "started:integrate") >= 0 {
+		t.Fatalf("while held: %v", got)
+	}
+	e.mustLaight("inbox", it.Short(), "retry")
+	r = e.waitEnded(r.ID)
+	// build and security:failed finish in either order.
+	got := e.stepsDone(r.ID)
+	if len(got) == 5 && got[1] == "build:handoff" {
+		got[1], got[2] = got[2], got[1]
+	}
+	want := "plan:handoff security:failed build:handoff security:handoff integrate:handoff"
+	if r.Status != state.Succeeded || strings.Join(got, " ") != want {
+		t.Errorf("status %s (%s), steps:\n got %s\nwant %s", r.Status, r.Error, strings.Join(got, " "), want)
+	}
+}
+
+// Aborting the held step fails the run, and the join never starts.
+func TestEngineNeedsHeldThenAbort(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, needsWorkflow))
+	e.mustLaight("run", "demo", "fail=1")
+	r := e.onlyRun()
+	e.abortItem(r.ID)
+	r = e.waitEnded(r.ID)
+	if r.Status != state.Failed || r.Error != "step security failed: boom; aborted from the inbox" {
+		t.Errorf("status %s, error %q", r.Status, r.Error)
+	}
+	if got := e.stepEvents(r.ID); slices.Index(got, "started:integrate") >= 0 {
+		t.Errorf("integrate started: %v", got)
 	}
 }
 
