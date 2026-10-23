@@ -13,41 +13,47 @@ that.
 
 ## Last session — 2026-10-22
 
-**#12 part 1 — `needs` works.** A step with `needs` is queued once every needed step finished
-non-`failed` *and* no live step can route back to it (so `needs: [verify]` on a review/fix loop
-waits for the loop to leave verify; the plan's simpler check would have released it on the first
-`fail`). Held needs make dependents wait; a retry releases them. Unmet needs at the end →
-`step.skipped`, run succeeds. Spec §3 rule 2 and §7 amended. `matrix` is still refused by
-`engine.Supported`.
-
-**PR #38 review answered** (`/cross:cr` → `/cross:fix-cr`). Steps whose needs are met in the same
-tick are now judged on the pre-tick state, so file order no longer changes what starts; another
-ready step that can loop back to a need holds it unless this one is in that loop too (the review's
-"count the others" shape deadlocked two loop members). `validate` warns on `needs` of a gate.
-Rule 2 says a needs step runs at most once. `mode: end` finding rejected (check.go forbids it
-with `on`).
-
-**#12 decided** (on the issue): `validate` rejects `matrix` on a gate; at most 32 copies, more is
-an expansion error (held, retry/abort).
+**#12 done: `needs` and `matrix`, so M2 is done.** In two stacked PRs.
+- **`needs`:** a need counts once it has finished and no live step can route back to it, which
+  covers loops.
+- **PR #38 review answered** (`/cross:cr` → `/cross:fix-cr`): steps whose needs are met in the
+  same tick are judged on the pre-tick state, so file order doesn't change what starts; another
+  ready step that can loop back to a need holds it unless this one is in that loop too.
+  `validate` warns on `needs` of a gate. Rule 2 says a needs step runs at most once.
+- **`matrix`:** each copy runs on its own seat instance `dev#k`, closed after its copy. A failed
+  copy is held and retried alone. `.out`/`.exit` are lists. Rebased onto the #38 fixes: no code
+  conflict (matrix never touched the 1b release; a running matrix counts as live there).
+- **Real run** (2 Haiku copies, `permissions: default`, throwaway repo): each instance got its own
+  worktree and window, and its permission item carried `dev#1`/`dev#2`. `range` rendered both
+  outputs, and `dev#2`'s window closed after its Stop hook. `laight attach … dev#2` wasn't tried
+  (no terminal); the same `session:dev#2` target took the paste.
+- **A review agent found two bugs, both fixed with regression tests:** a held entry matrix was
+  re-raised every tick, and a second route re-expanded a running matrix.
+- **Decided on #12:** no matrix on gates; at most 32 copies. Dropped there: rejecting `.exit`
+  "used as a string" (`validate` can't see how a field is used).
 
 ---
 
 ## Do this next
 
-### 1. #12 part 2 — `matrix`
+### 1. PR #40 — answer its review
 
-Written as PR #40, stacked on `12-needs-matrix`: rebase `12-matrix` onto it after these review
-fixes (1b changed shape) and recheck. Ends with a supervised real run on `claude-code` seats, then
-M2 is done.
+`/cross:fix-cr 40`: review 5621587565 (one medium, the serial seat-instance start in
+`rig.go` blocking the loop, see #39; four low) has no replies yet. Merge #38 first, then #40.
 
 ### 2. #15 — stuck detection (M3)
 
 Builds on the permission hook's blocking pattern. A gate is not timed today (a 23 h wait raised
-nothing): decide in #15 whether it should be.
+nothing): decide in #15 whether it should be. Mind #39: a seat's launch blocks the loop, and
+launch time must not count as stuck.
 
 ### 3. #34 — AskUserQuestion as a real `question` item (M3)
 
 It arrives as a permission item today, so the answer can't be given there.
+
+### 4. #39 — seat launches block the engine loop
+
+Matters once matrix copies are Claude seats with `max_parallel` > 2.
 
 ---
 

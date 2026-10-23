@@ -53,31 +53,44 @@ type Run struct {
 	Active    []*Hop                 `json:"active,omitempty"`     // steps running now
 	Blocked   []*Blocked             `json:"blocked,omitempty"`    // steps waiting on a failed item
 	Steps     map[string]*StepResult `json:"steps,omitempty"`      // the latest finished hop of each step
+	Matrix    map[string]*MatrixRun  `json:"matrix,omitempty"`     // matrix steps whose copies are under way
+}
+
+// MatrixRun is a matrix step between its expansion and its last copy finishing.
+type MatrixRun struct {
+	Copies  []map[string]any `json:"copies"`  // each copy's .matrix values
+	Pending []int            `json:"pending"` // copies (1-based) still to start; a retry puts one back
+	Results []*StepResult    `json:"results"` // each copy's latest finished hop, nil until it finishes
 }
 
 // Blocked is a step that failed with no route, or that max_hops refused. The run waits on a
 // failed inbox item until a human answers retry (the step starts again) or abort (the run fails).
 type Blocked struct {
 	Step  string `json:"step"`
+	Copy  int    `json:"copy,omitempty"` // the matrix copy held; 0 for the whole step
 	Item  string `json:"item"`
 	Error string `json:"error"` // why the run fails if aborted
 }
 
 // Hop is one start of a step.
 type Hop struct {
-	Step    string    `json:"step"`
-	Seat    string    `json:"seat,omitempty"`
-	N       int       `json:"hop"`
-	Started time.Time `json:"started"`
-	Pgid    int       `json:"pgid,omitempty"` // a shell step's process group, once it started
-	Item    string    `json:"item,omitempty"` // a gate's inbox item
+	Step    string         `json:"step"`
+	Seat    string         `json:"seat,omitempty"`
+	N       int            `json:"hop"`
+	Started time.Time      `json:"started"`
+	Pgid    int            `json:"pgid,omitempty"`   // a shell step's process group, once it started
+	Item    string         `json:"item,omitempty"`   // a gate's inbox item
+	Copy    int            `json:"copy,omitempty"`   // a matrix copy (1-based); 0 for other steps
+	Matrix  map[string]any `json:"matrix,omitempty"` // that copy's .matrix values
 }
 
-// StepResult is how a step's latest hop finished: what templates see as .steps.<id>.
+// StepResult is how a step's latest hop finished: what templates see as .steps.<id>. A matrix
+// step's has its copies' instead, in copy order, and templates see lists.
 type StepResult struct {
-	Hop  int            `json:"hop"`
-	Exit string         `json:"exit"`
-	Out  map[string]any `json:"out"`
+	Hop    int            `json:"hop"`
+	Exit   string         `json:"exit"`
+	Out    map[string]any `json:"out"`
+	Copies []*StepResult  `json:"copies,omitempty"`
 }
 
 // Seat is one seat's live state.
@@ -108,22 +121,38 @@ func (r *Run) ActiveOn(seat string) *Hop {
 	return nil
 }
 
-// TemplateData is what workflow templates see: .inputs, .steps, .matrix, .base and .run.
-func (r *Run) TemplateData() map[string]any {
+// TemplateData is what workflow templates see: .inputs, .steps, .matrix, .base and .run. .matrix
+// holds h's matrix values; h is nil where no hop applies (a seat's env, a matrix's own values).
+// A matrix step's .out and .exit are lists, one entry per copy.
+func (r *Run) TemplateData(h *Hop) map[string]any {
 	inputs := map[string]any{}
 	for k, v := range r.Inputs {
 		inputs[k] = v
 	}
+	outOf := func(res *StepResult) map[string]any {
+		if res.Out == nil {
+			return map[string]any{}
+		}
+		return res.Out
+	}
 	steps := map[string]any{}
 	for id, res := range r.Steps {
-		out := res.Out
-		if out == nil {
-			out = map[string]any{}
+		if res.Copies == nil {
+			steps[id] = map[string]any{"exit": res.Exit, "out": outOf(res)}
+			continue
 		}
-		steps[id] = map[string]any{"exit": res.Exit, "out": out}
+		outs, exits := make([]any, len(res.Copies)), make([]any, len(res.Copies))
+		for i, c := range res.Copies {
+			outs[i], exits[i] = outOf(c), c.Exit
+		}
+		steps[id] = map[string]any{"exit": exits, "out": outs}
+	}
+	matrix := map[string]any{}
+	if h != nil && h.Matrix != nil {
+		matrix = h.Matrix
 	}
 	return map[string]any{
-		"inputs": inputs, "steps": steps, "matrix": map[string]any{}, "base": r.Spec.Base,
+		"inputs": inputs, "steps": steps, "matrix": matrix, "base": r.Spec.Base,
 		"run": map[string]any{"id": r.ID, "project": filepath.Base(r.Repo), "workflow": r.Workflow},
 	}
 }

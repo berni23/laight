@@ -44,9 +44,6 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if w == nil || spec.HasErrors(probs) {
 		return fail(stderr, "fix the workflow first (`laight validate %s`)", args[0])
 	}
-	if err := engine.Supported(w); err != nil {
-		return fail(stderr, "%v", err) // before the run exists: nothing to clean up
-	}
 	inputs, err := parseInputs(w, args[1:])
 	if err != nil {
 		return fail(stderr, "%v", err)
@@ -165,13 +162,6 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	abort := func() int {
 		fmt.Fprintf(stdout, "\nengine interrupted: stopping the rig\n")
 		if err := g.Down(id, state.Aborted, "engine interrupted"); err != nil {
-			fmt.Fprintf(stdout, "teardown: %v\n", err)
-		}
-		return 1
-	}
-	if err := engine.Supported(r.Spec); err != nil {
-		fmt.Fprintf(stdout, "✕ %v\n", err)
-		if err := g.Down(id, state.Failed, err.Error()); err != nil {
 			fmt.Fprintf(stdout, "teardown: %v\n", err)
 		}
 		return 1

@@ -56,7 +56,8 @@ func (g *Rig) event(id, typ, seat string, data map[string]any) {
 	}
 }
 
-// Up starts every seat of the run that isn't up yet: worktree, setup, window, ready.
+// Up starts every seat of the run that isn't up yet: worktree, setup, window, ready. A seat that
+// only matrix steps use doesn't start: the engine starts one instance of it per copy.
 func (g *Rig) Up(ctx context.Context, id string) error {
 	r, err := state.Load(g.Home, id)
 	if err != nil {
@@ -73,7 +74,9 @@ func (g *Rig) Up(ctx context.Context, id string) error {
 	}
 	names := make([]string, 0, len(r.Spec.Seats))
 	for n := range r.Spec.Seats {
-		names = append(names, n)
+		if !r.Spec.MatrixOnly(n) {
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
 	for _, name := range names {
@@ -96,8 +99,13 @@ func needsWorktree(w *spec.Workflow) bool {
 	return false
 }
 
+// seatUp starts a seat, or a seat instance of a matrix copy (dev#2), which has a window, a
+// worktree and a session of its own.
 func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
-	seat := r.Spec.Seats[name]
+	seat := r.Spec.SeatOf(name)
+	if seat == nil {
+		return fmt.Errorf("no seat %q", name)
+	}
 	rt, err := runtime.For(seat.Runtime)
 	if err != nil {
 		return err
@@ -283,7 +291,7 @@ func (g *Rig) Restart(ctx context.Context, id, name string) error {
 // seatEnv renders the workflow's and the seat's env (the seat's wins). inbox.RedactEnv names the keys
 // that hold a secret, never the values, so the seat's hooks can strip them from what they raise.
 func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
-	data := r.TemplateData()
+	data := r.TemplateData(nil)
 	env := map[string]string{}
 	secret := map[string]bool{}
 	for _, m := range []spec.StringMap{r.Spec.Env, seat.Env} {
