@@ -189,8 +189,12 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 			return false
 		}
 		r.Blocked = append(r.Blocked, &state.Blocked{Step: step, Copy: copy, Item: it.ID, Error: reason})
-		events = append(events, state.Event{Run: r.ID, Type: "inbox.raised", Step: step,
-			Data: map[string]any{"item": it.ID, "kind": it.Kind}})
+		x := state.Event{Run: r.ID, Type: "inbox.raised", Step: step, Seat: it.Seat, Hop: it.Hop,
+			Data: map[string]any{"item": it.ID, "kind": it.Kind}}
+		if copy > 0 {
+			x.Data["copy"] = copy
+		}
+		events = append(events, x)
 		e.logf("  waiting in the inbox: laight inbox %s retry|abort", it.Short())
 		return true
 	}

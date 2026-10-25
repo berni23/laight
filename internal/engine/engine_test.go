@@ -523,8 +523,28 @@ func TestMatrixHeldCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	finish(t, e, id, hopOf(t, starts, "build", 2), spec.ExitFailed)
-	if _, s := e.step(t, id); len(s) != 0 {
-		t.Fatalf("started %+v", s)
+	var evs []state.Event
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		var s []start
+		_, _, s, _, evs = e.advance(r)
+		if len(s) != 0 {
+			t.Fatalf("started %+v", s)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raised := 0
+	for _, x := range evs {
+		if x.Type == "inbox.raised" {
+			raised++
+			if x.Seat != "dev#2" || x.Hop != hopOf(t, starts, "build", 2).N || fmt.Sprint(x.Data["copy"]) != "2" {
+				t.Errorf("inbox.raised doesn't say which copy: %+v", x)
+			}
+		}
+	}
+	if raised != 1 {
+		t.Errorf("%d inbox.raised events, want 1: %+v", raised, evs)
 	}
 	r := load(t, e, id)
 	if len(r.Blocked) != 1 || r.Blocked[0].Copy != 2 || r.Blocked[0].Error != "step build#2 failed" {
