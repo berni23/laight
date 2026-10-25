@@ -48,7 +48,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "step": { "$ref": "#/$defs/duration", "description": "A step over this raises an inbox item (it is not killed)." }
+        "step": { "$ref": "#/$defs/duration", "description": "A step quiet this long (no output, no file written) raises a stuck inbox item; it is not killed. A step's own timeout wins. Gates are never timed." }
       }
     },
     "on_finish": {

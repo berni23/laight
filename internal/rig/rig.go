@@ -316,6 +316,21 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 	return env, nil
 }
 
+// Secrets returns the values of a seat's secret env, so what the engine quotes of its pane can
+// be stripped of them. A value that no longer renders is left out: it never reached the seat.
+func Secrets(r *state.Run, seat string) []string {
+	data := r.TemplateData(nil)
+	var vals []string
+	for _, m := range []spec.StringMap{r.Spec.Env, r.Spec.SeatOf(seat).Env} {
+		for k, v := range m {
+			if _, used, err := spec.RenderWithSecrets("env "+k, v, data); err == nil {
+				vals = append(vals, used...)
+			}
+		}
+	}
+	return vals
+}
+
 // Groups returns the run's shell steps whose process group is still the one their command
 // started: the pgid in run.json, from a hop that started since the machine last booted. After
 // a reboot pids are reused, so that number may be any process of the user's; when the boot

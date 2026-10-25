@@ -71,6 +71,8 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		return err
 	}
 
+	// A context of its own, so a stuck step failed from the inbox can be stopped alone.
+	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = r.Repo, pw, pw
 	cmd.Env = shellEnv(os.Environ(), env)
@@ -82,10 +84,12 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	err = cmd.Start()
 	pw.Close()
 	if err != nil {
+		cancel()
 		pr.Close()
 		f.Close()
 		return err
 	}
+	e.trackShell(h.N, cancel)
 	pgid := cmd.Process.Pid
 	// Recorded so an abort can stop the command even if this engine has died by then.
 	if _, err := state.Update(e.Home, r.ID, func(r *state.Run) error {
@@ -107,6 +111,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	e.shells.Add(1)
 	go func() {
 		defer e.shells.Done()
+		defer func() { e.untrackShell(h.N); cancel() }()
 		err := cmd.Wait()
 		proc.StopGroup(pgid, stopGrace) // what the command left behind, which closes the pipe
 		select {
@@ -119,7 +124,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		out.Flush()
 		f.Close()
 		if ctx.Err() != nil {
-			return // the run is stopping: the command was killed, not finished
+			return // the run is stopping, or the step was failed: the command was killed, not finished
 		}
 		code := cmd.ProcessState.ExitCode() // -1 when killed by a signal
 		d := state.Done{Step: st.ID, Hop: h.N, Exit: shellExit(st, code), Out: map[string]any{"code": code}, Engine: true}

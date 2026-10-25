@@ -35,6 +35,10 @@ type Engine struct {
 
 	mu     sync.Mutex     // Log is shared with running shell steps
 	shells sync.WaitGroup // running shell steps
+
+	cmu     sync.Mutex                 // cancels is shared with running shell steps
+	cancels map[int]context.CancelFunc // how to stop each running shell step, by hop
+	busy    map[string]time.Time       // run/seat → not stuck before then: its worktree had a write
 }
 
 func (e *Engine) logf(format string, args ...any) {
@@ -86,9 +90,10 @@ type start struct {
 func (e *Engine) tick(ctx context.Context, id string) (status, reason string, err error) {
 	var starts []start
 	var stops []string
+	var nudges []nudge
 	var events []state.Event
 	r, err := state.Update(e.Home, id, func(r *state.Run) error {
-		starts, stops, events = nil, nil, nil
+		starts, stops, nudges, events = nil, nil, nil, nil
 		if !r.Live() {
 			status, reason = r.Status, r.Error
 			return errors.New("not live") // nothing to save
@@ -98,7 +103,11 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			// Saved with the state that implies it: an engine that dies before the teardown
 			// must not find an empty queue later and call a failed run a success.
 			r.Status, r.Error = status, reason
+			return nil
 		}
+		var evs []state.Event
+		nudges, evs = e.watch(r)
+		events = append(events, evs...)
 		return nil
 	})
 	if status != "" {
@@ -116,6 +125,11 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 	for _, name := range stops {
 		if err := e.Rig.Tmux.KillWindow(r.Session, r.Seats[name].Window); err != nil {
 			e.logf("warning: can't close %s: %v", name, err)
+		}
+	}
+	for _, n := range nudges {
+		if err := e.Rig.Tmux.Paste(r.Session, n.window, n.text); err != nil {
+			e.logf("warning: can't nudge %s: %v", n.window, err)
 		}
 	}
 	for _, s := range starts {
@@ -248,6 +262,9 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		if d == nil {
 			running = append(running, h)
 			continue
+		}
+		if h.Stuck != "" { // nobody needs to answer it now
+			inbox.Drop(e.Home, h.Stuck)
 		}
 		st := r.Spec.Step(h.Step)
 		res := &state.StepResult{Hop: h.N, Exit: d.Exit, Out: d.Out}
