@@ -191,7 +191,8 @@ steps:
    It also fails on `laight abort`. (Decided in #9: with no resume, waiting is how a run survives.)
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
    their own seat instance (`dev#1`, `dev#2`…), with its own window, worktree and session, started
-   with its copy; a seat only matrix steps use never starts on its own. The window closes once the
+   with its copy (so the seat must be `cwd: worktree`); a seat only matrix steps use never starts
+   on its own. The window closes once the
    copy's turn ends, and the worktree follows `on_finish`. `max_parallel` caps live copies (default 4).
 6. Routes and `needs` don't mix: a step with `needs` can't be a route target, and a matrix step
    can't have `next_hop`. `.steps.<id>.out` is the latest hop's output. A hop is one step start

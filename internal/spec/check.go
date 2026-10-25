@@ -127,6 +127,9 @@ func (c *checker) steps() {
 				c.add(Error, at(), "an agent step needs a `seat`")
 			} else if c.w.Seats[st.Seat] == nil {
 				c.add(Error, at("seat"), "unknown seat %q (seats: %s)", st.Seat, strings.Join(sortedKeys(c.w.Seats), ", "))
+			} else if s := c.w.Seats[st.Seat]; len(st.Matrix) > 0 && s.Cwd != "worktree" {
+				// Copies run at once: in one folder they'd edit, commit and check out over each other.
+				c.add(Error, at("matrix"), "each matrix copy needs its own worktree: seat %s has cwd %s (use cwd: worktree)", st.Seat, s.Cwd)
 			}
 			if st.Objective == "" {
 				c.add(Error, at(), "an agent step needs an `objective`")

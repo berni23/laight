@@ -282,6 +282,10 @@ func TestMatrixErrors(t *testing.T) {
 			"a matrix value can't use .matrix"},
 		"out key of a matrix step": {strings.Replace(parallel, "objective: integrate", "objective: '{{ .steps.build.out.pr }}'", 1),
 			"a matrix step's .out is a list, one per copy: use {{ range .steps.build.out }}{{ .pr }}{{ end }}"},
+		"matrix seat in the main checkout": {strings.Replace(parallel, "dev: { runtime: shell, command: bash }", "dev: { runtime: shell, command: bash, cwd: repo }", 1),
+			"each matrix copy needs its own worktree: seat dev has cwd repo"},
+		"matrix seat in a folder": {strings.Replace(parallel, "dev: { runtime: shell, command: bash }", "dev: { runtime: shell, command: bash, cwd: . }", 1),
+			"each matrix copy needs its own worktree: seat dev has cwd ."},
 	}
 	for name, c := range bad {
 		t.Run(name, func(t *testing.T) {
