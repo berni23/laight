@@ -317,18 +317,21 @@ func seatEnv(r *state.Run, seat *spec.Seat) (map[string]string, error) {
 }
 
 // Secrets returns the values of a seat's secret env, so what the engine quotes of its pane can
-// be stripped of them. A value that no longer renders is left out: it never reached the seat.
-func Secrets(r *state.Run, seat string) []string {
+// be stripped of them. The seat started with every one of them, so one that can't be read now
+// is an error: the caller must not quote the pane.
+func Secrets(r *state.Run, seat string) ([]string, error) {
 	data := r.TemplateData(nil)
 	var vals []string
 	for _, m := range []spec.StringMap{r.Spec.Env, r.Spec.SeatOf(seat).Env} {
 		for k, v := range m {
-			if _, used, err := spec.RenderWithSecrets("env "+k, v, data); err == nil {
-				vals = append(vals, used...)
+			_, used, err := spec.RenderWithSecrets("env "+k, v, data)
+			if err != nil {
+				return nil, fmt.Errorf("env %s: %w", k, err)
 			}
+			vals = append(vals, used...)
 		}
 	}
-	return vals
+	return vals, nil
 }
 
 // Groups returns the run's shell steps whose process group is still the one their command

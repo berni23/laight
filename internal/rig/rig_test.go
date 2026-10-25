@@ -119,3 +119,18 @@ func TestSeatEnvNamesSecrets(t *testing.T) {
 		t.Errorf("SeatSecrets = %q", got)
 	}
 }
+
+// A seat's secret that can't be read is an error, not a value left out: the engine then quotes
+// none of the pane rather than one with that secret in it.
+func TestSecrets(t *testing.T) {
+	t.Setenv("LAIGHT_SECRET_ONE", "v1")
+	w := &spec.Workflow{Seats: map[string]*spec.Seat{"a": {Env: spec.StringMap{"A": `{{ secret "one" }}`, "B": "plain"}}}}
+	r := &state.Run{Spec: w}
+	if got, err := Secrets(r, "a#2"); err != nil || len(got) != 1 || got[0] != "v1" {
+		t.Errorf("Secrets = %v, %v", got, err)
+	}
+	w.Seats["a"].Env["C"] = `{{ secret "laight-test-missing-xyz" }}`
+	if got, err := Secrets(r, "a"); err == nil {
+		t.Errorf("a missing secret: %v, no error", got)
+	}
+}

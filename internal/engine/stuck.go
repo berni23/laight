@@ -131,10 +131,18 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 		}
 	}
 
-	screen, _ := e.Rig.Tmux.Capture(r.Session, s.Window)
+	// The pane is quoted only once its secrets can be stripped from it.
+	excerpt := "(the pane isn't quoted: its secrets can't be read to strip them)"
+	secrets, err := rig.Secrets(r, name)
+	if err == nil {
+		screen, _ := e.Rig.Tmux.Capture(r.Session, s.Window)
+		excerpt = lastLines(screen, 15)
+	} else {
+		e.logf("warning: %s: %v", name, err)
+	}
 	it := inbox.Item{Step: s.Step, Seat: name, Hop: s.Hop, Title: reason, Choices: choices,
-		Detail: fmt.Sprintf("%s\nTo look first: laight attach %s %s\n\n%s", reason, r.Short(), name, lastLines(screen, 15))}
-	ev, err := e.raise(r, it, rig.Secrets(r, name)...)
+		Detail: fmt.Sprintf("%s\nTo look first: laight attach %s %s\n\n%s", reason, r.Short(), name, excerpt)}
+	ev, err := e.raise(r, it, secrets...)
 	if err != nil {
 		e.logf("warning: can't raise an inbox item: %v", err)
 		return nil, nil

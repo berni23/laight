@@ -180,3 +180,27 @@ steps:
 		t.Fatalf("status %s %q, steps %v", r.Status, r.Error, e.stepsDone(id))
 	}
 }
+
+// The pane quoted in a stuck item is stripped of the seat's secret env values (§12.4), even
+// where they don't look like a token.
+func TestEngineStuckRedactsPane(t *testing.T) {
+	t.Setenv("LAIGHT_SECRET_TOK", "plain-words-secret")
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: repo, env: { TOK: '{{ secret "tok" }}' } }
+steps:
+  - id: work
+    seat: a
+    objective: 'echo "tok=$TOK"; echo "{\"stop_hook_active\": true}" | "$L" hook stop'
+    next_hop: { on: { failed: end } }
+`))
+	e.mustLaight("run", "demo")
+	id := e.onlyRun().ID
+	waitLog(t, e.home, id, "a", "tok=plain-words-secret")
+	it := e.stuckItem(id, inbox.Nudge, inbox.Fail)
+	if strings.Contains(it.Detail, "plain-words-secret") || !strings.Contains(it.Detail, "tok=***") {
+		t.Errorf("detail:\n%s", it.Detail)
+	}
+	e.mustLaight("inbox", it.Short(), inbox.Fail)
+	e.waitEnded(id)
+}
