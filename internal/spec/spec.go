@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -181,8 +183,17 @@ func (m *StringMap) UnmarshalJSON(b []byte) error {
 
 // envString is the text an env value decoded from JSON is passed on as.
 func envString(v any) string {
-	if s, ok := v.(string); ok {
-		return s
+	switch v := v.(type) {
+	case string:
+		return v
+	case json.Number:
+		// An integer as written; a float as plain digits, as JSON writes 1e-7 and 1e+21.
+		if !strings.ContainsAny(string(v), ".eE") {
+			return string(v)
+		}
+		if f, err := v.Float64(); err == nil {
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		}
 	}
-	return fmt.Sprint(v) // json.Number as written, true, false
+	return fmt.Sprint(v) // true, false
 }

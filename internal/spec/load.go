@@ -282,7 +282,8 @@ func nodeAt(root *yaml.Node, path []string) (*yaml.Node, int) {
 
 // rewrittenEnv warns about each unquoted env value under path that isn't passed on as written:
 // YAML resolves 0x1F to 31 and 1.10 to 1.1 before laight sees it (#44). passed gives the text a
-// key is passed on as; false skips the key.
+// key is passed on as; false skips the key. A value that is an alias is checked as its anchor; an
+// env that is an alias, and `<<` merge keys, are not checked.
 func rewrittenEnv(file string, root *yaml.Node, path []string, passed func(key string) (string, bool)) []Problem {
 	env, _ := nodeAt(root, path)
 	if env == nil || env.Kind != yaml.MappingNode {
@@ -291,6 +292,9 @@ func rewrittenEnv(file string, root *yaml.Node, path []string, passed func(key s
 	var probs []Problem
 	for i := 0; i+1 < len(env.Content); i += 2 {
 		k, v := env.Content[i], env.Content[i+1]
+		if v.Kind == yaml.AliasNode {
+			v = v.Alias
+		}
 		if v.Kind != yaml.ScalarNode || v.ShortTag() == "!!str" {
 			continue
 		}
@@ -309,6 +313,15 @@ func resolveUses(laightDir, file string, root *yaml.Node, doc any) []Problem {
 	m, _ := doc.(map[string]any)
 	seats, _ := m["seats"].(map[string]any)
 	var probs []Problem
+	// A shared file used by several seats reports its problems once; its env is checked once
+	// for the seats that don't override env.
+	reported := map[string]bool{}
+	report := func(key string, ps []Problem) {
+		if !reported[key] {
+			reported[key] = true
+			probs = append(probs, ps...)
+		}
+	}
 	names := make([]string, 0, len(seats))
 	for name := range seats {
 		names = append(names, name)
@@ -330,25 +343,25 @@ func resolveUses(laightDir, file string, root *yaml.Node, doc any) []Problem {
 		}
 		base, baseRoot, ps := parseYAML(path, src)
 		if ps != nil {
-			probs = append(probs, ps...)
+			report(path, ps)
 			continue
 		}
 		if ps := validateSchema(path, baseRoot, base, "#/$defs/seat"); ps != nil {
-			probs = append(probs, ps...)
+			report(path, ps)
 			continue
 		}
 		baseMap := base.(map[string]any)
 		if _, nested := baseMap["uses"]; nested {
-			probs = append(probs, Problem{File: path, Line: lineOf(baseRoot, []string{"uses"}), Path: []string{"uses"},
-				Msg: "a shared seat file can't itself use another one"})
+			report(path, []Problem{{File: path, Line: lineOf(baseRoot, []string{"uses"}), Path: []string{"uses"},
+				Msg: "a shared seat file can't itself use another one"}})
 			continue
 		}
 		if _, own := seat["env"]; !own {
 			baseEnv, _ := baseMap["env"].(map[string]any)
-			probs = append(probs, rewrittenEnv(path, baseRoot, []string{"env"}, func(k string) (string, bool) {
+			report(path+"#env", rewrittenEnv(path, baseRoot, []string{"env"}, func(k string) (string, bool) {
 				v, ok := baseEnv[k]
 				return envString(v), ok
-			})...)
+			}))
 		}
 		merged := map[string]any{}
 		for k, v := range baseMap {

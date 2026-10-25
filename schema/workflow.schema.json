@@ -74,6 +74,7 @@
     },
     "env": {
       "type": "object",
+      "description": "Environment variables. An unquoted value is passed on as YAML read it (0x1F as 31, 1.10 as 1.1): quote a value you need verbatim.",
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$" },
       "additionalProperties": { "type": ["string", "number", "boolean"] }
     },
@@ -81,7 +82,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "uses": { "type": "string", "description": "A shared seat file, relative to .laight/ (e.g. seats/reviewer.yaml). Fields here override it." },
+        "uses": { "type": "string", "description": "A shared seat file, relative to .laight/ (e.g. seats/reviewer.yaml). Fields here replace its fields; env is replaced whole, not merged." },
         "label": { "type": "string" },
         "runtime": { "enum": ["claude-code", "codex", "shell"], "description": "Default claude-code." },
         "command": { "type": "string", "description": "For runtime shell: the command to run in the pane." },

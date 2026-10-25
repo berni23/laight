@@ -111,7 +111,7 @@ seats:                            # the rig: exactly these agents are started fo
     env: { GH_TOKEN: "{{ secret \"gh-this-repo\" }}" }   # optional; secrets never logged
     setup: make deps              # optional, run once in a new worktree
   reviewer:
-    uses: seats/reviewer.yaml     # shared definition; fields here override it
+    uses: seats/reviewer.yaml     # shared definition; fields here replace its fields (env whole)
     session: fresh                # an independent review each cycle
 
 steps:
@@ -217,7 +217,9 @@ own session with no terminal (a command that prompts fails instead of hanging), 
 and the step's `env`. Whatever it leaves running is stopped when `sh` exits or the run ends. Output
 goes to `out/<step>-<hop>.log` with known secrets redacted; the exit code is `.steps.<id>.out.code`.
 **A step's `env` exists only on shell steps** (#16): an agent's env is its seat's. Secrets reach a
-shell command only through `env`, never spliced into `run:` (§12.4).
+shell command only through `env`, never spliced into `run:` (§12.4). An unquoted env value is
+passed on as YAML read it: integers exactly, but `0x1F` as `31` and `1.10` as `1.1`, so quote a
+value you need verbatim (`validate` warns).
 **Exits:** any identifiers; `allowed_exits` defaults to `[handoff]`; `failed` is implicit and can
 be routed. **`next_hop.mode: end`** ends the branch whatever the exit (an unrouted `failed` is
 still held). **Outputs:** `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values

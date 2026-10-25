@@ -411,7 +411,7 @@ func TestProblemOrderStable(t *testing.T) {
 
 // An unquoted integer in env reaches the command exactly, even above 2^53 (#44).
 func TestEnvNumbersExact(t *testing.T) {
-	src := strings.Replace(issueCycle, "on_finish:", "env: { RECORD_ID: 9007199254740993, PORT: 8080, DEBUG: true }\non_finish:", 1)
+	src := strings.Replace(issueCycle, "on_finish:", "env: { RECORD_ID: 9007199254740993, PORT: 8080, DEBUG: true, SMALL: 0.0000001, HUGE: 1000000000000000000000, HALF: 0.5 }\non_finish:", 1)
 	src = strings.Replace(src, `env: { GH_TOKEN: "{{ secret \"gh\" }}" }`, `env: { GH_TOKEN: "{{ secret \"gh\" }}", BIG: 123456789012345678 }`, 1)
 	src = strings.Replace(src, "    run: gh pr merge", "    env: { RECORD_ID: 9007199254740993 }\n    run: gh pr merge", 1)
 	dir, file := project(t, src)
@@ -426,6 +426,9 @@ func TestEnvNumbersExact(t *testing.T) {
 		{"workflow RECORD_ID", w.Env["RECORD_ID"], "9007199254740993"},
 		{"workflow PORT", w.Env["PORT"], "8080"},
 		{"workflow DEBUG", w.Env["DEBUG"], "true"},
+		{"workflow SMALL", w.Env["SMALL"], "0.0000001"},
+		{"workflow HUGE", w.Env["HUGE"], "1000000000000000000000"},
+		{"workflow HALF", w.Env["HALF"], "0.5"},
 		{"seat BIG", w.Seats["impl"].Env["BIG"], "123456789012345678"},
 		{"step RECORD_ID", w.Step("merge").Env["RECORD_ID"], "9007199254740993"},
 	} {
@@ -436,37 +439,128 @@ func TestEnvNumbersExact(t *testing.T) {
 }
 
 // An unquoted env value YAML rewrites before laight sees it (0x1F is 31) gets a warning that
-// says to quote it, in the workflow and in a shared seat file (#44).
+// says to quote it, in the workflow and in a shared seat file; one passed on as written doesn't (#44).
 func TestEnvRewrittenWarns(t *testing.T) {
-	src := strings.Replace(issueCycle, "on_finish:", "env:\n  MASK: 0x1F\n  VERSION: 1.10\n  N: 1e3\n  OK: \"0x1F\"\non_finish:", 1)
-	src = strings.Replace(src, "    run: gh pr merge", "    env: { BIG: 99999999999999999999 }\n    run: gh pr merge", 1)
+	cases := []struct {
+		yaml string // the env value
+		warn string // the value it is passed on as, quoted in the warning; "" = no warning
+	}{
+		{"0x1F", `"31"`},
+		{"0o17", `"15"`},
+		{"1_000", `"1000"`},
+		{"1.10", `"1.1"`},
+		{"1e3", `"1000"`},
+		{"+5", `"5"`},
+		{"True", `"true"`},
+		{"2024-01-01", `"2024-01-01T00:00:00Z"`},
+		{"99999999999999999999", `"100000000000000000000"`},
+		{"*mask", `"31"`}, // an alias of a value outside env
+		{"9007199254740993", ""},
+		{"-5", ""},
+		{"0.0000001", ""},
+		{"1000000000000000000000", ""},
+		{"true", ""},
+		{"yes", ""},
+		{`"0x1F"`, ""},
+		{"!!str 0x1F", ""},
+	}
+	src := strings.Replace(issueCycle, "max_hops: 11", "max_hops: &mask 0x1F", 1)
+	env := "env:\n"
+	for i, c := range cases {
+		env += fmt.Sprintf("  V%d: %s\n", i, c.yaml)
+	}
+	src = strings.Replace(src, "on_finish:", env+"on_finish:", 1)
 	dir, file := project(t, src)
-	shared := filepath.Join(dir, "seats/reviewer.yaml")
-	if err := os.WriteFile(shared, []byte(reviewerSeat+"env: { RATE: +5 }\n"), 0o644); err != nil {
-		t.Fatal(err)
+	w, probs := Load(dir, file)
+	if w == nil {
+		t.Fatalf("no workflow: %v", probs)
 	}
-	_, probs := Load(dir, file)
-	want := map[string]string{"MASK": `"31"`, "VERSION": `"1.1"`, "N": `"1000"`, "BIG": "", "RATE": `"5"`}
+	got := map[string]Problem{}
 	for _, p := range probs {
-		found := false
-		for k, v := range want {
-			if p.Path[len(p.Path)-1] == k && strings.Contains(p.Msg, v) && strings.Contains(p.Msg, "quote it") {
-				if p.Severity != Warning || p.Line == 0 {
-					t.Errorf("%s: want a warning with a line", p)
-				}
-				if k == "RATE" && p.File != shared {
-					t.Errorf("%s: want it reported in %s", p, shared)
-				}
-				delete(want, k)
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("unexpected problem: %s", p)
+		got[strings.Join(p.Path, ".")] = p
+	}
+	for i, c := range cases {
+		p, warned := got[fmt.Sprintf("env.V%d", i)]
+		delete(got, fmt.Sprintf("env.V%d", i))
+		switch {
+		case c.warn == "" && warned:
+			t.Errorf("%s: unexpected %s", c.yaml, p)
+		case c.warn != "" && !warned:
+			t.Errorf("%s: no warning (passed on as %q)", c.yaml, w.Env[fmt.Sprintf("V%d", i)])
+		case warned && (p.Severity != Warning || p.Line == 0 || !strings.Contains(p.Msg, c.warn) || !strings.Contains(p.Msg, "quote it")):
+			t.Errorf("%s: want a warning with a line, %s and \"quote it\": %s", c.yaml, c.warn, p)
 		}
 	}
-	for k := range want {
-		t.Errorf("no warning for %s", k)
+	for _, p := range got {
+		t.Errorf("unexpected problem: %s", p)
+	}
+}
+
+// A shared seat file's env warns in that file, passes integers through `uses:` exactly, and
+// doesn't warn for a seat whose own env replaces it (#44).
+func TestSharedSeatEnv(t *testing.T) {
+	shared := reviewerSeat + "env: { RATE: +5, BIG: 9007199254740993 }\n"
+	for _, c := range []struct {
+		name, seatEnv string
+		warn          bool
+	}{
+		{"shared env", "", true},
+		{"own env", "    env: { RATE: \"5\" }\n", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			src := strings.Replace(issueCycle, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n"+c.seatEnv, 1)
+			dir, file := project(t, src)
+			path := filepath.Join(dir, "seats/reviewer.yaml")
+			if err := os.WriteFile(path, []byte(shared), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			w, probs := Load(dir, file)
+			if w == nil {
+				t.Fatalf("no workflow: %v", probs)
+			}
+			warned := false
+			for _, p := range probs {
+				if p.File == path && strings.Join(p.Path, ".") == "env.RATE" && p.Line > 0 && strings.Contains(p.Msg, "quote it") {
+					warned = true
+				} else {
+					t.Errorf("unexpected problem: %s", p)
+				}
+			}
+			if warned != c.warn {
+				t.Errorf("warned about RATE = %v, want %v", warned, c.warn)
+			}
+			if !c.warn {
+				return
+			}
+			if got := w.Seats["reviewer"].Env["BIG"]; got != "9007199254740993" {
+				t.Errorf("BIG = %q, want 9007199254740993", got)
+			}
+		})
+	}
+}
+
+// A shared seat file used by two seats reports each of its problems once (#44 review).
+func TestSharedSeatProblemsOnce(t *testing.T) {
+	src := strings.Replace(issueCycle, "\nsteps:", "\n  second:\n    uses: seats/reviewer.yaml\nsteps:", 1)
+	for name, shared := range map[string]string{
+		"env warning":  reviewerSeat + "env: { RATE: +5 }\n",
+		"schema error": reviewerSeat + "bogus: 1\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, file := project(t, src)
+			if err := os.WriteFile(filepath.Join(dir, "seats/reviewer.yaml"), []byte(shared), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, probs := Load(dir, file)
+			n := 0
+			for _, p := range probs {
+				if strings.HasSuffix(p.File, "reviewer.yaml") {
+					n++
+				}
+			}
+			if n != 1 {
+				t.Errorf("want 1 problem in the shared file, got %d: %v", n, probs)
+			}
+		})
 	}
 }

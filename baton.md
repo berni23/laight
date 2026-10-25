@@ -17,6 +17,10 @@ that.
   (`StringMap` decodes with `UseNumber`); `validate` warns, with the line, about an unquoted env
   value YAML rewrote (`0x1F`, `1.10`, `1e3`, `+5`, ints past uint64), in shared seat files too.
   Unit-tested, plus a real `laight run` of a shell step that printed `9007199254740993`.
+- #45 review answered (`/cross:fix-cr`): floats pass as plain digits again (`0.0000001`, not
+  `1e-7`); a shared seat file's problems are reported once; aliased env values warn; CLAUDE.md §3
+  and the schema say to quote env values. Out of scope, filed as #46 (input defaults and matrix
+  literals still round; `.inf`/`.nan` fail without a line).
 
 ---
 
