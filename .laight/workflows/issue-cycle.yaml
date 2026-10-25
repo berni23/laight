@@ -49,7 +49,9 @@ steps:
     compact: true                 # /compact first: the pickup leaves a long conversation behind
     objective: |
       /cross:fix-cr {{ .steps.pickup.out.pr }}
-      When the fixes are pushed and the review answered on the PR, finish with: laight done handoff
+      Commit and push the fixes yourself, without asking first: this run has no one to review them
+      before the reviewer does. When they are pushed and the review answered on the PR, finish
+      with: laight done handoff
     next_hop: { on: { handoff: verify } }
 
   - id: verify

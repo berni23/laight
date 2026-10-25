@@ -17,7 +17,7 @@ that.
   (pickup → `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate → merge),
   and the `compact: true` step field. **Not run for real yet.**
 - The first real run moves to go-orchestrator, so it doesn't develop the tool running it: an
-  `issue-cycle.yaml` adapted to it is in its `.laight/workflows/` (uncommitted there). #53 is the
+  `issue-cycle.yaml` adapted to it is in berni23/go-orchestrator#155 (with the move to the plugins). #53 is the
   analysis of that run.
 
 ---
@@ -27,8 +27,8 @@ that.
 ### 1. #50 — first supervised run of `laight run issue-cycle`, in go-orchestrator
 
 Run it from `../go-orchestrator` with `laight run issue-cycle` and watch it end to end: the slash
-commands as objectives, the pickup reading `prompt.bootstrap` (not `baton.md`, which it is told
-never to create), the compaction before `fix`, and `verify` in the reviewer's same conversation.
+commands as objectives (go-orchestrator now uses the `baton` and `cross` plugins and a `baton.md`,
+berni23/go-orchestrator#155), the compaction before `fix`, and `verify` in the reviewer's same conversation.
 It holds on the `approve` gate before merging into go-orchestrator's `dev`; answer it with
 `laight inbox`. Then #53: analyse the run, one issue per problem.
 
