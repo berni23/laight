@@ -82,6 +82,8 @@ type Hop struct {
 	Item    string         `json:"item,omitempty"`   // a gate's inbox item
 	Copy    int            `json:"copy,omitempty"`   // a matrix copy (1-based); 0 for other steps
 	Matrix  map[string]any `json:"matrix,omitempty"` // that copy's .matrix values
+	Stuck   string         `json:"stuck,omitempty"`  // a shell step's open stuck item
+	Clock   time.Time      `json:"clock,omitzero"`   // when its stuck clock last restarted (a wait)
 }
 
 // StepResult is how a step's latest hop finished: what templates see as .steps.<id>. A matrix
@@ -106,6 +108,9 @@ type Seat struct {
 	Hop   int    `json:"hop,omitempty"`   // …and its hop
 	Turn  bool   `json:"turn,omitempty"`  // the agent's turn on it hasn't ended yet
 	Given int    `json:"given,omitempty"` // steps given to the seat in this run
+
+	Stuck string    `json:"stuck,omitempty"` // the open stuck item about its turn
+	Clock time.Time `json:"clock,omitzero"`  // when its stuck clock last restarted (a nudge or a wait)
 }
 
 // ActiveOn returns the hop running on seat, or nil. Shell steps have no seat.
@@ -394,14 +399,18 @@ type Done struct {
 	Exit string         `json:"exit"`
 	Out  map[string]any `json:"out,omitempty"`
 	TS   time.Time      `json:"ts"`
-	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end.
+	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end…
 	Engine bool `json:"engine,omitempty"`
+	// …unless Turn says one may be (a quiet step failed from the inbox): the seat stays busy
+	// until its Stop hook says the turn ended.
+	Turn bool `json:"turn,omitempty"`
 }
 
 // ErrAlreadyDone is returned by WriteDone for a hop that has already finished.
 var ErrAlreadyDone = errors.New("already finished")
 
-func doneFile(home, id, step string, hop int) string {
+// DoneFile is where a hop's ending is recorded: out/<step>-<hop>.json.
+func DoneFile(home, id, step string, hop int) string {
 	return filepath.Join(Dir(home, id), "out", fmt.Sprintf("%s-%d.json", step, hop))
 }
 
@@ -410,7 +419,7 @@ func WriteDone(home, id string, d Done) error {
 	if d.TS.IsZero() {
 		d.TS = time.Now().UTC()
 	}
-	file := doneFile(home, id, d.Step, d.Hop)
+	file := DoneFile(home, id, d.Step, d.Hop)
 	b, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
 		return err
@@ -441,7 +450,7 @@ func WriteDone(home, id string, d Done) error {
 
 // ReadDone returns how a hop finished, or nil while it hasn't.
 func ReadDone(home, id, step string, hop int) (*Done, error) {
-	b, err := os.ReadFile(doneFile(home, id, step, hop))
+	b, err := os.ReadFile(DoneFile(home, id, step, hop))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -450,7 +459,7 @@ func ReadDone(home, id, step string, hop int) (*Done, error) {
 	}
 	var d Done
 	if err := decode(b, &d); err != nil {
-		return nil, fmt.Errorf("%s: %w", doneFile(home, id, step, hop), err)
+		return nil, fmt.Errorf("%s: %w", DoneFile(home, id, step, hop), err)
 	}
 	return &d, nil
 }

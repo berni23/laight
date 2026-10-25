@@ -114,8 +114,11 @@ func TestLoadIssueCycle(t *testing.T) {
 	if w.Step("approve").Type != TypeGate || w.Step("merge").Type != TypeShell || w.Step("fix").Type != TypeAgent {
 		t.Error("step types not inferred")
 	}
-	if got := time.Duration(w.Step("fix").Timeout); got != 90*time.Minute {
+	if got := w.Step("fix").Quiet(); got != 90*time.Minute {
 		t.Errorf("fix timeout = %v, want the workflow's 90m", got)
+	}
+	if got := w.Step("approve").Quiet(); got != 0 {
+		t.Errorf("gate timeout = %v, want none: a gate is never timed", got)
 	}
 	if w.Seats["impl"].Env["GH_TOKEN"] == "" {
 		t.Error("env lost")
@@ -153,6 +156,7 @@ func TestLoadProblems(t *testing.T) {
 			return strings.Replace(s, "  - id: merge\n", "  - id: merge\n    needs: [approve]\n", 1)
 		}, `step "merge" has ` + "`needs`", 0, false},
 		{"field of another type", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    seat: impl\n", 1) }, "`seat` doesn't belong in a gate step", 0, false},
+		{"gate timeout warns", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    timeout: 1h\n", 1) }, "a gate is never timed", 0, true},
 		{"yolo warns", func(s string) string { return strings.Replace(s, "permissions: auto", "permissions: yolo", 1) }, "yolo", 13, true},
 		{"cwd repo warns", func(s string) string { return strings.Replace(s, "cwd: worktree", "cwd: repo", 1) }, "share the main checkout", 0, true},
 		{"unrouted exit warns", func(s string) string { return strings.Replace(s, "yes: merge, no: end", "yes: merge", 1) }, `exit "no" has no route`, 0, true},
@@ -562,5 +566,45 @@ func TestSharedSeatProblemsOnce(t *testing.T) {
 				t.Errorf("want 1 problem in the shared file, got %d: %v", n, probs)
 			}
 		})
+	}
+}
+
+// An explicit `timeout: 0s` opts a step out of timeouts.step; leaving it out inherits it, and
+// the snapshot in run.json reads back the same.
+func TestStepTimeoutOptOut(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "workflows", "t.yaml")
+	if err := os.WriteFile(file, []byte(`version: 1
+id: t
+timeouts: { step: 5m }
+steps:
+  - id: a
+    run: "true"
+    next_hop: { on: { ok: b } }
+  - id: b
+    run: "true"
+    timeout: 0s
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, probs := Load(dir, file)
+	if len(probs) > 0 {
+		t.Fatalf("problems: %v", probs)
+	}
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Workflow
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	for _, x := range []*Workflow{w, &back} {
+		if a, b := x.Step("a").Quiet(), x.Step("b").Quiet(); a != 5*time.Minute || b != 0 || x.Step("b").Timeout == nil {
+			t.Errorf("a %v, b %v (%v)", a, b, x.Step("b").Timeout)
+		}
 	}
 }

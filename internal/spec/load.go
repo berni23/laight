@@ -435,8 +435,9 @@ func applyDefaults(w *Workflow) {
 		if len(st.Matrix) > 0 && st.MaxParallel == 0 {
 			st.MaxParallel = DefaultMaxParallel
 		}
-		if st.Timeout == 0 {
-			st.Timeout = w.Timeouts.Step
+		if st.Timeout == nil && st.Type != TypeGate && w.Timeouts.Step != 0 { // a gate already waits on a human
+			d := w.Timeouts.Step
+			st.Timeout = &d
 		}
 	}
 }

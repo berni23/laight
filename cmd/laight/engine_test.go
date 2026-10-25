@@ -877,7 +877,8 @@ func TestDone(t *testing.T) {
 	}
 }
 
-// The Stop hook: block once with how to finish, never twice; once done, mark the seat idle.
+// The Stop hook: block once with how to finish, never twice (the second stop marks the seat
+// stopped, for the engine to raise a stuck item); once done, mark the seat idle.
 func TestStopHook(t *testing.T) {
 	home, id := doneEnv(t)
 	idle := filepath.Join(state.Dir(home, id), "seats", "a.idle")
@@ -895,6 +896,9 @@ func TestStopHook(t *testing.T) {
 	}
 	if out := hook(`{"stop_hook_active": true}`); out != "" {
 		t.Errorf("second stop blocked again: %s", out)
+	}
+	if b, _ := os.ReadFile(engine.StoppedMark(home, id, "a")); string(b) != "verify-3\n" {
+		t.Errorf("stopped mark = %q", b)
 	}
 	if _, err := os.Stat(idle); !os.IsNotExist(err) {
 		t.Errorf("idle before done: %v", err)

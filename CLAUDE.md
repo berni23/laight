@@ -149,7 +149,7 @@ steps:
     run: gh pr merge {{ .steps.implement.out.pr }} --squash && gh issue close {{ .steps.implement.out.issue }}
 
 loop_guards: { max_hops: 11 }     # exceeding it → a `failed` inbox item: retry or abort
-timeouts: { step: 90m }           # a step over its timeout → inbox item (not a kill)
+timeouts: { step: 90m }           # a step quiet this long → a `stuck` inbox item (not a kill)
 on_finish: { success: destroy, failure: keep }   # worktrees; the tmux session always stops
 ```
 
@@ -238,6 +238,7 @@ pasted into a pane, and panes are logged.
     out/<step>-<hop>.json             # what `laight done` wrote (or the engine, for shell steps)
     out/<step>-<hop>.log              # a shell step's output, known secrets redacted
     seats/<seat>.log                  # tmux pipe-pane of the seat
+    seats/<seat>.idle, .stopped       # Stop hook: turn ended after `done`; stopped twice without it
     worktrees/<seat>/
   inbox/<item-id>.json                # one file per pending decision (the `files` queue)
   inbox/answered/<item-id>.json
@@ -264,8 +265,9 @@ pasted into a pane, and panes are logged.
 - **Give a step:** `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + `Enter`. Never
   `send-keys` long text.
 - **Finish a step:** the agent runs `laight done <exit> [k=v…]` (no flags; it reads env). If it
-  stops without it, the **Stop hook** blocks once with a reminder; the second time it raises an
-  inbox item instead of looping. A seat gets its next step only after `done` *and* its Stop hook.
+  stops without it, the **Stop hook** blocks once with a reminder; the second time it writes
+  `seats/<seat>.stopped` instead of looping, and the engine raises a `stuck` item (§12.2). A seat
+  gets its next step only after `done` *and* its Stop hook.
 - **Fresh vs resume:** `fresh` restarts the CLI before each step (`/clear` is not enough);
   `resume` keeps the session. Every Claude session gets a `--session-id`, so a seat relaunched
   within a run continues its conversation with `--resume`.
@@ -278,9 +280,10 @@ pasted into a pane, and panes are logged.
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.
 - **Who writes what:** only the engine writes `run.json`; `done` and hooks write their own files
-  (`out/<step>-<hop>.json`, first write wins; the Stop hook's `seats/<seat>.idle`; `inbox/`), which
-  the engine polls (~500 ms). When a hop can't finish otherwise (crashed seat, objective that didn't
-  render), the engine writes its `failed` out file itself, so every ending goes through routing.
+  (`out/<step>-<hop>.json`, first write wins; the Stop hook's `seats/<seat>.idle` and `.stopped`;
+  `inbox/`), which the engine polls (~500 ms). When a hop can't finish otherwise (crashed seat,
+  objective that didn't render), the engine writes its `failed` out file itself, so every ending
+  goes through routing.
 - **Secrets:** `{{ secret "x" }}` reads env `LAIGHT_SECRET_X`, then the OS keychain (service `laight`).
 - Every runtime is an adapter: `launch`, `ready`, `deliver`, `hooks`, and `detectBlocked(screen)`
   for runtimes without hooks.
@@ -292,7 +295,7 @@ pasted into a pane, and panes are logged.
 | `permission` | Claude Code `PermissionRequest` hook | the hook blocks, polling the item file, and returns allow/deny |
 | `question` | `PreToolUse` hook on `AskUserQuestion`; a plain-text question caught by the Stop hook | the hook's return value; for plain text, pasted into the seat |
 | `gate` | a `type: gate` step | the engine routes on the chosen exit |
-| `stuck` | step timeout, Stop hook gave up, idle with no `laight done` | nudge / open pane / fail step |
+| `stuck` | Stop hook gave up; step quiet past its timeout; turn never ended after `done` | nudge / fail when the agent stopped; wait / fail otherwise |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | retry step / abort run |
 
 An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
@@ -434,17 +437,33 @@ The agent's side acknowledges: a `UserPromptSubmit` hook writes `seats/<seat>.ac
 hop with no ack is pasted again; an acked hop with no `done` is left running; re-pasting an acked
 hop is never automatic (Archon's rule): laight raises a `stuck` item. A hop whose seat died while
 the engine was down continues only if the seat can resume its conversation, with a short note to
-carry on, once per hop; otherwise it fails like a crashed seat. Runtimes without hooks fall back to
+carry on, once per hop; otherwise it fails like a crashed seat. A seat that crashes again on a hop
+resume respawned it for raises a `failed` item instead of being respawned again. Runtimes without hooks fall back to
 a `capture-pane` snippet check.
 
 ### 12.2 Knowing an agent is idle, done or stuck (#15)
 
 Explicit `laight done` plus hooks are the proof. Screen or output silence only ever *adds*
 evidence; it never decides on its own. "Stuck" is computed at each tick from file timestamps
-(`out/`, `.idle`, `.ack`, the seat log's mtime, worktree writes) against `timeouts.step`; nothing
-new is stored, and nothing routes on it. Escalation: one nudge (the Stop hook's reminder), then a
-`stuck` inbox item. A seat that crashes twice on the same hop raises a `failed` item instead of
-being respawned again.
+(`out/`, `.idle`, `.stopped`, `.ack`, the seat log's mtime, worktree writes outside `.git/`)
+against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
+when none of them moved for that long, not when it has run that long. Nothing new is stored but
+the open item and when its clock last restarted, and nothing routes on it. An agent that stops
+without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it
+stops a second time (`.stopped`); a seat quiet past its timeout gets the item directly. It also
+covers a seat that ran `done` but whose turn never ended (a Stop hook that failed), and a shell
+step (its log is its only trace). Decided in #15 (2026-10-25, revised in the #47 review): the
+choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
+reminder; skipped if it has since reached a permission dialog, whose item already asks) or
+`fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
+that a paste's Enter would answer: `wait` (the clock starts again) or `fail`; so does a shell
+step. `fail` ends the hop `failed` and routes (a shell step's command is stopped; a seat whose step
+is already done is just freed). A quiet seat's turn may still be running, so it takes its next
+step only after its Stop hook (a late `laight done` from that turn then finds no step to finish);
+a seat without hooks is interrupted (`C-c`) instead. Looking first is `laight attach`, which the item's detail names. A
+seat with a pending permission item is never stuck, and a gate is never timed: a human is already
+asked (reminding them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn.
+A crashed seat fails its hop at once and is respawned only by a later step (or a `retry`).
 
 ### 12.3 One parallel branch fails while others run (#12)
 

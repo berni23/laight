@@ -48,7 +48,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "step": { "$ref": "#/$defs/duration", "description": "A step over this raises an inbox item (it is not killed)." }
+        "step": { "$ref": "#/$defs/duration", "description": "A step quiet this long (no output, no file written) raises a stuck inbox item; it is not killed. A step's own timeout wins. Gates are never timed." }
       }
     },
     "on_finish": {
@@ -150,7 +150,7 @@
           }
         },
         "max_parallel": { "type": "integer", "minimum": 1, "description": "Matrix copies alive at once. Default 4." },
-        "timeout": { "$ref": "#/$defs/duration" },
+        "timeout": { "$ref": "#/$defs/duration", "description": "How long this step may go quiet before it raises a stuck inbox item; overrides timeouts.step. 0s: never timed. Not for gates." },
         "env": { "$ref": "#/$defs/env", "description": "shell steps only: env of `run:`, over the workflow's env. The only place a shell step may use `secret`." }
       }
     }

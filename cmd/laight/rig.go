@@ -267,7 +267,8 @@ type hookInput struct {
 
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
 // may get its next one. If not, the agent is told once how to finish it (Claude sets
-// stop_hook_active when it is already continuing because of this hook, so it never loops).
+// stop_hook_active when it is already continuing because of this hook, so it never loops); the
+// second time, it marks the seat stopped, and the engine asks a human (a stuck item).
 func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
 	r, err := state.Load(home, runID)
 	if err != nil {
@@ -285,18 +286,19 @@ func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
 		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
 		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
 	}
-	if again || r.ActiveOn(seat) == nil {
+	if r.ActiveOn(seat) == nil {
 		return nil
 	}
-	st := r.Spec.Step(s.Step)
+	if again { // told once already: the engine raises a stuck item
+		return os.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+	}
 	laight, err := os.Executable()
 	if err != nil {
 		laight = "laight"
 	}
 	return json.NewEncoder(stdout).Encode(map[string]string{
 		"decision": "block",
-		"reason": fmt.Sprintf("Step %s isn't finished. When it is, run: %s done <exit> [key=value…] (exits: %s, failed).",
-			st.ID, tmux.Quote(laight), strings.Join(st.AllowedExits, ", ")),
+		"reason":   engine.Reminder(r.Spec.Step(s.Step), laight),
 	})
 }
 

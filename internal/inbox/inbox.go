@@ -23,6 +23,7 @@ const (
 	Permission = "permission"
 	Gate       = "gate"
 	Failed     = "failed"
+	Stuck      = "stuck"
 )
 
 // The choices of a permission item.
@@ -35,6 +36,14 @@ const (
 const (
 	Retry = "retry"
 	Abort = "abort"
+)
+
+// The choices of a stuck item: paste a reminder into the seat, keep waiting (the clock starts
+// again), or give up on the step.
+const (
+	Nudge = "nudge"
+	Wait  = "wait"
+	Fail  = "fail"
 )
 
 // Item is one thing waiting for a human.
@@ -72,16 +81,16 @@ func answeredFile(home, id string) string { return filepath.Join(dir(home), "ans
 
 // Put queues an item. Its title and detail are redacted and cleaned here, so no caller can
 // forget: the title leaves the machine (§6), and both reach a terminal. Inside a seat, that
-// includes the seat's secret env values. Putting an item that is already queued or answered
-// does nothing.
-func Put(home string, it Item) error {
+// includes the seat's secret env values; the engine passes them in secrets when it quotes a
+// seat's pane. Putting an item that is already queued or answered does nothing.
+func Put(home string, it Item, secrets ...string) error {
 	if exists(pendingFile(home, it.ID)) || exists(answeredFile(home, it.ID)) {
 		return nil
 	}
 	if it.Created.IsZero() {
 		it.Created = time.Now().UTC()
 	}
-	for _, v := range secretForms(SeatSecrets()) {
+	for _, v := range secretForms(append(SeatSecrets(), secrets...)) {
 		it.Title, it.Detail = strings.ReplaceAll(it.Title, v, "***"), strings.ReplaceAll(it.Detail, v, "***")
 	}
 	it.Title = clean(Redact(it.Title), false)
