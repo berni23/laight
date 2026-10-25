@@ -22,16 +22,17 @@ regression test seen red first:
 - `inbox.raised` carries the seat, hop and copy it holds.
 - Spec: instance `dev#k` keeps its worktree (and conversation unless `fresh`) across expansions.
 - Filed #41 (agent output spliced into a shell step's `run:`); the serial launch is #39.
+- The user's two answers: a held copy keeps its window until its item is answered (a retry goes
+  to that window; rule 5 says so); max_hops refusing every pending copy, one item each, is #42
+  (its fix changes rule 4). #40 retargeted to `main`.
 
 ---
 
 ## Do this next
 
-### 1. PR #40 — two review questions, then merge
+### 1. PR #40 — merge
 
-The user decides (see the PR's replies): max_hops refusing every pending copy, one `failed` item
-each; and whether a held copy's window stays open until its item is answered. Then retarget #40
-to `main` (its base `12-needs-matrix` was merged in #38) and merge.
+Review answered, both questions settled, `make check` green. The user merges.
 
 ### 2. #15 — stuck detection (M3)
 
@@ -51,8 +52,7 @@ Matters once matrix copies are Claude seats with `max_parallel` > 2.
 
 ## Waiting on the user
 
-- PR #40's two questions (threads on `engine.go` max_hops, and the review body's held-copy
-  window): asked in the reply comment there.
+- Merge PR #40.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
 - `session: fresh` was exercised (the reviewer relaunched for verify) but not checked for an
   independent conversation; say if that needs its own check.

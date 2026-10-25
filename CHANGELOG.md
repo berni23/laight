@@ -17,7 +17,8 @@ All notable changes to laight are documented here. The format follows
 - `matrix`: one copy of a step per combination of its values (a list, or a template such as
   `{{ .steps.plan.out.tasks }}`), at most 32, `max_parallel` at once. Each agent copy runs on its
   own seat instance (`dev#1`, `dev#2`…, with its own window, worktree and session), closed once
-  the copy is done. A failed copy is held alone and retried alone. Later steps see `.out` and
+  the copy is done. A failed copy is held alone, keeps its window until its item is answered, and
+  is retried alone. Later steps see `.out` and
   `.exit` as lists, one entry per copy. `validate` rejects a matrix on a gate, a matrix agent
   step whose seat isn't `cwd: worktree`, a literal matrix over 32 copies, `.matrix` inside the
   matrix's own values, and `.steps.<matrix step>.out.<key>`.

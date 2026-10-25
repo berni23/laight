@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -522,13 +523,18 @@ func TestMatrixHeldCopy(t *testing.T) {
 	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 1).N, Exit: "handoff", Out: map[string]any{"pr": "1"}}); err != nil {
 		t.Fatal(err)
 	}
+	state.Update(e.Home, id, func(r *state.Run) error { r.Seats["dev#2"].Up = true; return nil }) // launched
 	finish(t, e, id, hopOf(t, starts, "build", 2), spec.ExitFailed)
 	var evs []state.Event
 	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
 		var s []start
-		_, _, s, _, evs = e.advance(r)
+		var stops []string
+		_, _, s, stops, evs = e.advance(r)
 		if len(s) != 0 {
 			t.Fatalf("started %+v", s)
+		}
+		if slices.Contains(stops, "dev#2") { // requirement 2: a held copy's pane stays to look at
+			t.Errorf("held copy's instance closed: stops %v", stops)
 		}
 		return nil
 	}); err != nil {
@@ -566,10 +572,16 @@ func TestMatrixHeldCopy(t *testing.T) {
 	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: s[0].hop.N, Exit: "handoff", Out: map[string]any{"pr": "2"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(state.Dir(e.Home, id), "seats", "dev#2.idle"), []byte(IdleMark("build", s[0].hop.N)+"\n"), 0o600); err != nil {
+		t.Fatal(err) // its turn ended too, so dev#2 can close
+	}
 	if _, s = e.step(t, id); strings.Join(started(s), ",") != "join" {
 		t.Fatalf("started %v", started(s))
 	}
 	r = load(t, e, id)
+	if r.Seats["dev#2"].Up {
+		t.Error("dev#2 still up after its retried copy finished")
+	}
 	got, err := spec.Render("t", "{{ range .steps.build.out }}{{ .pr }},{{ end }} {{ .steps.build.exit }}", r.TemplateData(nil))
 	if err != nil || got != "1,2,3, [handoff handoff handoff]" {
 		t.Errorf("rendered %q, %v", got, err)

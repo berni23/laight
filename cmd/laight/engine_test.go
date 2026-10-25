@@ -789,8 +789,13 @@ steps:
 	if most != 2 || hops["dev#1"] != 1 || hops["dev#2"] != 2 || hops["dev#3"] != 1 {
 		t.Errorf("at most %d copies live (want 2), hops per instance %v", most, hops)
 	}
-	if n := countEvents(evs, "seat.down", ""); n < 4 { // each instance after its copy, dev#2 twice
-		t.Errorf("%d seat.down events", n)
+	for k := 1; k <= 3; k++ { // each instance after its copy; dev#2 stays up while held, and takes the retry
+		if n := countEvents(evs, "seat.down", spec.Instance("dev", k)); n != 1 {
+			t.Errorf("dev#%d: %d seat.down events, want 1", k, n)
+		}
+	}
+	if n := countEvents(evs, "seat.up", "dev#2"); n != 1 {
+		t.Errorf("dev#2 started %d times, want once: the retry goes to its open window", n)
 	}
 	if countEvents(evs, "seat.up", "dev") != 0 {
 		t.Errorf("seat dev started on its own")

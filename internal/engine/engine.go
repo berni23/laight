@@ -460,10 +460,17 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		m.Pending = later
 	}
 
-	// A seat instance closes once its copy is over. Its worktree stays (on_finish decides), and
-	// a retry of the copy starts it again, resuming its conversation.
+	// A seat instance closes once its copy is over. Its worktree stays (on_finish decides). A
+	// held copy isn't over: its pane stays up for a human to look at (requirement 2), and a retry
+	// is delivered to it.
+	held := map[string]bool{}
+	for _, b := range r.Blocked {
+		if st := r.Spec.Step(b.Step); b.Copy > 0 && st != nil && st.Seat != "" {
+			held[spec.Instance(st.Seat, b.Copy)] = true
+		}
+	}
 	for _, name := range slices.Sorted(maps.Keys(r.Seats)) {
-		if s := r.Seats[name]; strings.Contains(name, "#") && s.Up && !s.Turn && r.ActiveOn(name) == nil {
+		if s := r.Seats[name]; strings.Contains(name, "#") && s.Up && !s.Turn && r.ActiveOn(name) == nil && !held[name] {
 			s.Up = false
 			stops = append(stops, name)
 			events = append(events, state.Event{Run: r.ID, Type: "seat.down", Seat: name})
