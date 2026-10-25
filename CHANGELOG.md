@@ -14,7 +14,7 @@ All notable changes to laight are documented here. The format follows
 - `.laight/workflows/self-cycle.yaml`: laight's own development as a workflow. It takes the next
   `baton.md` item to a PR (`/baton:pickup`), has a second session review it (`/cross:cr`),
   compacts the first one and answers the review (`/cross:fix-cr`), asks the reviewer whether every
-  finding is addressed, and merges the PR.
+  finding is addressed, holds for a human's yes in the inbox, and merges the PR.
 
 - Stuck detection: a step quiet past its `timeout` (no pane output, no file written in its
   worktree), an agent that stops twice without `laight done`, and a seat whose turn never ended
