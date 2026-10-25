@@ -5,9 +5,11 @@
 package spec
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -167,19 +169,31 @@ type StringMap map[string]string
 // UnmarshalJSON implements json.Unmarshaler.
 func (m *StringMap) UnmarshalJSON(b []byte) error {
 	var raw map[string]any
-	if err := json.Unmarshal(b, &raw); err != nil {
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.UseNumber() // a float64 would round integers above 2^53 (#44)
+	if err := d.Decode(&raw); err != nil {
 		return err
 	}
 	*m = make(StringMap, len(raw))
 	for k, v := range raw {
-		switch v := v.(type) {
-		case string:
-			(*m)[k] = v
-		case float64:
-			(*m)[k] = strconv.FormatFloat(v, 'f', -1, 64)
-		default:
-			(*m)[k] = fmt.Sprint(v)
-		}
+		(*m)[k] = envString(v)
 	}
 	return nil
+}
+
+// envString is the text an env value decoded from JSON is passed on as.
+func envString(v any) string {
+	switch v := v.(type) {
+	case string:
+		return v
+	case json.Number:
+		// An integer as written; a float as plain digits, as JSON writes 1e-7 and 1e+21.
+		if !strings.ContainsAny(string(v), ".eE") {
+			return string(v)
+		}
+		if f, err := v.Float64(); err == nil {
+			return strconv.FormatFloat(f, 'f', -1, 64)
+		}
+	}
+	return fmt.Sprint(v) // true, false
 }

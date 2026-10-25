@@ -240,8 +240,15 @@ func validateSchema(file string, root *yaml.Node, doc any, fragment string) []Pr
 
 // lineOf returns the line of the node at path, or of its deepest existing ancestor.
 func lineOf(root *yaml.Node, path []string) int {
+	_, line := nodeAt(root, path)
+	return line
+}
+
+// nodeAt returns the node at path (nil if there is none) and the line of it, or of its deepest
+// existing ancestor. A mapping value's line is its key's.
+func nodeAt(root *yaml.Node, path []string) (*yaml.Node, int) {
 	if root == nil {
-		return 0
+		return nil, 0
 	}
 	n := root
 	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
@@ -266,11 +273,38 @@ func lineOf(root *yaml.Node, path []string) int {
 			}
 		}
 		if next == nil {
-			break
+			return nil, line
 		}
 		n = next
 	}
-	return line
+	return n, line
+}
+
+// rewrittenEnv warns about each unquoted env value under path that isn't passed on as written:
+// YAML resolves 0x1F to 31 and 1.10 to 1.1 before laight sees it (#44). passed gives the text a
+// key is passed on as; false skips the key. A value that is an alias is checked as its anchor; an
+// env that is an alias, and `<<` merge keys, are not checked.
+func rewrittenEnv(file string, root *yaml.Node, path []string, passed func(key string) (string, bool)) []Problem {
+	env, _ := nodeAt(root, path)
+	if env == nil || env.Kind != yaml.MappingNode {
+		return nil
+	}
+	var probs []Problem
+	for i := 0; i+1 < len(env.Content); i += 2 {
+		k, v := env.Content[i], env.Content[i+1]
+		if v.Kind == yaml.AliasNode {
+			v = v.Alias
+		}
+		if v.Kind != yaml.ScalarNode || v.ShortTag() == "!!str" {
+			continue
+		}
+		if got, ok := passed(k.Value); ok && got != v.Value {
+			at := append(append([]string{}, path...), k.Value)
+			probs = append(probs, Problem{Severity: Warning, File: file, Line: k.Line, Path: at,
+				Msg: fmt.Sprintf("%s is passed on as %q; quote it to pass it as written", v.Value, got)})
+		}
+	}
+	return probs
 }
 
 // resolveUses replaces each seat's `uses:` with the shared seat file's fields, overridden by the
@@ -279,6 +313,15 @@ func resolveUses(laightDir, file string, root *yaml.Node, doc any) []Problem {
 	m, _ := doc.(map[string]any)
 	seats, _ := m["seats"].(map[string]any)
 	var probs []Problem
+	// A shared file used by several seats reports its problems once; its env is checked once
+	// for the seats that don't override env.
+	reported := map[string]bool{}
+	report := func(key string, ps []Problem) {
+		if !reported[key] {
+			reported[key] = true
+			probs = append(probs, ps...)
+		}
+	}
 	names := make([]string, 0, len(seats))
 	for name := range seats {
 		names = append(names, name)
@@ -300,18 +343,25 @@ func resolveUses(laightDir, file string, root *yaml.Node, doc any) []Problem {
 		}
 		base, baseRoot, ps := parseYAML(path, src)
 		if ps != nil {
-			probs = append(probs, ps...)
+			report(path, ps)
 			continue
 		}
 		if ps := validateSchema(path, baseRoot, base, "#/$defs/seat"); ps != nil {
-			probs = append(probs, ps...)
+			report(path, ps)
 			continue
 		}
 		baseMap := base.(map[string]any)
 		if _, nested := baseMap["uses"]; nested {
-			probs = append(probs, Problem{File: path, Line: lineOf(baseRoot, []string{"uses"}), Path: []string{"uses"},
-				Msg: "a shared seat file can't itself use another one"})
+			report(path, []Problem{{File: path, Line: lineOf(baseRoot, []string{"uses"}), Path: []string{"uses"},
+				Msg: "a shared seat file can't itself use another one"}})
 			continue
+		}
+		if _, own := seat["env"]; !own {
+			baseEnv, _ := baseMap["env"].(map[string]any)
+			report(path+"#env", rewrittenEnv(path, baseRoot, []string{"env"}, func(k string) (string, bool) {
+				v, ok := baseEnv[k]
+				return envString(v), ok
+			}))
 		}
 		merged := map[string]any{}
 		for k, v := range baseMap {
