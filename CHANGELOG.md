@@ -19,8 +19,8 @@ All notable changes to laight are documented here. The format follows
   own seat instance (`dev#1`, `dev#2`…, with its own window, worktree and session), closed once
   the copy is done. A failed copy is held alone and retried alone. Later steps see `.out` and
   `.exit` as lists, one entry per copy. `validate` rejects a matrix on a gate, a matrix agent
-  step whose seat isn't `cwd: worktree`, `.matrix` inside the matrix's own values, and
-  `.steps.<matrix step>.out.<key>`.
+  step whose seat isn't `cwd: worktree`, a literal matrix over 32 copies, `.matrix` inside the
+  matrix's own values, and `.steps.<matrix step>.out.<key>`.
 - A seat finds `laight` on its `PATH` (a link to the binary that runs its rig comes first), so
   `laight done` works even when laight isn't installed or has another name, e.g. a build in `bin/`.
 - The design specification (CLAUDE.md), project scaffolding, CI and the release pipeline.

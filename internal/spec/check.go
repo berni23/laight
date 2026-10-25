@@ -175,11 +175,19 @@ func (c *checker) steps() {
 		if len(st.Matrix) > 0 && st.Type == TypeGate {
 			c.add(Error, at("matrix"), "a gate can't have a matrix: only agent and shell steps do")
 		}
+		literal := true
 		for _, k := range sortedKeys(st.Matrix) {
 			if s, ok := st.Matrix[k].(string); ok {
+				literal = false
 				c.inMatrix = true // the matrix makes .matrix: its own values can't read it
 				c.template(at("matrix", k), s, st, false)
 				c.inMatrix = false
+			}
+		}
+		if len(st.Matrix) > 0 && literal {
+			// Every value is a list, so its copies are known now rather than when the step is reached.
+			if _, err := Copies(st, nil); err != nil {
+				c.add(Error, at("matrix"), "%v", err)
 			}
 		}
 		if len(st.Env) > 0 && st.Type != TypeShell {

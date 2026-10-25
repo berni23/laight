@@ -286,6 +286,8 @@ func TestMatrixErrors(t *testing.T) {
 			"each matrix copy needs its own worktree: seat dev has cwd repo"},
 		"matrix seat in a folder": {strings.Replace(parallel, "dev: { runtime: shell, command: bash }", "dev: { runtime: shell, command: bash, cwd: . }", 1),
 			"each matrix copy needs its own worktree: seat dev has cwd ."},
+		"literal matrix over the cap": {strings.Replace(parallel, `task: "{{ .steps.plan.out.tasks }}"`, `task: [1, 2, 3, 4, 5, 6], b: [1, 2, 3, 4, 5, 6]`, 1),
+			"matrix makes more than 32 copies"},
 	}
 	for name, c := range bad {
 		t.Run(name, func(t *testing.T) {
