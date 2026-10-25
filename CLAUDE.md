@@ -10,10 +10,10 @@ This file is the spec. README.md is the user-facing overview. Background, resear
 later milestones are parked in `scratch.docs/scratch.spec_parked.md` (local, untracked).
 Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up and tear down);
 **M2 in progress**: the engine loop runs agent and shell steps (`laight done`, routing,
-`max_hops`), gates, and a minimal inbox (`files` queue, `laight inbox`, `gate`, `failed` and
-`permission` items, the last from the `PermissionRequest` hook). The acceptance run passed (#11:
-two real issues to merged PRs, one review/fix round each); `needs`/`matrix` are next. Resuming a
-run whose engine died is deferred (#8, §4).
+`max_hops`), gates, `needs`, and a minimal inbox (`files` queue, `laight inbox`, `gate`, `failed`
+and `permission` items, the last from the `PermissionRequest` hook). The acceptance run passed
+(#11: two real issues to merged PRs, one review/fix round each); `matrix` is next (#12). Resuming
+a run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -176,7 +176,13 @@ steps:
 1. Entry steps start at once: the first step of the file (unless it has `needs`; it may be a loop
    target), and every other step with no `needs` and no incoming route.
 2. A step with `needs` starts when every needed step (every matrix copy) has finished with a
-   non-`failed` exit.
+   non-`failed` exit, and no queued, running or held step can route back to it (a step in a
+   review/fix loop counts once the loop has left it); nor can another step whose needs are met
+   in the same tick, unless this one can too (both are in that loop), so file order never
+   matters. It runs at most once, even if a loop later runs a needed step again. Any non-`failed`
+   exit counts, a gate's `no` too: to act on a decision, route on the gate's exit (`validate`
+   warns). One whose needs can't be met by the time the run ends is skipped (`step.skipped`);
+   the run still succeeds.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
    without `next_hop` ends its branch; `end` ends it explicitly.
 4. The run succeeds when no step is running, ready or held. An unrouted `failed`, or a step
@@ -314,7 +320,7 @@ for most workflows; that is a design goal, measure it.
 ## 7. Observability
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
-  `run.started|finished|aborted`, `step.started|done|timeout`, `seat.up|down|crashed`,
+  `run.started|finished|aborted`, `step.started|done|skipped|timeout`, `seat.up|down|crashed`,
   `inbox.raised|answered`, `hook.<name>` (session start and stop), `tool` (name + duration, never
   arguments), `usage` (tokens/cost per seat per step).
 - `laight watch`: every run, one line each. `laight watch <run>`: a live CI-style pipeline
