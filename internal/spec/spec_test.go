@@ -634,3 +634,32 @@ func TestCompact(t *testing.T) {
 		})
 	}
 }
+
+// The repo's own workflow (.laight/workflows/issue-cycle.yaml) validates, and its merge step
+// renders whether or not the implementer reported an issue: a key it left out must not hold a
+// run a human already approved.
+func TestOwnIssueCycle(t *testing.T) {
+	dir := filepath.Join("..", "..", DirName)
+	w, probs := Load(dir, filepath.Join(dir, "workflows", "issue-cycle.yaml"))
+	if HasErrors(probs) {
+		t.Fatalf("problems: %v", probs)
+	}
+	merge := w.Step("merge")
+	for _, c := range []struct {
+		out   map[string]any
+		issue string
+	}{
+		{map[string]any{"pr": "https://x/pull/1"}, ""},
+		{map[string]any{"pr": "https://x/pull/1", "issue": ""}, ""},
+		{map[string]any{"pr": "https://x/pull/1", "issue": float64(34)}, "34"},
+	} {
+		data := map[string]any{"base": w.Base, "steps": map[string]any{"pickup": map[string]any{"exit": "handoff", "out": c.out}}}
+		got, err := Render("merge.env.ISSUE", merge.Env["ISSUE"], data)
+		if err != nil || got != c.issue {
+			t.Errorf("out %v: ISSUE = %q, %v; want %q", c.out, got, err, c.issue)
+		}
+		if got, err := Render("merge.env.PR", merge.Env["PR"], data); err != nil || got != "https://x/pull/1" {
+			t.Errorf("out %v: PR = %q, %v", c.out, got, err)
+		}
+	}
+}

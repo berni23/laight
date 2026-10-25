@@ -17,7 +17,8 @@ that.
   `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate (hold) → `gh pr merge`). New step field
   `compact: true` (pastes `/compact` before the objective; checked on Claude Code 2.1.310 that
   compacting fires `SessionStart`, not `Stop`, and queues the next message). Validated and
-  unit-tested; **not run for real yet**.
+  unit-tested; **not run for real yet**. #51 review answered: the merge step renders even when
+  pickup leaves `issue=` out (`TestOwnIssueCycle` loads the repo's own workflow).
 
 ---
 
