@@ -182,3 +182,35 @@ func TestGateNeverStuck(t *testing.T) {
 		t.Fatalf("items %+v", items)
 	}
 }
+
+// A nudge answered after the agent started working again and reached a permission dialog is not
+// pasted: its Enter would approve the tool without anyone answering the permission item.
+func TestNudgeSkippedWhilePermissionWaits(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	tick(t, e, id)
+	if err := os.WriteFile(StoppedMark(e.Home, id, "a"), []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, e, id)
+	items := stuckItems(t, e, id)
+	if len(items) != 1 {
+		t.Fatalf("items %+v", items)
+	}
+	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Permission, Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	if err := inbox.Put(e.Home, perm); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := inbox.Answer(e.Home, items[0].ID, inbox.Nudge); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, e, id)
+	time.Sleep(300 * time.Millisecond) // a paste would have reached the pane by now
+	r := load(t, e, id)
+	screen, err := e.Rig.Tmux.Capture(r.Session, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(screen, "laight: Step") || r.Seats["a"].Stuck != "" {
+		t.Fatalf("nudged with a permission item waiting; seat %+v\n%s", r.Seats["a"], screen)
+	}
+}

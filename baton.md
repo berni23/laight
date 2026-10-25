@@ -16,7 +16,7 @@ that.
 - #15 — stuck detection: a step quiet past its `timeout` (pane log, its own worktree's writes),
   an agent that stops twice without `laight done` (`.stopped`), a seat whose turn never ended
   after `done`, and a quiet shell step each raise a `stuck` item. Choices follow the evidence
-  (stopped: `nudge | fail`; quiet: `wait | fail`); failing a quiet seat waits for its turn;
+  (stopped: `nudge | fail`; quiet: `wait | fail`); failing a quiet seat waits for its turn; a nudge is never pasted while a permission item waits;
   gates are never timed; `timeout: 0s` opts out. Integration + unit tests, mutation-checked; a
   real Claude Code run covered stop/nudge/quiet/fail before the review round (#47 review
   answered; the reshaped choices are unit/integration-tested only).

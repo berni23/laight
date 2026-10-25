@@ -182,6 +182,12 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 		if h == nil {
 			return nil, nil // finished meanwhile: nothing to remind it of
 		}
+		if waitingOnPermission(e.Home, r.ID, name) {
+			// It started working again and reached a permission dialog: the paste's Enter would
+			// answer it. The permission item already asks a human.
+			e.logf("… %s: not nudged, a permission item is waiting", name)
+			return nil, nil
+		}
 		e.logf("↻ %s: nudged from the inbox", name)
 		return &nudge{window: s.Window, text: "laight: " + Reminder(r.Spec.Step(s.Step), e.Rig.Laight)}, nil
 	case inbox.Fail:

@@ -454,7 +454,8 @@ stops a second time (`.stopped`); a seat quiet past its timeout gets the item di
 covers a seat that ran `done` but whose turn never ended (a Stop hook that failed), and a shell
 step (its log is its only trace). Decided in #15 (2026-10-25, revised in the #47 review): the
 choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
-reminder) or `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
+reminder; skipped if it has since reached a permission dialog, whose item already asks) or
+`fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
 that a paste's Enter would answer: `wait` (the clock starts again) or `fail`; so does a shell
 step. `fail` ends the hop `failed` and routes (a shell step's command is stopped; a seat whose step
 is already done is just freed). A quiet seat's turn may still be running, so it takes its next
