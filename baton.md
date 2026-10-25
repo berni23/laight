@@ -23,7 +23,7 @@ regression test seen red first:
 - Spec: instance `dev#k` keeps its worktree (and conversation unless `fresh`) across expansions.
 - Filed #41 (agent output spliced into a shell step's `run:`); the serial launch is #39.
 - The user's two answers: a held copy keeps its window until its item is answered (a retry goes
-  to that window; rule 5 says so); max_hops refusing every pending copy, one item each, is #42
+  to that window; rule 5 says so); max_hops refusing every pending copy, one item each, is #43
   (its fix changes rule 4). #40 retargeted to `main`.
 
 ---
