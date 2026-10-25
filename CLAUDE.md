@@ -9,11 +9,11 @@ answer from one place (a terminal, your phone, Slack…), so nobody has to watch
 This file is the spec. README.md is the user-facing overview. Background, research and details for
 later milestones are parked in `scratch.docs/scratch.spec_parked.md` (local, untracked).
 Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up and tear down);
-**M2 in progress**: the engine loop runs agent and shell steps (`laight done`, routing,
-`max_hops`), gates, `needs`, and a minimal inbox (`files` queue, `laight inbox`, `gate`, `failed`
-and `permission` items, the last from the `PermissionRequest` hook). The acceptance run passed
-(#11: two real issues to merged PRs, one review/fix round each); `matrix` is next (#12). Resuming
-a run whose engine died is deferred (#8, §4).
+**M2 done**: the engine loop runs agent and shell steps (`laight done`, routing, `max_hops`),
+gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight inbox`, `gate`,
+`failed` and `permission` items, the last from the `PermissionRequest` hook). The acceptance run
+passed (#11: two real issues to merged PRs, one review/fix round each). **M3** (the inbox) is
+next. Resuming a run whose engine died is deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -190,10 +190,25 @@ steps:
    `retry` starts that step again (past `max_hops`, with one more hop), `abort` fails the run.
    It also fails on `laight abort`. (Decided in #9: with no resume, waiting is how a run survives.)
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
-   their own seat instance (`dev#1`, `dev#2`…). `max_parallel` caps live copies (default 4).
+   their own seat instance (`dev#1`, `dev#2`…), with its own window, worktree and session, started
+   with its copy (so the seat must be `cwd: worktree`); a seat only matrix steps use never starts
+   on its own. The window closes once the copy's turn ends, unless the copy is held on a `failed`
+   item: then it stays up to look at until the item is answered, and a `retry` is delivered to it.
+   The worktree follows `on_finish`. `max_parallel` caps live copies (default 4).
 6. Routes and `needs` don't mix: a step with `needs` can't be a route target, and a matrix step
    can't have `next_hop`. `.steps.<id>.out` is the latest hop's output. A hop is one step start
    (each matrix copy counts). `validate` enforces all of this.
+
+**Matrix** (decided in #12): keys sorted, then the cartesian product in list order, numbers the
+copies `#1…#N`. A value is a list of scalars, or a template: one that is a single action
+(`{{ .steps.plan.out.tasks }}`) gives its value, anything else must render a JSON list. An empty
+list, a non-scalar or more than 32 copies holds the step on a `failed` item before any copy
+starts (`validate` rejects it already when every value is a literal list). A failed copy is held alone while its siblings run on; `retry` reruns that copy only.
+Instance `dev#k` serves copy k of every matrix step on `dev`, and of every later expansion: it
+keeps its worktree and, unless `session: fresh`, its conversation, like any seat. A gate can't
+have a matrix. Later steps see a matrix step's `.out` as a **list**, one entry per copy
+in copy order, and `.exit` as the list of exits (Argo's `withParam` model, not "the last copy to
+finish wins"): `{{ range .steps.build.out }}{{ .pr }}{{ end }}`; `validate` rejects `.out.<key>`.
 
 **Step types:** `agent` (default when `seat` is set), `shell` (`run:`; exit 0 → `ok`, else
 `failed`, unless `exits:` maps codes), `gate` (a human decision, via the inbox).

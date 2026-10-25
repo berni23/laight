@@ -139,7 +139,7 @@
         },
         "matrix": {
           "type": "object",
-          "description": "One copy of the step per combination. Values: a list, or a template rendering a JSON list.",
+          "description": "One copy of the step per combination, at most 32. Values: a list, or a template giving a list (or rendering a JSON list). Not on gates.",
           "propertyNames": { "$ref": "#/$defs/ident" },
           "additionalProperties": {
             "oneOf": [

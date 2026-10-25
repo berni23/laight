@@ -34,7 +34,7 @@ func ShellLog(step string, hop int) string {
 // caller records as the hop failing.
 func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	st := r.Spec.Step(h.Step)
-	data := r.TemplateData()
+	data := r.TemplateData(&h)
 	command, err := spec.Render(st.ID+".run", st.Run, data)
 	if err != nil {
 		return fmt.Errorf("run: %w", err)

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func (e *Engine) step(t *testing.T, id string) (string, []start) {
 	var status string
 	var starts []start
 	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
-		status, _, starts, _ = e.advance(r)
+		status, _, starts, _, _ = e.advance(r)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -426,7 +427,7 @@ func TestNeedsUnmetIsSkipped(t *testing.T) {
 	var status string
 	var events []state.Event
 	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
-		status, _, _, events = e.advance(r)
+		status, _, _, _, events = e.advance(r)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -442,5 +443,188 @@ func TestNeedsUnmetIsSkipped(t *testing.T) {
 	}
 	if len(skipped) != 1 || skipped[0].Step != "join" || fmt.Sprint(skipped[0].Data["needs"]) != "[one]" {
 		t.Fatalf("skipped %+v", skipped)
+	}
+}
+
+func matrixStep(id, seat string, max int, values any, needs ...string) *spec.Step {
+	st := agent(id, seat, nil, needs...)
+	st.Matrix, st.MaxParallel = map[string]any{"task": values}, max
+	return st
+}
+
+// matrixSeat declares a Claude Code seat that only matrix steps use, and gives its first n
+// instances a window, as delivering their copies would.
+func matrixSeat(t *testing.T, e *Engine, id, name string, n int) {
+	t.Helper()
+	r, err := state.Update(e.Home, id, func(r *state.Run) error {
+		r.Spec.Seats[name] = &spec.Seat{Runtime: "claude-code", Session: "resume"}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := 1; k <= n; k++ {
+		w := tmux.Window{Name: spec.Instance(name, k), Cmd: "sh"}
+		err := e.Rig.Tmux.NewWindow(r.Session, w)
+		if !e.Rig.Tmux.HasSession(r.Session) {
+			err = e.Rig.Tmux.NewSession(r.Session, w)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// hopOf returns the started hop of copy k of step.
+func hopOf(t *testing.T, starts []start, step string, k int) state.Hop {
+	t.Helper()
+	for _, s := range starts {
+		if s.hop.Step == step && s.hop.Copy == k {
+			return s.hop
+		}
+	}
+	t.Fatalf("copy %d of %s didn't start: %+v", k, step, starts)
+	return state.Hop{}
+}
+
+// Copies run on their own seat instances, at most max_parallel at once, each with its .matrix;
+// an instance closes once its copy's turn ends.
+func TestMatrixMaxParallel(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{matrixStep("build", "dev", 2, []any{"a", "b", "c"})})
+	matrixSeat(t, e, id, "dev", 3)
+	_, starts := e.step(t, id)
+	if len(starts) != 2 {
+		t.Fatalf("starts %+v", starts)
+	}
+	for k, s := range starts {
+		if s.hop.Seat != spec.Instance("dev", k+1) || !s.restart || s.hop.Matrix["task"] != []string{"a", "b"}[k] {
+			t.Errorf("copy %d: %+v", k+1, s)
+		}
+	}
+	state.Update(e.Home, id, func(r *state.Run) error { r.Seats["dev#1"].Up = true; return nil })
+	finish(t, e, id, hopOf(t, starts, "build", 1), "handoff")
+	var stops []string
+	state.Update(e.Home, id, func(r *state.Run) error { _, _, starts, stops, _ = e.advance(r); return nil })
+	if h := hopOf(t, starts, "build", 3); len(starts) != 1 || h.Seat != "dev#3" || h.Matrix["task"] != "c" {
+		t.Errorf("starts %+v", starts)
+	}
+	if strings.Join(stops, ",") != "dev#1" {
+		t.Errorf("stops %v", stops)
+	}
+}
+
+// A failed copy is held on its own: its siblings finish, the step that needs the matrix waits,
+// and a retry reruns that copy only. Later steps see .out as a list, in copy order.
+func TestMatrixHeldCopy(t *testing.T) {
+	join := agent("join", "lead", nil, "build")
+	e, id := hooked(t, []*spec.Step{matrixStep("build", "dev", 4, []any{"a", "b", "c"}), join}, "lead")
+	matrixSeat(t, e, id, "dev", 3)
+	_, starts := e.step(t, id)
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 1).N, Exit: "handoff", Out: map[string]any{"pr": "1"}}); err != nil {
+		t.Fatal(err)
+	}
+	state.Update(e.Home, id, func(r *state.Run) error { r.Seats["dev#2"].Up = true; return nil }) // launched
+	finish(t, e, id, hopOf(t, starts, "build", 2), spec.ExitFailed)
+	var evs []state.Event
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		var s []start
+		var stops []string
+		_, _, s, stops, evs = e.advance(r)
+		if len(s) != 0 {
+			t.Fatalf("started %+v", s)
+		}
+		if slices.Contains(stops, "dev#2") { // requirement 2: a held copy's pane stays to look at
+			t.Errorf("held copy's instance closed: stops %v", stops)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raised := 0
+	for _, x := range evs {
+		if x.Type == "inbox.raised" {
+			raised++
+			if x.Seat != "dev#2" || x.Hop != hopOf(t, starts, "build", 2).N || fmt.Sprint(x.Data["copy"]) != "2" {
+				t.Errorf("inbox.raised doesn't say which copy: %+v", x)
+			}
+		}
+	}
+	if raised != 1 {
+		t.Errorf("%d inbox.raised events, want 1: %+v", raised, evs)
+	}
+	r := load(t, e, id)
+	if len(r.Blocked) != 1 || r.Blocked[0].Copy != 2 || r.Blocked[0].Error != "step build#2 failed" {
+		t.Fatalf("blocked %+v", r.Blocked)
+	}
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 3).N, Exit: "handoff", Out: map[string]any{"pr": "3"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, s := e.step(t, id); len(s) != 0 || load(t, e, id).Steps["build"] != nil {
+		t.Fatalf("join started, or build done, with copy 2 held: %+v", s)
+	}
+	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Retry); err != nil {
+		t.Fatal(err)
+	}
+	_, s := e.step(t, id)
+	if len(s) != 1 || s[0].hop.Copy != 2 || s[0].hop.Seat != "dev#2" {
+		t.Fatalf("retry started %+v", s)
+	}
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: s[0].hop.N, Exit: "handoff", Out: map[string]any{"pr": "2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state.Dir(e.Home, id), "seats", "dev#2.idle"), []byte(IdleMark("build", s[0].hop.N)+"\n"), 0o600); err != nil {
+		t.Fatal(err) // its turn ended too, so dev#2 can close
+	}
+	if _, s = e.step(t, id); strings.Join(started(s), ",") != "join" {
+		t.Fatalf("started %v", started(s))
+	}
+	r = load(t, e, id)
+	if r.Seats["dev#2"].Up {
+		t.Error("dev#2 still up after its retried copy finished")
+	}
+	got, err := spec.Render("t", "{{ range .steps.build.out }}{{ .pr }},{{ end }} {{ .steps.build.exit }}", r.TemplateData(nil))
+	if err != nil || got != "1,2,3, [handoff handoff handoff]" {
+		t.Errorf("rendered %q, %v", got, err)
+	}
+	if r.Hops != 5 { // three copies, the retried one, join
+		t.Errorf("hops %d", r.Hops)
+	}
+}
+
+// A matrix that doesn't expand holds the step, before any copy starts.
+func TestMatrixBadList(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{matrixStep("build", "dev", 4, "{{ .base }}")})
+	for range 3 { // held once, not once per tick: it is an entry step, and no hop has started
+		if _, s := e.step(t, id); len(s) != 0 {
+			t.Fatalf("started %+v", s)
+		}
+	}
+	if r := load(t, e, id); len(r.Blocked) != 1 || r.Blocked[0].Copy != 0 || !strings.Contains(r.Blocked[0].Error, "step build: matrix task:") || r.Hops != 0 {
+		t.Fatalf("blocked %+v, hops %d", r.Blocked, r.Hops)
+	}
+}
+
+// A route into a matrix step whose copies are still running waits for them: it doesn't expand
+// the step again over the live copies.
+func TestMatrixRoutedWhileRunning(t *testing.T) {
+	steps := []*spec.Step{
+		agent("a", "x", map[string]string{"handoff": "build"}),
+		agent("b", "y", map[string]string{"handoff": "build"}),
+		matrixStep("build", "dev", 4, []any{"p", "q"}),
+	}
+	e, id := hooked(t, steps, "x", "y")
+	matrixSeat(t, e, id, "dev", 2)
+	_, first := e.step(t, id) // a and b
+	finish(t, e, id, hopOf(t, first, "a", 0), "handoff")
+	if _, s := e.step(t, id); strings.Join(started(s), ",") != "build,build" {
+		t.Fatalf("started %v", started(s))
+	}
+	finish(t, e, id, hopOf(t, first, "b", 0), "handoff")
+	var s []start
+	if _, s = e.step(t, id); len(s) != 0 {
+		t.Fatalf("started %+v", started(s))
+	}
+	if r := load(t, e, id); len(r.Matrix["build"].Pending) != 0 || len(r.Queue) != 1 {
+		t.Fatalf("matrix %+v, queue %v", r.Matrix["build"], r.Queue)
 	}
 }

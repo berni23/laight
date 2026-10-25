@@ -34,6 +34,7 @@ type checker struct {
 	root      *yaml.Node
 	laightDir string
 	probs     []Problem
+	inMatrix  bool // checking a matrix value
 }
 
 func (c *checker) add(sev Severity, path []string, format string, args ...any) {
@@ -126,6 +127,9 @@ func (c *checker) steps() {
 				c.add(Error, at(), "an agent step needs a `seat`")
 			} else if c.w.Seats[st.Seat] == nil {
 				c.add(Error, at("seat"), "unknown seat %q (seats: %s)", st.Seat, strings.Join(sortedKeys(c.w.Seats), ", "))
+			} else if s := c.w.Seats[st.Seat]; len(st.Matrix) > 0 && s.Cwd != "worktree" {
+				// Copies run at once: in one folder they'd edit, commit and check out over each other.
+				c.add(Error, at("matrix"), "each matrix copy needs its own worktree: seat %s has cwd %s (use cwd: worktree)", st.Seat, s.Cwd)
 			}
 			if st.Objective == "" {
 				c.add(Error, at(), "an agent step needs an `objective`")
@@ -168,9 +172,22 @@ func (c *checker) steps() {
 		if st.MaxParallel > 0 && len(st.Matrix) == 0 {
 			c.add(Error, at("max_parallel"), "max_parallel only applies to a matrix step")
 		}
+		if len(st.Matrix) > 0 && st.Type == TypeGate {
+			c.add(Error, at("matrix"), "a gate can't have a matrix: only agent and shell steps do")
+		}
+		literal := true
 		for _, k := range sortedKeys(st.Matrix) {
 			if s, ok := st.Matrix[k].(string); ok {
+				literal = false
+				c.inMatrix = true // the matrix makes .matrix: its own values can't read it
 				c.template(at("matrix", k), s, st, false)
+				c.inMatrix = false
+			}
+		}
+		if len(st.Matrix) > 0 && literal {
+			// Every value is a list, so its copies are known now rather than when the step is reached.
+			if _, err := Copies(st, nil); err != nil {
+				c.add(Error, at("matrix"), "%v", err)
 			}
 		}
 		if len(st.Env) > 0 && st.Type != TypeShell {
@@ -349,7 +366,9 @@ func (c *checker) field(path []string, f []string, step *Step) {
 			}
 		}
 	case "matrix":
-		if step == nil || len(step.Matrix) == 0 {
+		if c.inMatrix {
+			c.add(Error, path, "%s: a matrix value can't use .matrix, which it defines", ref)
+		} else if step == nil || len(step.Matrix) == 0 {
 			c.add(Error, path, "%s: only a matrix step can use .matrix", ref)
 		} else if len(f) > 1 {
 			if _, ok := step.Matrix[f[1]]; !ok {
@@ -361,6 +380,8 @@ func (c *checker) field(path []string, f []string, step *Step) {
 			c.add(Error, path, "%s: unknown step %q", ref, f[1])
 		} else if len(f) > 2 && f[2] != "out" && f[2] != "exit" {
 			c.add(Error, path, "%s: a step has .out.<key> and .exit", ref)
+		} else if len(f) > 3 && f[2] == "out" && len(c.w.Step(f[1]).Matrix) > 0 {
+			c.add(Error, path, "%s: a matrix step's .out is a list, one per copy: use {{ range .steps.%s.out }}{{ .%s }}{{ end }}", ref, f[1], f[3])
 		}
 	default:
 		c.add(Error, path, "%s: templates see only .inputs, .steps, .matrix, .base and .run", ref)

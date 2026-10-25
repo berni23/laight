@@ -13,7 +13,15 @@ All notable changes to laight are documented here. The format follows
   them. A needed step held on a `failed` item makes its dependents wait for the retry. A step
   whose needs can never be met is skipped when the run ends (`step.skipped` event). Steps released
   in the same tick don't depend on their order in the file. `validate` warns when a step needs a
-  gate, since it runs whatever the answer. `matrix` is still refused at `laight run`.
+  gate, since it runs whatever the answer.
+- `matrix`: one copy of a step per combination of its values (a list, or a template such as
+  `{{ .steps.plan.out.tasks }}`), at most 32, `max_parallel` at once. Each agent copy runs on its
+  own seat instance (`dev#1`, `dev#2`…, with its own window, worktree and session), closed once
+  the copy is done. A failed copy is held alone, keeps its window until its item is answered, and
+  is retried alone. Later steps see `.out` and
+  `.exit` as lists, one entry per copy. `validate` rejects a matrix on a gate, a matrix agent
+  step whose seat isn't `cwd: worktree`, a literal matrix over 32 copies, `.matrix` inside the
+  matrix's own values, and `.steps.<matrix step>.out.<key>`.
 - A seat finds `laight` on its `PATH` (a link to the binary that runs its rig comes first), so
   `laight done` works even when laight isn't installed or has another name, e.g. a build in `bin/`.
 - The design specification (CLAUDE.md), project scaffolding, CI and the release pipeline.

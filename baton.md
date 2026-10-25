@@ -11,48 +11,48 @@ that.
 
 ---
 
-## Last session — 2026-10-22
+## Last session — 2026-10-25
 
-**#12 part 1 — `needs` works.** A step with `needs` is queued once every needed step finished
-non-`failed` *and* no live step can route back to it (so `needs: [verify]` on a review/fix loop
-waits for the loop to leave verify; the plan's simpler check would have released it on the first
-`fail`). Held needs make dependents wait; a retry releases them. Unmet needs at the end →
-`step.skipped`, run succeeds. Spec §3 rule 2 and §7 amended. `matrix` is still refused by
-`engine.Supported`.
-
-**PR #38 review answered** (`/cross:cr` → `/cross:fix-cr`). Steps whose needs are met in the same
-tick are now judged on the pre-tick state, so file order no longer changes what starts; another
-ready step that can loop back to a need holds it unless this one is in that loop too (the review's
-"count the others" shape deadlocked two loop members). `validate` warns on `needs` of a gate.
-Rule 2 says a needs step runs at most once. `mode: end` finding rejected (check.go forbids it
-with `on`).
-
-**#12 decided** (on the issue): `validate` rejects `matrix` on a gate; at most 32 copies, more is
-an expansion error (held, retry/abort).
+**PR #40 (matrix) review answered** (`/cross:fix-cr`; #38 is merged). Fixed, each with a
+regression test seen red first:
+- A rendered matrix list and a `laight done` output must be exactly one JSON value: trailing text
+  or a stray `]` was silently dropped (`spec.DecodeJSON`, shared).
+- `validate` rejects a matrix agent step whose seat isn't `cwd: worktree`, and a literal matrix
+  over 32 copies.
+- `inbox.raised` carries the seat, hop and copy it holds.
+- Spec: instance `dev#k` keeps its worktree (and conversation unless `fresh`) across expansions.
+- Filed #41 (agent output spliced into a shell step's `run:`); the serial launch is #39.
+- The user's two answers: a held copy keeps its window until its item is answered (a retry goes
+  to that window; rule 5 says so); max_hops refusing every pending copy, one item each, is #43
+  (its fix changes rule 4). #40 retargeted to `main`.
 
 ---
 
 ## Do this next
 
-### 1. #12 part 2 — `matrix`
+### 1. PR #40 — merge
 
-Written as PR #40, stacked on `12-needs-matrix`: rebase `12-matrix` onto it after these review
-fixes (1b changed shape) and recheck. Ends with a supervised real run on `claude-code` seats, then
-M2 is done.
+Review answered, both questions settled, `make check` green. The user merges.
 
 ### 2. #15 — stuck detection (M3)
 
 Builds on the permission hook's blocking pattern. A gate is not timed today (a 23 h wait raised
-nothing): decide in #15 whether it should be.
+nothing): decide in #15 whether it should be. Mind #39: a seat's launch blocks the loop, and
+launch time must not count as stuck.
 
 ### 3. #34 — AskUserQuestion as a real `question` item (M3)
 
 It arrives as a permission item today, so the answer can't be given there.
 
+### 4. #39 — seat launches block the engine loop
+
+Matters once matrix copies are Claude seats with `max_parallel` > 2.
+
 ---
 
 ## Waiting on the user
 
+- Merge PR #40.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
 - `session: fresh` was exercised (the reviewer relaunched for verify) but not checked for an
   independent conversation; say if that needs its own check.
