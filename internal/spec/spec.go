@@ -77,6 +77,7 @@ type Step struct {
 	Type         string            `json:"type"`
 	Seat         string            `json:"seat"`
 	Objective    string            `json:"objective"`
+	Compact      bool              `json:"compact"` // agent: compact the seat's conversation before the objective
 	Run          string            `json:"run"`
 	Exits        map[string]string `json:"exits"` // shell: exit code → exit name
 	Ask          string            `json:"ask"`

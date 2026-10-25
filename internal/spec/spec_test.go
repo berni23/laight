@@ -608,3 +608,29 @@ steps:
 		}
 	}
 }
+
+// compact belongs to agent steps whose seat keeps a Claude conversation to compact.
+func TestCompact(t *testing.T) {
+	fix := "objective: Address every finding on {{ .steps.implement.out.pr }}.\n    compact: true"
+	ok := strings.Replace(issueCycle, "objective: Address every finding on {{ .steps.implement.out.pr }}.", fix, 1)
+	dir, file := project(t, ok)
+	if w, probs := Load(dir, file); HasErrors(probs) || !w.Step("fix").Compact {
+		t.Fatalf("problems: %v", probs)
+	}
+	bad := map[string]struct{ src, msg string }{
+		"fresh seat": {strings.Replace(issueCycle, "objective: Verify every finding.", "objective: Verify every finding.\n    compact: true", 1),
+			"`compact` needs a seat with session: resume: seat reviewer is fresh"},
+		"shell seat": {strings.Replace(strings.Replace(ok, "runtime: claude-code\n    cwd: worktree", "runtime: shell\n    command: bash\n    cwd: worktree", 1), "    guidance: guidance/implementer.md\n", "", 1),
+			"`compact` needs a claude-code seat: seat impl runs shell"},
+		"shell step": {strings.Replace(issueCycle, "--squash", "--squash\n    compact: true", 1),
+			"`compact` doesn't belong in a shell step"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			dir, file := project(t, c.src)
+			if _, probs := Load(dir, file); !strings.Contains(fmt.Sprint(probs), c.msg) {
+				t.Errorf("want %q; problems: %v", c.msg, probs)
+			}
+		})
+	}
+}

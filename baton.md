@@ -13,32 +13,35 @@ that.
 
 ## Last session — 2026-10-25
 
-- #15 — stuck detection: a step quiet past its `timeout` (pane log, its own worktree's writes),
-  an agent that stops twice without `laight done` (`.stopped`), a seat whose turn never ended
-  after `done`, and a quiet shell step each raise a `stuck` item. Choices follow the evidence
-  (stopped: `nudge | fail`; quiet: `wait | fail`); failing a quiet seat waits for its turn; a nudge is never pasted while a permission item waits;
-  gates are never timed; `timeout: 0s` opts out. Integration + unit tests, mutation-checked; a
-  real Claude Code run covered stop/nudge/quiet/fail before the review round (#47 review
-  answered; the reshaped choices are unit/integration-tested only).
-- Filed from the #47 review: #48 (keychain reads under the lock), #49 (a deleted pending item is
-  never asked again).
+- #50 — `.laight/workflows/self-cycle.yaml`: laight's own development as a workflow (pickup →
+  `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → `gh pr merge`). New step field
+  `compact: true` (pastes `/compact` before the objective; checked on Claude Code 2.1.310 that
+  compacting fires `SessionStart`, not `Stop`, and queues the next message). Validated and
+  unit-tested; **not run for real yet**.
 
 ---
 
 ## Do this next
 
-### 1. #34 — AskUserQuestion as a real `question` item (M3)
+### 1. #50 — first supervised run of `laight run self-cycle`
+
+Watch it end to end: the slash commands as objectives (`/baton:pickup`, `/cross:cr <PR>` with a
+trailing instruction), the compaction before `fix`, and that `verify` lands in the reviewer's
+same conversation. It merges into `main` with no gate, so run it only with the maintainer's OK.
+File what it shows as issues.
+
+### 2. #34 — AskUserQuestion as a real `question` item (M3)
 
 It arrives as a permission item today, so the answer can't be given there. The other M3 hook;
 the stuck item's pattern (engine-raised item, answer acted on in `watch`) is reusable for the
 plain-text question the Stop hook catches.
 
-### 2. #39 — seat launches block the engine loop
+### 3. #39 — seat launches block the engine loop
 
 Matters once matrix copies are Claude seats with `max_parallel` > 2. Read the #15 comment on it
 first: async launches must make `watch` skip a seat still launching.
 
-### 3. M3: `laight inbox` (TUI)
+### 4. M3: `laight inbox` (TUI)
 
 The last M3 piece once questions land; every item kind now exists to show.
 

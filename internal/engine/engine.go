@@ -546,8 +546,8 @@ func (e *Engine) fail(id string, h *state.Hop, err error) error {
 	return err
 }
 
-// deliver gives a started hop to its seat: relaunch it if needed, then paste the objective. A
-// shell step runs its command instead.
+// deliver gives a started hop to its seat: relaunch it if needed, compact it if the step says
+// so, then paste the objective. A shell step runs its command instead.
 func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 	st := r.Spec.Step(s.hop.Step)
 	if st.Type == spec.TypeShell {
@@ -564,6 +564,13 @@ func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 		}
 	}
 	e.logf("▶ %s (seat %s, hop %d)", label(st.ID, s.hop.Copy), seat, s.hop.N)
+	if st.Compact {
+		// Claude queues the objective behind the compaction, and runs it once that is done.
+		// Compacting ends no turn (no Stop hook), so the step still ends with laight done.
+		if err := e.Rig.Tmux.Paste(r.Session, r.Seats[seat].Window, "/compact"); err != nil {
+			return err
+		}
+	}
 	return e.Rig.Tmux.Paste(r.Session, r.Seats[seat].Window, strings.TrimRight(text, "\n"))
 }
 
