@@ -117,6 +117,7 @@
         "type": { "enum": ["agent", "shell", "gate"], "description": "Default: agent if `seat` is set, shell if `run` is set." },
         "seat": { "$ref": "#/$defs/ident", "description": "agent steps: the seat that does the step." },
         "objective": { "type": "string", "description": "agent steps: the prompt, a Go template." },
+        "compact": { "type": "boolean", "description": "agent steps on a claude-code seat with session: resume: compact its conversation (/compact) before pasting the objective." },
         "run": { "type": "string", "description": "shell steps: the command, a Go template. Exit 0 → ok, else failed." },
         "exits": {
           "type": "object",

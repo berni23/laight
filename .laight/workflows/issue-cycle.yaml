@@ -1,0 +1,81 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# laight on itself (#50): the next item of baton.md, taken to a PR by two Claude Code sessions,
+# merged once a human says yes (a CircleCI-style hold).
+#   pickup → review → fix → verify ─(pass)→ approve ─(yes)→ merge
+#                      ↑       └─(fail)─┘
+# Start it with:  laight run issue-cycle
+#
+# Needs, before a run:
+# - the `baton` and `cross` Claude Code plugins (marketplace github.com/berni23/claude-plugins)
+#   installed for the user running it: the objectives call /baton:pickup, /cross:cr and /cross:fix-cr;
+# - origin/dev up to date with main: worktrees start there, and /baton:pickup reads its baton.md.
+version: 1
+id: issue-cycle
+summary: The next baton.md item, implemented, cross-reviewed and merged into {{ .base }}.
+base: dev                         # for now: work branches from dev, PRs go back into dev
+
+seats:
+  impl:
+    label: Implementer
+    session: resume               # the session that picked the item up also fixes the review
+    permissions: auto             # prompts it can't decide go to `laight inbox`
+  reviewer:
+    label: Reviewer
+    session: resume               # verify asks the same session that wrote the review
+    permissions: auto
+
+steps:
+  - id: pickup
+    seat: impl
+    objective: |
+      /baton:pickup
+      Work from {{ .base }}, not main: bring it up to date first (git fetch origin {{ .base }}, the
+      pull for this detached worktree), create the item's branch from origin/{{ .base }}, and open
+      its PR into {{ .base }} (gh pr create --base {{ .base }}). When the PR is open, finish with:
+      laight done handoff pr=<PR URL> issue=<issue number>
+      For an item with no issue, still write the key, empty: issue=
+    next_hop: { on: { handoff: review } }
+
+  - id: review                    # the reviewer's session starts with this prompt
+    seat: reviewer
+    objective: |
+      /cross:cr {{ .steps.pickup.out.pr }}
+      When the review is posted on the PR, finish with: laight done handoff
+    next_hop: { on: { handoff: fix } }
+
+  - id: fix
+    seat: impl
+    compact: true                 # /compact first: the pickup leaves a long conversation behind
+    objective: |
+      /cross:fix-cr {{ .steps.pickup.out.pr }}
+      When the fixes are pushed and the review answered on the PR, finish with: laight done handoff
+    next_hop: { on: { handoff: verify } }
+
+  - id: verify
+    seat: reviewer
+    objective: |
+      The implementer has answered your review on {{ .steps.pickup.out.pr }}. Check every finding
+      against the PR's new commits and replies: has each one been addressed?
+      All addressed: laight done pass
+      Anything not: laight done fail unresolved="<finding numbers>"
+    allowed_exits: [pass, fail]
+    next_hop: { on: { pass: approve, fail: fix } }
+
+  - id: approve                   # the hold: a human verifies before anything is merged
+    type: gate
+    ask: The reviewer says every finding on {{ .steps.pickup.out.pr }} is addressed. Merge it into {{ .base }}?
+    allowed_exits: [yes, no]
+    next_hop: { on: { yes: merge, no: end } }
+
+  - id: merge                     # the run ends once the PR is merged
+    type: shell
+    env: { PR: "{{ .steps.pickup.out.pr }}", ISSUE: '{{ or (index .steps.pickup.out "issue") "" }}' }
+    # A PR into dev doesn't close its issue (only one into the default branch does): close it here.
+    run: >-
+      gh pr merge "$PR" --merge &&
+      { [ -z "$ISSUE" ] || gh issue close "$ISSUE" --reason completed --comment "Merged into {{ .base }} via $PR"; }
+
+loop_guards: { max_hops: 10 }     # 6 steps, plus up to 2 more fix → verify rounds
+timeouts: { step: 90m }           # quiet this long → a `stuck` inbox item
+on_finish: { success: destroy, failure: keep }

@@ -124,8 +124,8 @@ func (c *checker) steps() {
 			c.add(Error, at(), "say what the step does: `seat` (an agent), `run` (a shell command) or `type: gate`")
 			continue
 		}
-		fields := map[string]bool{"seat": st.Seat != "", "objective": st.Objective != "", "run": st.Run != "", "exits": len(st.Exits) > 0, "ask": st.Ask != ""}
-		own := map[string][]string{TypeAgent: {"seat", "objective"}, TypeShell: {"run", "exits"}, TypeGate: {"ask"}}[st.Type]
+		fields := map[string]bool{"seat": st.Seat != "", "objective": st.Objective != "", "run": st.Run != "", "exits": len(st.Exits) > 0, "ask": st.Ask != "", "compact": st.Compact}
+		own := map[string][]string{TypeAgent: {"seat", "objective", "compact"}, TypeShell: {"run", "exits"}, TypeGate: {"ask"}}[st.Type]
 		for _, f := range sortedKeys(fields) {
 			if fields[f] && !contains(own, f) {
 				c.add(Error, at(f), "`%s` doesn't belong in a %s step", f, st.Type)
@@ -140,6 +140,14 @@ func (c *checker) steps() {
 			} else if s := c.w.Seats[st.Seat]; len(st.Matrix) > 0 && s.Cwd != "worktree" {
 				// Copies run at once: in one folder they'd edit, commit and check out over each other.
 				c.add(Error, at("matrix"), "each matrix copy needs its own worktree: seat %s has cwd %s (use cwd: worktree)", st.Seat, s.Cwd)
+			}
+			if s := c.w.Seats[st.Seat]; st.Compact && s != nil {
+				if s.Runtime != "claude-code" {
+					c.add(Error, at("compact"), "`compact` needs a claude-code seat: seat %s runs %s", st.Seat, s.Runtime)
+				} else if s.Session != "resume" {
+					// A fresh seat starts every step with an empty conversation: nothing to compact.
+					c.add(Error, at("compact"), "`compact` needs a seat with session: resume: seat %s is %s", st.Seat, s.Session)
+				}
 			}
 			if st.Objective == "" {
 				c.add(Error, at(), "an agent step needs an `objective`")

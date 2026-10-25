@@ -608,3 +608,58 @@ steps:
 		}
 	}
 }
+
+// compact belongs to agent steps whose seat keeps a Claude conversation to compact.
+func TestCompact(t *testing.T) {
+	fix := "objective: Address every finding on {{ .steps.implement.out.pr }}.\n    compact: true"
+	ok := strings.Replace(issueCycle, "objective: Address every finding on {{ .steps.implement.out.pr }}.", fix, 1)
+	dir, file := project(t, ok)
+	if w, probs := Load(dir, file); HasErrors(probs) || !w.Step("fix").Compact {
+		t.Fatalf("problems: %v", probs)
+	}
+	bad := map[string]struct{ src, msg string }{
+		"fresh seat": {strings.Replace(issueCycle, "objective: Verify every finding.", "objective: Verify every finding.\n    compact: true", 1),
+			"`compact` needs a seat with session: resume: seat reviewer is fresh"},
+		"shell seat": {strings.Replace(strings.Replace(ok, "runtime: claude-code\n    cwd: worktree", "runtime: shell\n    command: bash\n    cwd: worktree", 1), "    guidance: guidance/implementer.md\n", "", 1),
+			"`compact` needs a claude-code seat: seat impl runs shell"},
+		"shell step": {strings.Replace(issueCycle, "--squash", "--squash\n    compact: true", 1),
+			"`compact` doesn't belong in a shell step"},
+	}
+	for name, c := range bad {
+		t.Run(name, func(t *testing.T) {
+			dir, file := project(t, c.src)
+			if _, probs := Load(dir, file); !strings.Contains(fmt.Sprint(probs), c.msg) {
+				t.Errorf("want %q; problems: %v", c.msg, probs)
+			}
+		})
+	}
+}
+
+// The repo's own workflow (.laight/workflows/issue-cycle.yaml) validates, and its merge step
+// renders whether or not the implementer reported an issue: a key it left out must not hold a
+// run a human already approved.
+func TestOwnIssueCycle(t *testing.T) {
+	dir := filepath.Join("..", "..", DirName)
+	w, probs := Load(dir, filepath.Join(dir, "workflows", "issue-cycle.yaml"))
+	if HasErrors(probs) {
+		t.Fatalf("problems: %v", probs)
+	}
+	merge := w.Step("merge")
+	for _, c := range []struct {
+		out   map[string]any
+		issue string
+	}{
+		{map[string]any{"pr": "https://x/pull/1"}, ""},
+		{map[string]any{"pr": "https://x/pull/1", "issue": ""}, ""},
+		{map[string]any{"pr": "https://x/pull/1", "issue": float64(34)}, "34"},
+	} {
+		data := map[string]any{"base": w.Base, "steps": map[string]any{"pickup": map[string]any{"exit": "handoff", "out": c.out}}}
+		got, err := Render("merge.env.ISSUE", merge.Env["ISSUE"], data)
+		if err != nil || got != c.issue {
+			t.Errorf("out %v: ISSUE = %q, %v; want %q", c.out, got, err, c.issue)
+		}
+		if got, err := Render("merge.env.PR", merge.Env["PR"], data); err != nil || got != "https://x/pull/1" {
+			t.Errorf("out %v: PR = %q, %v", c.out, got, err)
+		}
+	}
+}
