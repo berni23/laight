@@ -8,7 +8,7 @@
 version: 1
 id: issue-cycle
 summary: The next baton.md item, implemented, cross-reviewed and merged into {{ .base }}.
-base: main
+base: dev                         # for now: work branches from dev, PRs go back into dev
 
 seats:
   impl:
@@ -25,8 +25,10 @@ steps:
     seat: impl
     objective: |
       /baton:pickup
-      Work the item on its own branch until its PR into {{ .base }} is open. When it is, finish with:
-      laight done handoff pr=<PR URL>
+      Work from {{ .base }}, not main: bring it up to date first (git fetch origin {{ .base }}, the
+      pull for this detached worktree), create the item's branch from origin/{{ .base }}, and open
+      its PR into {{ .base }} (gh pr create --base {{ .base }}). When the PR is open, finish with:
+      laight done handoff pr=<PR URL> issue=<issue number, or nothing for an item without one>
     next_hop: { on: { handoff: review } }
 
   - id: review                    # the reviewer's session starts with this prompt
@@ -62,7 +64,11 @@ steps:
 
   - id: merge                     # the run ends once the PR is merged
     type: shell
-    run: gh pr merge {{ .steps.pickup.out.pr }} --merge
+    env: { PR: "{{ .steps.pickup.out.pr }}", ISSUE: "{{ .steps.pickup.out.issue }}" }
+    # A PR into dev doesn't close its issue (only one into the default branch does): close it here.
+    run: >-
+      gh pr merge "$PR" --merge &&
+      { [ -z "$ISSUE" ] || gh issue close "$ISSUE" --reason completed --comment "Merged into {{ .base }} via $PR"; }
 
 loop_guards: { max_hops: 10 }     # 6 steps, plus up to 2 more fix → verify rounds
 timeouts: { step: 90m }           # quiet this long → a `stuck` inbox item

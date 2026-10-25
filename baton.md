@@ -13,7 +13,7 @@ that.
 
 ## Last session — 2026-10-25
 
-- #50 — `.laight/workflows/self-cycle.yaml`: laight's own development as a workflow (pickup →
+- #50 — `.laight/workflows/issue-cycle.yaml`: laight's own development as a workflow (pickup →
   `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate (hold) → `gh pr merge`). New step field
   `compact: true` (pastes `/compact` before the objective; checked on Claude Code 2.1.310 that
   compacting fires `SessionStart`, not `Stop`, and queues the next message). Validated and
@@ -23,12 +23,13 @@ that.
 
 ## Do this next
 
-### 1. #50 — first supervised run of `laight run self-cycle`
+### 1. #50 — first supervised run of `laight run issue-cycle`
 
 Watch it end to end: the slash commands as objectives (`/baton:pickup`, `/cross:cr <PR>` with a
 trailing instruction), the compaction before `fix`, and that `verify` lands in the reviewer's
-same conversation. It holds on an `approve` gate before merging into `main`; answer it with
-`laight inbox`.
+same conversation. It holds on an `approve` gate before merging; answer it with `laight inbox`.
+Its base is `dev` for now (branches from `origin/dev`, PRs into `dev`, the merge step closes the
+issue), so `origin/dev` must be up to date with `main` first.
 File what it shows as issues.
 
 ### 2. #34 — AskUserQuestion as a real `question` item (M3)

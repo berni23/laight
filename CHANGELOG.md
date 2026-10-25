@@ -11,7 +11,7 @@ All notable changes to laight are documented here. The format follows
 - `compact: true` on an agent step compacts its seat's conversation (`/compact`) before the
   objective is pasted; Claude runs the objective once compaction is done. Only for claude-code
   seats with `session: resume` (`validate` checks).
-- `.laight/workflows/self-cycle.yaml`: laight's own development as a workflow. It takes the next
+- `.laight/workflows/issue-cycle.yaml`: laight's own development as a workflow. It takes the next
   `baton.md` item to a PR (`/baton:pickup`), has a second session review it (`/cross:cr`),
   compacts the first one and answers the review (`/cross:fix-cr`), asks the reviewer whether every
   finding is addressed, holds for a human's yes in the inbox, and merges the PR.
