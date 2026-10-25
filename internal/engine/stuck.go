@@ -110,16 +110,18 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 		if now.Sub(last) < timeout || now.Before(e.busy[r.ID+"/"+name]) {
 			return nil, nil
 		}
-		// Last and costliest: a quiet build or test run still writes files.
-		if m := lastWrite(s.Dir, now.Add(-timeout)); !m.IsZero() {
+		if waitingOnPermission(e.Home, r.ID, name) {
+			return nil, nil // a human is already asked
+		}
+		// Last and costliest: a quiet build or test run still writes files. Only in a worktree
+		// laight made for the seat: in the main checkout or any other folder, the user's own
+		// edits would count.
+		if m := ownWrite(s, now.Add(-timeout)); !m.IsZero() {
 			if e.busy == nil {
 				e.busy = map[string]time.Time{}
 			}
 			e.busy[r.ID+"/"+name] = m.Add(timeout)
 			return nil, nil
-		}
-		if waitingOnPermission(e.Home, r.ID, name) {
-			return nil, nil // a human is already asked
 		}
 		quiet := now.Sub(last).Round(time.Second)
 		if h != nil {
@@ -287,6 +289,14 @@ func waitingOnPermission(home, run, seat string) bool {
 	return slices.ContainsFunc(items, func(it *inbox.Item) bool {
 		return it.Run == run && it.Seat == seat && it.Kind == inbox.Permission
 	})
+}
+
+// ownWrite is lastWrite in the seat's folder, if it is a worktree laight made for it.
+func ownWrite(s *state.Seat, after time.Time) time.Time {
+	if !s.Worktree {
+		return time.Time{}
+	}
+	return lastWrite(s.Dir, after)
 }
 
 // errFound stops a walk early.

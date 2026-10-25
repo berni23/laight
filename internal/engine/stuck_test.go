@@ -153,3 +153,19 @@ func TestStuckFailWaitsForTurn(t *testing.T) {
 		t.Fatalf("two didn't start after the turn ended: %+v", h)
 	}
 }
+
+// Only a worktree laight made for the seat counts as its writes: in the main checkout (cwd:
+// repo) or any other folder, the user's own edits would keep a stuck seat from being reported.
+func TestOwnWrite(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	since := time.Now().Add(-time.Minute)
+	if m := ownWrite(&state.Seat{Dir: dir}, since); !m.IsZero() {
+		t.Errorf("a folder laight doesn't own counted: %v", m)
+	}
+	if m := ownWrite(&state.Seat{Dir: dir, Worktree: true}, since); m.IsZero() {
+		t.Error("a write in the seat's worktree didn't count")
+	}
+}
