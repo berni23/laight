@@ -301,7 +301,7 @@ func TestMatrixErrors(t *testing.T) {
 
 func TestCopies(t *testing.T) {
 	data := map[string]any{
-		"inputs": map[string]any{"list": `["x", 2]`, "word": "nope"},
+		"inputs": map[string]any{"list": `["x", 2]`, "word": "nope", "trail": `["a","b"] oops`, "two": `["a"] ["c"]`, "bracket": `["a"] ]`},
 		"steps":  map[string]any{"plan": map[string]any{"out": map[string]any{"tasks": []any{"a", "b"}, "n": json.Number("3"), "deep": []any{[]any{"a"}}}}},
 	}
 	good := []struct {
@@ -326,6 +326,9 @@ func TestCopies(t *testing.T) {
 		"not JSON":    "{{ .inputs.word }}",
 		"non-scalar":  "{{ .steps.plan.out.deep }}",
 		"missing key": "{{ .steps.plan.out.nope }}",
+		"trailing":    "{{ .inputs.trail }}",
+		"two values":  "{{ .inputs.two }}",
+		"stray ]":     "{{ .inputs.bracket }}",
 	}
 	for name, v := range bad {
 		if got, err := Copies(&Step{ID: "s", Matrix: map[string]any{"k": v}}, data); err == nil {

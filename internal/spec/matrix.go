@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"text/template"
@@ -80,9 +81,8 @@ func matrixList(name string, v any, data map[string]any) ([]any, error) {
 		}
 	}
 	if s, ok := v.(string); ok {
-		d := json.NewDecoder(strings.NewReader(s))
-		d.UseNumber()
-		if err := d.Decode(&v); err != nil {
+		var err error
+		if v, err = DecodeJSON(s); err != nil {
 			return nil, fmt.Errorf("%q is not a JSON list", s)
 		}
 	}
@@ -101,6 +101,21 @@ func matrixList(name string, v any, data map[string]any) ([]any, error) {
 		}
 	}
 	return list, nil
+}
+
+// DecodeJSON decodes s as exactly one JSON value, numbers kept as json.Number. Anything after the
+// value, even a stray bracket, is an error rather than silently dropped.
+func DecodeJSON(s string) (any, error) {
+	var v any
+	d := json.NewDecoder(strings.NewReader(s))
+	d.UseNumber()
+	if err := d.Decode(&v); err != nil {
+		return nil, err
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, fmt.Errorf("trailing data after the JSON value")
+	}
+	return v, nil
 }
 
 // evalTemplate is Render, except that a template made of one action returns the action's value

@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
 )
 
@@ -65,11 +65,8 @@ func parseOut(args []string) (map[string]any, error) {
 		if !ok || k == "" {
 			return nil, fmt.Errorf("outputs are key=value, got %q", a)
 		}
-		var j any
-		d := json.NewDecoder(strings.NewReader(v))
-		d.UseNumber()
-		switch err := d.Decode(&j); {
-		case err != nil || d.More():
+		switch j, err := spec.DecodeJSON(v); {
+		case err != nil:
 			out[k] = v
 		case j == nil:
 			out[k] = ""
