@@ -42,7 +42,8 @@ func tick(t *testing.T, e *Engine, id string) {
 // Fail frees the seat.
 func TestStuckTurnNeverEnded(t *testing.T) {
 	steps := two(map[string]string{"handoff": "two"})
-	steps[0].Timeout = spec.Duration(300 * time.Millisecond)
+	timeout := spec.Duration(300 * time.Millisecond)
+	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
 	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: "handoff"}); err != nil {
@@ -90,7 +91,8 @@ func TestStuckTurnNeverEnded(t *testing.T) {
 // A stuck item about a turn that then ends on its own is withdrawn: nobody needs to answer it.
 func TestStuckItemWithdrawn(t *testing.T) {
 	steps := two(nil)
-	steps[0].Timeout = spec.Duration(100 * time.Millisecond)
+	timeout := spec.Duration(100 * time.Millisecond)
+	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
 	time.Sleep(200 * time.Millisecond)

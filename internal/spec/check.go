@@ -160,6 +160,9 @@ func (c *checker) steps() {
 				c.add(Error, at(), "a gate step needs `ask`")
 			}
 			c.template(at("ask"), st.Ask, st, false)
+			if st.Timeout != nil {
+				c.add(Warning, at("timeout"), "a gate is never timed: it already waits on a human")
+			}
 		}
 		if contains(st.AllowedExits, ExitFailed) {
 			c.add(Warning, at("allowed_exits"), "`failed` is always allowed; no need to list it")

@@ -85,8 +85,16 @@ type Step struct {
 	Needs        []string          `json:"needs"`
 	Matrix       map[string]any    `json:"matrix"` // a list, or a template rendering a JSON list
 	MaxParallel  int               `json:"max_parallel"`
-	Timeout      Duration          `json:"timeout"`
+	Timeout      *Duration         `json:"timeout,omitempty"` // nil: timeouts.step; 0: never timed
 	Env          StringMap         `json:"env"`
+}
+
+// Quiet is how long the step may go quiet before it is stuck (CLAUDE.md §12.2); 0 means never.
+func (s *Step) Quiet() time.Duration {
+	if s.Timeout == nil {
+		return 0
+	}
+	return time.Duration(*s.Timeout)
 }
 
 // NextHop routes a finished step: On[exit] is the next step id or End.
@@ -100,7 +108,7 @@ type LoopGuards struct {
 	MaxHops int `json:"max_hops"`
 }
 
-// Timeouts apply to every step unless the step sets its own.
+// Timeouts apply to every step but gates, unless the step sets its own.
 type Timeouts struct {
 	Step Duration `json:"step"`
 }

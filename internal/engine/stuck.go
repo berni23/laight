@@ -90,7 +90,7 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 	if b, _ := os.ReadFile(stopped); h != nil && strings.TrimSpace(string(b)) == IdleMark(s.Step, s.Hop) && mtime(stopped).After(since) {
 		reason = fmt.Sprintf("%s stopped without finishing step %s", name, label(h.Step, h.Copy))
 	} else {
-		timeout := time.Duration(st.Timeout)
+		timeout := st.Quiet()
 		if timeout <= 0 {
 			return nil, nil
 		}
@@ -202,7 +202,7 @@ func (e *Engine) watchShell(r *state.Run, h *state.Hop, st *spec.Step, now time.
 		}
 		return nil
 	}
-	timeout := time.Duration(st.Timeout)
+	timeout := st.Quiet()
 	if timeout <= 0 {
 		return nil
 	}
