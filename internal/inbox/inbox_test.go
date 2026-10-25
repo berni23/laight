@@ -181,3 +181,39 @@ func TestPutRedactsBeforeCut(t *testing.T) {
 		t.Errorf("detail ends %q: %v", it.Detail[max(0, len(it.Detail)-30):], err)
 	}
 }
+
+// A question item takes one non-empty answer per question, through Reply only; its questions
+// are redacted and cleaned like its title, and the first answer wins.
+func TestReply(t *testing.T) {
+	home := t.TempDir()
+	q := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAQ1", Run: "r", Kind: Question, Title: "a asks: which?",
+		Questions: []Ask{{Question: "which ghp_abcdefghijklmnopqrstuvwxyz0123?\x1b[2J", Options: []Option{{Label: "x\x07", Description: "long\nwhy"}}}}}
+	if err := Put(home, q); err != nil {
+		t.Fatal(err)
+	}
+	it, _ := Get(home, q.ID)
+	if got := it.Questions[0]; got.Question != "which ***? [2J" || got.Options[0].Label != "x " || got.Options[0].Description != "long\nwhy" {
+		t.Errorf("questions as put: %+v", got)
+	}
+	if _, err := Answer(home, q.ID, "x"); err == nil {
+		t.Error("Answer answered a question")
+	}
+	for _, bad := range [][]string{nil, {"a", "b"}, {" "}} {
+		if _, err := Reply(home, q.ID, bad); err == nil {
+			t.Errorf("Reply took %q", bad)
+		}
+	}
+	if it, err := Reply(home, q.ID, []string{"x "}); err != nil || it.Answer != "x " || it.Answered == nil {
+		t.Fatalf("reply: %+v, %v", it, err)
+	}
+	if it, err := Reply(home, q.ID, []string{"other"}); !errors.Is(err, ErrAlreadyAnswered) || it.Answers[0] != "x " {
+		t.Errorf("a late reply: %+v, %v", it, err)
+	}
+	g := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAG1", Run: "r", Kind: Gate, Title: "go?", Choices: []string{"yes"}}
+	if err := Put(home, g); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Reply(home, g.ID, []string{"yes"}); err == nil {
+		t.Error("Reply answered a gate")
+	}
+}

@@ -21,6 +21,7 @@ import (
 // Item kinds.
 const (
 	Permission = "permission"
+	Question   = "question"
 	Gate       = "gate"
 	Failed     = "failed"
 	Stuck      = "stuck"
@@ -63,9 +64,28 @@ type Item struct {
 	Expires  *time.Time `json:"expires,omitempty"`
 	Answer   string     `json:"answer,omitempty"` // set once answered
 	Answered *time.Time `json:"answered,omitempty"`
-	// Match identifies what a permission item asks about (a hash of the tool and its input), so
-	// the seat's PostToolUse hook can withdraw it when the prompt was answered in the pane.
+	// Match identifies what a permission or question item asks about (a hash of the tool and its
+	// input), so the seat's PostToolUse hook can withdraw it when the prompt was answered in the pane.
 	Match string `json:"match,omitempty"`
+	// Questions is what a question item asks, as the agent asked it (AskUserQuestion); it has no
+	// Choices, and its Answers, one per question, are option labels or free text.
+	Questions []Ask    `json:"questions,omitempty"`
+	Answers   []string `json:"answers,omitempty"`
+}
+
+// Ask is one question an agent asks, with the options it offers. An answer may also be
+// anything else the human types.
+type Ask struct {
+	Question    string   `json:"question"`
+	Header      string   `json:"header,omitempty"`
+	Options     []Option `json:"options,omitempty"`
+	MultiSelect bool     `json:"multiSelect,omitempty"`
+}
+
+// Option is one answer an agent offers.
+type Option struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // Short is the id people type: the item's last six characters, lower case.
@@ -90,11 +110,26 @@ func Put(home string, it Item, secrets ...string) error {
 	if it.Created.IsZero() {
 		it.Created = time.Now().UTC()
 	}
-	for _, v := range secretForms(append(SeatSecrets(), secrets...)) {
-		it.Title, it.Detail = strings.ReplaceAll(it.Title, v, "***"), strings.ReplaceAll(it.Detail, v, "***")
+	forms := secretForms(append(SeatSecrets(), secrets...))
+	scrub := func(s string, lines bool) string {
+		for _, v := range forms {
+			s = strings.ReplaceAll(s, v, "***")
+		}
+		return clean(Redact(s), lines)
 	}
-	it.Title = clean(Redact(it.Title), false)
-	it.Detail = cut(clean(Redact(it.Detail), true)) // cut last: a cut secret no longer matches
+	it.Title = scrub(it.Title, false)
+	it.Detail = cut(scrub(it.Detail, true)) // cut last: a cut secret no longer matches
+	// A question is shown as the agent wrote it: redacted and cleaned like the title, never cut.
+	qs := make([]Ask, len(it.Questions))
+	for i, q := range it.Questions {
+		qs[i] = Ask{Question: scrub(q.Question, true), Header: scrub(q.Header, false), MultiSelect: q.MultiSelect}
+		for _, o := range q.Options {
+			qs[i].Options = append(qs[i].Options, Option{Label: scrub(o.Label, false), Description: scrub(o.Description, true)})
+		}
+	}
+	if len(qs) > 0 {
+		it.Questions = qs
+	}
 	return writeFile(pendingFile(home, it.ID), &it, os.Rename)
 }
 
@@ -135,8 +170,8 @@ func Answered(home, id string) (*Item, error) {
 	return it, err
 }
 
-// Answer records choice as the item's answer. The first answer wins: a hard link fails if the
-// answered file exists, where a rename would replace it. Later answers get ErrAlreadyAnswered.
+// Answer records choice as the item's answer. The first answer wins; later answers get
+// ErrAlreadyAnswered.
 func Answer(home, id, choice string) (*Item, error) {
 	it, err := read(pendingFile(home, id))
 	if errors.Is(err, os.ErrNotExist) {
@@ -148,12 +183,49 @@ func Answer(home, id, choice string) (*Item, error) {
 	if err != nil {
 		return nil, err
 	}
+	if it.Kind == Question {
+		return nil, fmt.Errorf("%s is a question: answer it with Reply", it.Short())
+	}
 	if !slices.Contains(it.Choices, choice) {
 		return nil, fmt.Errorf("%q is not an answer to %s; choose one of: %s", choice, it.Short(), strings.Join(it.Choices, ", "))
 	}
+	it.Answer = choice
+	return commit(home, id, it)
+}
+
+// Reply answers a question item, one answer per question. Like Answer, the first answer wins.
+func Reply(home, id string, answers []string) (*Item, error) {
+	it, err := read(pendingFile(home, id))
+	if errors.Is(err, os.ErrNotExist) {
+		if exists(answeredFile(home, id)) {
+			return lost(home, id)
+		}
+		return nil, fmt.Errorf("no item %s", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if it.Kind != Question {
+		return nil, fmt.Errorf("%s is not a question", it.Short())
+	}
+	if len(answers) != len(it.Questions) {
+		return nil, fmt.Errorf("%s asks %d question(s): give one answer each", it.Short(), len(it.Questions))
+	}
+	for i, a := range answers {
+		if strings.TrimSpace(a) == "" {
+			return nil, fmt.Errorf("answer %d to %s is empty", i+1, it.Short())
+		}
+	}
+	it.Answers, it.Answer = answers, strings.Join(answers, "; ")
+	return commit(home, id, it)
+}
+
+// commit records it, already answered, unless someone answered first: a hard link fails if the
+// answered file exists, where a rename would replace it.
+func commit(home, id string, it *Item) (*Item, error) {
 	now := time.Now().UTC()
-	it.Answer, it.Answered = choice, &now
-	err = writeFile(answeredFile(home, id), it, os.Link)
+	it.Answered = &now
+	err := writeFile(answeredFile(home, id), it, os.Link)
 	if errors.Is(err, os.ErrExist) {
 		return lost(home, id)
 	}

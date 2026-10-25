@@ -13,7 +13,8 @@ Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up 
 gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight inbox`, `gate`,
 `failed` and `permission` items, the last from the `PermissionRequest` hook). The acceptance run
 passed (#11: two real issues to merged PRs, one review/fix round each). **M3** (the inbox) is
-next. Resuming a run whose engine died is deferred (#8, §4).
+next; its first piece is done: `question` items (#55, §6). Resuming a run whose engine died is
+deferred (#8, §4).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -297,7 +298,7 @@ pasted into a pane, and panes are logged.
 | Kind | Source | Answer goes back via |
 |---|---|---|
 | `permission` | Claude Code `PermissionRequest` hook | the hook blocks, polling the item file, and returns allow/deny |
-| `question` | `PreToolUse` hook on `AskUserQuestion`; a plain-text question caught by the Stop hook | the hook's return value; for plain text, pasted into the seat |
+| `question` | `PermissionRequest` hook on `AskUserQuestion` (#55); a plain-text question caught by the Stop hook (not built: the Stop hook's reminder steers agents to the tool) | the hook returns the answers; for plain text, pasted into the seat |
 | `gate` | a `type: gate` step | the engine routes on the chosen exit |
 | `stuck` | Stop hook gave up; step quiet past its timeout; turn never ended after `done` | nudge / fail when the agent stopped; wait / fail otherwise |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | retry step / abort run |
@@ -317,6 +318,19 @@ and then denies; so does an unreadable request, any error, or the run ending. Ch
 (#32): the hash matches across both hooks for Bash, Write, Edit, WebFetch and MCP tools; No, Esc,
 a hook timeout and a session that exits all stop the hook with SIGTERM; a 1 h timeout is honoured.
 A seat's Bash keeps the run's `laight` ahead of whatever the user's rc puts on `PATH`.
+
+**Question items** (#55, verified against Claude Code 2.1.310): every seat may ask a human with
+`AskUserQuestion`, in every permission mode (`yolo` included, it still fires `PermissionRequest`).
+The hook raises a `question` item, not a permission: its title is the question (`<seat> asks:
+…`), it carries the questions and the agent's options (labels and descriptions, redacted like
+the title, never cut), and it has no fixed choices. `laight inbox` lists the options numbered,
+`laight inbox <item>` shows the descriptions too, and the answer is one per question: an option's
+number (several, `1,3`, for a multi-select), or anything else typed, which Claude takes as written.
+The hook returns allow with the tool's input plus `answers` keyed by each question as the agent
+wrote it, which Claude takes as the user's answer. Answered in the pane instead, PostToolUse's
+input has gained `answers` and `annotations`, which the match ignores, so the item is withdrawn.
+An unanswered question expires like a permission: denied. The engine window prints every item a
+seat's hook raises (the question and its options, or the command) with how to answer it.
 
 - The item's state always lives with its run. A queue backend only *carries* items and answers.
   First answer wins, enforced with an atomic rename, so duplicate deliveries are harmless.
@@ -362,7 +376,7 @@ laight validate [workflow]           schema + semantic checks (run also does thi
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live
 laight watch [run]                   live pipeline view; no run = every run, one line each
 laight show [run] [--export]         the web view (localhost, foreground)
-laight inbox [<item> <answer>]       the human queue; with arguments, answer one (scripts)
+laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts)
 laight attach <run> [seat]           jump into the run's tmux session (or one seat's window)
 laight abort <run>                   stop a live run; on a finished one, remove its worktrees
 laight doctor                        tmux, git, runtimes, hooks; queue and channels
@@ -465,7 +479,7 @@ step. `fail` ends the hop `failed` and routes (a shell step's command is stopped
 is already done is just freed). A quiet seat's turn may still be running, so it takes its next
 step only after its Stop hook (a late `laight done` from that turn then finds no step to finish);
 a seat without hooks is interrupted (`C-c`) instead. Looking first is `laight attach`, which the item's detail names. A
-seat with a pending permission item is never stuck, and a gate is never timed: a human is already
+seat with a pending permission or question item is never stuck, and a gate is never timed: a human is already
 asked (reminding them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn.
 A crashed seat fails its hop at once and is respawned only by a later step (or a `retry`).
 

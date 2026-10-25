@@ -297,12 +297,44 @@ func (e *Engine) stopShell(hop int) {
 	}
 }
 
-// waitingOnPermission reports whether the seat has a permission item pending.
+// waitingOnPermission reports whether the seat has a permission or question item pending: its
+// pane shows Claude's dialog, and a human is asked.
 func waitingOnPermission(home, run, seat string) bool {
 	items, _ := inbox.Pending(home)
 	return slices.ContainsFunc(items, func(it *inbox.Item) bool {
-		return it.Run == run && it.Seat == seat && it.Kind == inbox.Permission
+		return it.Run == run && it.Seat == seat && (it.Kind == inbox.Permission || it.Kind == inbox.Question)
 	})
+}
+
+// announce prints, once each, the run's items that a seat's hook raised (the engine prints its
+// own as it raises them), so the run's terminal says what waits and how to answer it.
+func (e *Engine) announce(r *state.Run) {
+	items, _ := inbox.Pending(e.Home)
+	for _, it := range items {
+		if it.Run != r.ID || (it.Kind != inbox.Permission && it.Kind != inbox.Question) || e.told[it.ID] {
+			continue
+		}
+		if e.told == nil {
+			e.told = map[string]bool{}
+		}
+		e.told[it.ID] = true
+		if it.Kind == inbox.Permission {
+			what, _, _ := strings.Cut(it.Detail, "\n")
+			e.logf("? %s: %s (laight inbox %s allow|deny)", it.Title, what, it.Short())
+			continue
+		}
+		e.logf("? %s", it.Title)
+		for i, q := range it.Questions {
+			if len(it.Questions) > 1 {
+				e.logf("    Q%d. %s", i+1, q.Question)
+			}
+			for k, o := range q.Options {
+				e.logf("      %d. %s", k+1, o.Label)
+			}
+		}
+		e.logf("  answer: laight inbox %s <number or \"your own words\">%s; in full: laight inbox %s; or in window %s",
+			it.Short(), strings.Repeat(" …", len(it.Questions)-1), it.Short(), it.Seat)
+	}
 }
 
 // ownWrite is lastWrite in the seat's folder, if it is a worktree laight made for it.
