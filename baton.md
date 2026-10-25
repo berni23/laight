@@ -13,25 +13,24 @@ that.
 
 ## Last session — 2026-10-25
 
-- #50 — `.laight/workflows/issue-cycle.yaml`: laight's own development as a workflow (pickup →
-  `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate (hold) → `gh pr merge`). New step field
-  `compact: true` (pastes `/compact` before the objective; checked on Claude Code 2.1.310 that
-  compacting fires `SessionStart`, not `Stop`, and queues the next message). Validated and
-  unit-tested; **not run for real yet**. #51 review answered: the merge step renders even when
-  pickup leaves `issue=` out (`TestOwnIssueCycle` loads the repo's own workflow).
+- #50 — `.laight/workflows/issue-cycle.yaml` merged (#51): laight's own development as a workflow
+  (pickup → `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate → merge),
+  and the `compact: true` step field. **Not run for real yet.**
+- The first real run moves to go-orchestrator, so it doesn't develop the tool running it: an
+  `issue-cycle.yaml` adapted to it is in berni23/go-orchestrator#155 (with the move to the plugins). #53 is the
+  analysis of that run.
 
 ---
 
 ## Do this next
 
-### 1. #50 — first supervised run of `laight run issue-cycle`
+### 1. #50 — first supervised run of `laight run issue-cycle`, in go-orchestrator
 
-Watch it end to end: the slash commands as objectives (`/baton:pickup`, `/cross:cr <PR>` with a
-trailing instruction), the compaction before `fix`, and that `verify` lands in the reviewer's
-same conversation. It holds on an `approve` gate before merging; answer it with `laight inbox`.
-Its base is `dev` for now (branches from `origin/dev`, PRs into `dev`, the merge step closes the
-issue), so `origin/dev` must be up to date with `main` first.
-File what it shows as issues.
+Run it from `../go-orchestrator` with `laight run issue-cycle` and watch it end to end: the slash
+commands as objectives (go-orchestrator now uses the `baton` and `cross` plugins and a `baton.md`,
+berni23/go-orchestrator#155), the compaction before `fix`, and `verify` in the reviewer's same conversation.
+It holds on the `approve` gate before merging into go-orchestrator's `dev`; answer it with
+`laight inbox`. Then #53: analyse the run, one issue per problem.
 
 ### 2. #34 — AskUserQuestion as a real `question` item (M3)
 
