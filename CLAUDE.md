@@ -295,7 +295,7 @@ pasted into a pane, and panes are logged.
 | `permission` | Claude Code `PermissionRequest` hook | the hook blocks, polling the item file, and returns allow/deny |
 | `question` | `PreToolUse` hook on `AskUserQuestion`; a plain-text question caught by the Stop hook | the hook's return value; for plain text, pasted into the seat |
 | `gate` | a `type: gate` step | the engine routes on the chosen exit |
-| `stuck` | step quiet past its timeout, Stop hook gave up, turn never ended after `done` | nudge / wait / fail (shell steps: wait / fail) |
+| `stuck` | Stop hook gave up; step quiet past its timeout; turn never ended after `done` | nudge / fail when the agent stopped; wait / fail otherwise |
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | retry step / abort run |
 
 An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
@@ -437,7 +437,8 @@ The agent's side acknowledges: a `UserPromptSubmit` hook writes `seats/<seat>.ac
 hop with no ack is pasted again; an acked hop with no `done` is left running; re-pasting an acked
 hop is never automatic (Archon's rule): laight raises a `stuck` item. A hop whose seat died while
 the engine was down continues only if the seat can resume its conversation, with a short note to
-carry on, once per hop; otherwise it fails like a crashed seat. Runtimes without hooks fall back to
+carry on, once per hop; otherwise it fails like a crashed seat. A seat that crashes again on a hop
+resume respawned it for raises a `failed` item instead of being respawned again. Runtimes without hooks fall back to
 a `capture-pane` snippet check.
 
 ### 12.2 Knowing an agent is idle, done or stuck (#15)
@@ -447,16 +448,19 @@ evidence; it never decides on its own. "Stuck" is computed at each tick from fil
 (`out/`, `.idle`, `.stopped`, `.ack`, the seat log's mtime, worktree writes outside `.git/`)
 against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
 when none of them moved for that long, not when it has run that long. Nothing new is stored but
-the open item and when its clock last restarted, and nothing routes on it. Escalation: one nudge
-(the Stop hook's reminder), then a `stuck` inbox item, raised at once when the agent stops a
-second time (`.stopped`). It covers a seat that ran `done` but whose turn never ended (a Stop hook
-that failed), and a shell step (its log is its only trace). Decided in #15 (2026-10-25): the
-answers are `nudge` (paste a reminder), `wait` (the clock starts again) and `fail` (the hop ends
-`failed` and routes; a shell step's command is stopped; a seat whose step is already done is just
-freed); looking first is `laight attach`, which the item's detail names. A seat with a pending
-permission item is never stuck, and a gate is never timed: a human is already asked (reminding
-them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn. A seat that
-crashes twice on the same hop raises a `failed` item instead of being respawned again.
+the open item and when its clock last restarted, and nothing routes on it. An agent that stops
+without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it
+stops a second time (`.stopped`); a seat quiet past its timeout gets the item directly. It also
+covers a seat that ran `done` but whose turn never ended (a Stop hook that failed), and a shell
+step (its log is its only trace). Decided in #15 (2026-10-25, revised in the #47 review): the
+choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
+reminder) or `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
+that a paste's Enter would answer: `wait` (the clock starts again) or `fail`; so does a shell
+step. `fail` ends the hop `failed` and routes (a shell step's command is stopped; a seat whose step
+is already done is just freed). Looking first is `laight attach`, which the item's detail names. A
+seat with a pending permission item is never stuck, and a gate is never timed: a human is already
+asked (reminding them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn.
+A crashed seat fails its hop at once and is respawned only by a later step (or a `retry`).
 
 ### 12.3 One parallel branch fails while others run (#12)
 

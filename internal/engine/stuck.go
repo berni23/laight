@@ -23,15 +23,17 @@ import (
 // file timestamps only ever add evidence that something is still happening. A step is stuck when
 // its agent stopped twice without `laight done` (the Stop hook's .stopped mark), or when nothing
 // it leaves a trace in changed for longer than the step's timeout. Either way a stuck item asks a
-// human (nudge | wait | fail); nothing routes on it, and nothing new is stored but the open item
-// and when its clock last restarted.
+// human; nothing routes on it, and nothing new is stored but the open item and when its clock
+// last restarted. The choices follow what is known about the pane: a stopped agent is at its
+// prompt, so a reminder can be pasted (nudge | fail); a quiet one may be showing a dialog that a
+// paste's Enter would answer, so it can only be waited on or failed (wait | fail).
 
 // nudge is a reminder to paste into a seat once run.json is saved.
 type nudge struct{ window, text string }
 
 // Reminder is how an agent is told to finish its step: by the Stop hook, and by a nudge.
 func Reminder(st *spec.Step, laight string) string {
-	return fmt.Sprintf("Step %s isn't finished. When it is, run: %s done <exit> [key=value…] (exits: %s, failed).",
+	return fmt.Sprintf("Step %s is not finished. When it is, run: %s done <exit> [key=value…] (exits: %s, failed).",
 		st.ID, tmux.Quote(laight), strings.Join(st.AllowedExits, ", "))
 }
 
@@ -87,8 +89,10 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 
 	stopped := StoppedMark(e.Home, r.ID, name)
 	var reason string
+	choices := []string{inbox.Wait, inbox.Fail}
 	if b, _ := os.ReadFile(stopped); h != nil && strings.TrimSpace(string(b)) == IdleMark(s.Step, s.Hop) && mtime(stopped).After(since) {
 		reason = fmt.Sprintf("%s stopped without finishing step %s", name, label(h.Step, h.Copy))
+		choices = []string{inbox.Nudge, inbox.Fail} // waiting on an agent at its prompt would wait for ever
 	} else {
 		timeout := st.Quiet()
 		if timeout <= 0 {
@@ -122,7 +126,7 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 	}
 
 	screen, _ := e.Rig.Tmux.Capture(r.Session, s.Window)
-	it := inbox.Item{Step: s.Step, Seat: name, Hop: s.Hop, Title: reason, Choices: []string{inbox.Nudge, inbox.Wait, inbox.Fail},
+	it := inbox.Item{Step: s.Step, Seat: name, Hop: s.Hop, Title: reason, Choices: choices,
 		Detail: fmt.Sprintf("%s\nTo look first: laight attach %s %s\n\n%s", reason, r.Short(), name, lastLines(screen, 15))}
 	ev, err := e.raise(r, it, rig.Secrets(r, name)...)
 	if err != nil {
@@ -131,7 +135,7 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 	}
 	s.Stuck = ev.Data["item"].(string)
 	evs := []state.Event{ev}
-	if !strings.Contains(reason, "stopped") {
+	if !slices.Contains(choices, inbox.Nudge) {
 		evs = append([]state.Event{{Run: r.ID, Type: "step.timeout", Step: s.Step, Seat: name, Hop: s.Hop}}, evs...)
 	}
 	return nil, evs
@@ -161,12 +165,11 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 	h := r.ActiveOn(name)
 	switch it.Answer {
 	case inbox.Nudge:
-		e.logf("↻ %s: nudged from the inbox", name)
-		text := Reminder(r.Spec.Step(s.Step), e.Rig.Laight)
 		if h == nil {
-			text = fmt.Sprintf("Step %s is finished. End your turn so this seat can take its next step.", s.Step)
+			return nil, nil // finished meanwhile: nothing to remind it of
 		}
-		return &nudge{window: s.Window, text: "laight: " + text}, nil
+		e.logf("↻ %s: nudged from the inbox", name)
+		return &nudge{window: s.Window, text: "laight: " + Reminder(r.Spec.Step(s.Step), e.Rig.Laight)}, nil
 	case inbox.Fail:
 		if h == nil {
 			e.logf("✕ %s: its turn given up on from the inbox", name)

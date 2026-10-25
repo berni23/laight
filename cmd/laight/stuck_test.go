@@ -34,8 +34,8 @@ func (e *rigEnv) stuckItem(id string, choices ...string) *inbox.Item {
 }
 
 // An agent that stops a second time without `laight done` is never left alone: the Stop hook
-// marks it, and the engine asks a human at once, with no timeout set. A nudge pastes the
-// reminder into the seat.
+// marks it, and the engine asks a human at once, with no timeout set. It is at its prompt, so
+// the choices are nudge or fail: a wait would wait for ever. A nudge pastes the reminder.
 func TestEngineStuckStopped(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -44,19 +44,24 @@ steps:
   - id: work
     seat: a
     objective: 'echo "{\"stop_hook_active\": true}" | "$L" hook stop'
+    next_hop: { on: { handoff: more } }
+  - id: more
+    seat: a
+    objective: '"$L" done handoff'
 `))
 	e.mustLaight("run", "demo")
 	id := e.onlyRun().ID
-	it := e.stuckItem(id, inbox.Nudge, inbox.Wait, inbox.Fail)
+	it := e.stuckItem(id, inbox.Nudge, inbox.Fail)
 	if it.Title != "a stopped without finishing step work" || it.Seat != "a" || it.Step != "work" ||
 		!strings.Contains(it.Detail, "laight attach "+state.Short(id)+" a") {
 		t.Errorf("item %+v", it)
 	}
 	e.mustLaight("inbox", it.Short(), inbox.Nudge)
-	waitLog(t, e.home, id, "a", "laight: Step work isn't finished. When it is, run: ")
+	waitLog(t, e.home, id, "a", "laight: Step work is not finished. When it is, run: ")
 	e.seatDone(id, "a", "handoff")
-	if r := e.waitEnded(id); r.Status != state.Succeeded {
-		t.Fatalf("status %s: %s", r.Status, r.Error)
+	// The reminder, pasted into sh, must leave no quote open: the next objective still runs.
+	if r := e.waitEnded(id); r.Status != state.Succeeded || strings.Join(e.stepsDone(id), " ") != "work:handoff more:handoff" {
+		t.Fatalf("status %s %q, steps %v", r.Status, r.Error, e.stepsDone(id))
 	}
 	evs, _ := state.Events(e.home, id)
 	if countEvents(evs, "step.timeout", "") != 0 || countEvents(evs, "inbox.raised", "a") != 1 {
@@ -64,8 +69,9 @@ steps:
 	}
 }
 
-// A step quiet past its timeout raises a stuck item, not a kill. Wait starts the clock again;
-// fail ends the step as failed, through routing.
+// A step quiet past its timeout raises a stuck item, not a kill, with no nudge: a paste could
+// answer a dialog nobody saw. Wait starts the clock again; fail ends the step as failed, through
+// routing.
 func TestEngineStuckTimeout(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -79,13 +85,13 @@ steps:
 `))
 	e.mustLaight("run", "demo")
 	id := e.onlyRun().ID
-	first := e.stuckItem(id, inbox.Nudge, inbox.Wait, inbox.Fail)
+	first := e.stuckItem(id, inbox.Wait, inbox.Fail)
 	if !strings.HasPrefix(first.Title, "a has been quiet for ") || !strings.Contains(first.Detail, "sleep 60") {
 		t.Errorf("item %+v", first)
 	}
 	e.mustLaight("inbox", first.Short(), inbox.Wait)
 	waited := time.Now()
-	second := e.stuckItem(id, inbox.Nudge, inbox.Wait, inbox.Fail)
+	second := e.stuckItem(id, inbox.Wait, inbox.Fail)
 	if second.ID == first.ID || second.Created.Sub(waited) < 1500*time.Millisecond { // a full timeout again, not a tick
 		t.Errorf("asked again %s after the wait", second.Created.Sub(waited))
 	}
@@ -116,7 +122,7 @@ steps:
 `))
 	e.mustLaight("run", "demo")
 	id := e.onlyRun().ID
-	it := e.stuckItem(id, inbox.Nudge, inbox.Wait, inbox.Fail)
+	it := e.stuckItem(id, inbox.Wait, inbox.Fail)
 	r, _ := state.Load(e.home, id)
 	started := r.Active[0].Started
 	if quiet := it.Created.Sub(started); quiet < 5*time.Second { // 4s of writes, then 2s quiet

@@ -10,10 +10,12 @@ All notable changes to laight are documented here. The format follows
 
 - Stuck detection: a step quiet past its `timeout` (no pane output, no file written in its
   worktree), an agent that stops twice without `laight done`, and a seat whose turn never ended
-  after `done` each raise a `stuck` inbox item instead of stalling the run: `nudge` pastes a
-  reminder, `wait` restarts the clock, `fail` ends the step as failed. A shell step quiet past its
-  timeout can `wait` or `fail` (which stops its command). Not while a permission item for the seat
-  is pending; gates are never timed.
+  after `done` each raise a `stuck` inbox item instead of stalling the run. A stopped agent can be
+  `nudge`d (the reminder is pasted) or failed; a quiet one can be waited on (the clock restarts)
+  or failed, never pasted into. A shell step quiet past its timeout can `wait` or `fail` (which
+  stops its command). Not while a permission item for the seat is pending. Gates are never timed
+  (`validate` warns about a gate's `timeout`), and `timeout: 0s` opts a step out of
+  `timeouts.step`.
 
 - `needs`: a step starts once every step it needs has finished (not `failed`, and out of any loop
   that could run it again), so steps on different seats run in parallel and a later step joins
