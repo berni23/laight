@@ -4,9 +4,9 @@
 # merged once a human says yes (a CircleCI-style hold).
 #   pickup → review → fix → verify ─(pass)→ approve ─(yes)→ merge
 #                      ↑       └─(fail)─┘
-# Start it with:  laight run self-cycle
+# Start it with:  laight run issue-cycle
 version: 1
-id: self-cycle
+id: issue-cycle
 summary: The next baton.md item, implemented, cross-reviewed and merged into {{ .base }}.
 base: main
 
