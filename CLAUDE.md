@@ -202,8 +202,10 @@ steps:
 copies `#1…#N`. A value is a list of scalars, or a template: one that is a single action
 (`{{ .steps.plan.out.tasks }}`) gives its value, anything else must render a JSON list. An empty
 list, a non-scalar or more than 32 copies holds the step on a `failed` item before any copy
-starts (`validate` rejects it already when every value is a literal list). A failed copy is held alone while its siblings run on; `retry` reruns that copy only. A
-gate can't have a matrix. Later steps see a matrix step's `.out` as a **list**, one entry per copy
+starts (`validate` rejects it already when every value is a literal list). A failed copy is held alone while its siblings run on; `retry` reruns that copy only.
+Instance `dev#k` serves copy k of every matrix step on `dev`, and of every later expansion: it
+keeps its worktree and, unless `session: fresh`, its conversation, like any seat. A gate can't
+have a matrix. Later steps see a matrix step's `.out` as a **list**, one entry per copy
 in copy order, and `.exit` as the list of exits (Argo's `withParam` model, not "the last copy to
 finish wins"): `{{ range .steps.build.out }}{{ .pr }}{{ end }}`; `validate` rejects `.out.<key>`.
 
