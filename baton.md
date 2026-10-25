@@ -13,12 +13,15 @@ that.
 
 ## Last session — 2026-10-25
 
-- #15 — stuck detection: a step quiet past its `timeout` (pane log, worktree writes), an agent
-  that stops twice without `laight done` (Stop hook's `.stopped` mark), a seat whose turn never
-  ended after `done`, and a quiet shell step each raise a `stuck` item (`nudge | wait | fail`;
-  shell: `wait | fail`). Integration + unit tests, mutation-checked; a real Claude Code 2.1.310
-  run exercised the second stop, nudge, wait (idle pane stays quiet, timeout fired) and fail.
-  Choices decided on #15 and written into CLAUDE.md §6/§12.2.
+- #15 — stuck detection: a step quiet past its `timeout` (pane log, its own worktree's writes),
+  an agent that stops twice without `laight done` (`.stopped`), a seat whose turn never ended
+  after `done`, and a quiet shell step each raise a `stuck` item. Choices follow the evidence
+  (stopped: `nudge | fail`; quiet: `wait | fail`); failing a quiet seat waits for its turn;
+  gates are never timed; `timeout: 0s` opts out. Integration + unit tests, mutation-checked; a
+  real Claude Code run covered stop/nudge/quiet/fail before the review round (#47 review
+  answered; the reshaped choices are unit/integration-tested only).
+- Filed from the #47 review: #48 (keychain reads under the lock), #49 (a deleted pending item is
+  never asked again).
 
 ---
 

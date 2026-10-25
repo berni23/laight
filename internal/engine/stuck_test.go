@@ -42,7 +42,7 @@ func tick(t *testing.T, e *Engine, id string) {
 // Fail frees the seat.
 func TestStuckTurnNeverEnded(t *testing.T) {
 	steps := two(map[string]string{"handoff": "two"})
-	timeout := spec.Duration(300 * time.Millisecond)
+	timeout := spec.Duration(time.Second)
 	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
@@ -58,7 +58,7 @@ func TestStuckTurnNeverEnded(t *testing.T) {
 	if err := inbox.Put(e.Home, perm); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(400 * time.Millisecond)
+	time.Sleep(1200 * time.Millisecond)
 	tick(t, e, id)
 	if items := stuckItems(t, e, id); len(items) != 0 {
 		t.Fatalf("stuck while a permission item waits: %+v", items)
@@ -167,5 +167,18 @@ func TestOwnWrite(t *testing.T) {
 	}
 	if m := ownWrite(&state.Seat{Dir: dir, Worktree: true}, since); m.IsZero() {
 		t.Error("a write in the seat's worktree didn't count")
+	}
+}
+
+// A gate is never stuck, even with a timeout of its own: it already waits on a human.
+func TestGateNeverStuck(t *testing.T) {
+	timeout := spec.Duration(100 * time.Millisecond)
+	e, id := hooked(t, []*spec.Step{{ID: "ask", Type: spec.TypeGate, Ask: "Go on?", AllowedExits: []string{"yes"}, Timeout: &timeout}})
+	tick(t, e, id)
+	time.Sleep(200 * time.Millisecond)
+	tick(t, e, id)
+	items, _ := inbox.Pending(e.Home)
+	if len(items) != 1 || items[0].Kind != inbox.Gate {
+		t.Fatalf("items %+v", items)
 	}
 }
