@@ -93,3 +93,10 @@ All notable changes to laight are documented here. The format follows
   allowed) for later steps' templates. Claude seats get a Stop hook that reminds the agent, once,
   if it stops without it.
 - Run state under `~/.laight/runs/<id>/`: `run.json`, `events.jsonl`, and each seat's pane log.
+
+### Fixed
+
+- An unquoted integer in `env` (workflow, seat or shell step) reaches the command exactly, even
+  above 2^53 (`9007199254740993` was passed on as `9007199254740992`). `validate` warns about an
+  unquoted env value YAML rewrites before laight sees it (`0x1F` → `31`, `1.10` → `1.1`, `1e3`)
+  and says to quote it (#44).

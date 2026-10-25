@@ -408,3 +408,65 @@ func TestProblemOrderStable(t *testing.T) {
 		t.Errorf("want aa before zz: %s", first)
 	}
 }
+
+// An unquoted integer in env reaches the command exactly, even above 2^53 (#44).
+func TestEnvNumbersExact(t *testing.T) {
+	src := strings.Replace(issueCycle, "on_finish:", "env: { RECORD_ID: 9007199254740993, PORT: 8080, DEBUG: true }\non_finish:", 1)
+	src = strings.Replace(src, `env: { GH_TOKEN: "{{ secret \"gh\" }}" }`, `env: { GH_TOKEN: "{{ secret \"gh\" }}", BIG: 123456789012345678 }`, 1)
+	src = strings.Replace(src, "    run: gh pr merge", "    env: { RECORD_ID: 9007199254740993 }\n    run: gh pr merge", 1)
+	dir, file := project(t, src)
+	w, probs := Load(dir, file)
+	for _, p := range probs {
+		t.Errorf("unexpected problem: %s", p)
+	}
+	if w == nil {
+		t.Fatal("no workflow")
+	}
+	for _, c := range []struct{ where, got, want string }{
+		{"workflow RECORD_ID", w.Env["RECORD_ID"], "9007199254740993"},
+		{"workflow PORT", w.Env["PORT"], "8080"},
+		{"workflow DEBUG", w.Env["DEBUG"], "true"},
+		{"seat BIG", w.Seats["impl"].Env["BIG"], "123456789012345678"},
+		{"step RECORD_ID", w.Step("merge").Env["RECORD_ID"], "9007199254740993"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.where, c.got, c.want)
+		}
+	}
+}
+
+// An unquoted env value YAML rewrites before laight sees it (0x1F is 31) gets a warning that
+// says to quote it, in the workflow and in a shared seat file (#44).
+func TestEnvRewrittenWarns(t *testing.T) {
+	src := strings.Replace(issueCycle, "on_finish:", "env:\n  MASK: 0x1F\n  VERSION: 1.10\n  N: 1e3\n  OK: \"0x1F\"\non_finish:", 1)
+	src = strings.Replace(src, "    run: gh pr merge", "    env: { BIG: 99999999999999999999 }\n    run: gh pr merge", 1)
+	dir, file := project(t, src)
+	shared := filepath.Join(dir, "seats/reviewer.yaml")
+	if err := os.WriteFile(shared, []byte(reviewerSeat+"env: { RATE: +5 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, probs := Load(dir, file)
+	want := map[string]string{"MASK": `"31"`, "VERSION": `"1.1"`, "N": `"1000"`, "BIG": "", "RATE": `"5"`}
+	for _, p := range probs {
+		found := false
+		for k, v := range want {
+			if p.Path[len(p.Path)-1] == k && strings.Contains(p.Msg, v) && strings.Contains(p.Msg, "quote it") {
+				if p.Severity != Warning || p.Line == 0 {
+					t.Errorf("%s: want a warning with a line", p)
+				}
+				if k == "RATE" && p.File != shared {
+					t.Errorf("%s: want it reported in %s", p, shared)
+				}
+				delete(want, k)
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("unexpected problem: %s", p)
+		}
+	}
+	for k := range want {
+		t.Errorf("no warning for %s", k)
+	}
+}

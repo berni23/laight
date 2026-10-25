@@ -47,6 +47,14 @@ func (c *checker) add(sev Severity, path []string, format string, args ...any) {
 	})
 }
 
+// env warns about the unquoted values of an env map in the workflow file that YAML rewrote.
+func (c *checker) env(path []string, env StringMap) {
+	c.probs = append(c.probs, rewrittenEnv(c.w.File, c.root, path, func(k string) (string, bool) {
+		v, ok := env[k]
+		return v, ok
+	})...)
+}
+
 func (c *checker) workflow() {
 	if stem := strings.TrimSuffix(filepath.Base(c.w.File), filepath.Ext(c.w.File)); stem != c.w.ID {
 		c.add(Error, []string{"id"}, "id %q must match the file name %q (`laight run %s` finds the workflow by its file)", c.w.ID, stem, stem)
@@ -55,6 +63,7 @@ func (c *checker) workflow() {
 	for _, k := range sortedKeys(c.w.Env) {
 		c.template([]string{"env", k}, c.w.Env[k], nil, true)
 	}
+	c.env([]string{"env"}, c.w.Env)
 }
 
 func (c *checker) seats() {
@@ -93,6 +102,7 @@ func (c *checker) seats() {
 		for _, k := range sortedKeys(s.Env) {
 			c.template([]string{"seats", name, "env", k}, s.Env[k], nil, true)
 		}
+		c.env(at("env"), s.Env)
 		if !used[name] {
 			c.add(Warning, []string{"seats", name}, "no step uses seat %q", name)
 		}
@@ -196,6 +206,7 @@ func (c *checker) steps() {
 		for _, k := range sortedKeys(st.Env) {
 			c.template(at("env", k), st.Env[k], st, true)
 		}
+		c.env(at("env"), st.Env)
 	}
 }
 
