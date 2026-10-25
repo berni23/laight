@@ -14,6 +14,7 @@ import (
 
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/rig"
+	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
 	"github.com/berni23/laight/internal/tmux"
@@ -28,8 +29,11 @@ import (
 // prompt, so a reminder can be pasted (nudge | fail); a quiet one may be showing a dialog that a
 // paste's Enter would answer, so it can only be waited on or failed (wait | fail).
 
-// nudge is a reminder to paste into a seat once run.json is saved.
-type nudge struct{ window, text string }
+// nudge is what to type into a seat once run.json is saved: a reminder to paste, or keys.
+type nudge struct {
+	window, text string
+	keys         []string
+}
 
 // Reminder is how an agent is told to finish its step: by the Stop hook, and by a nudge.
 func Reminder(st *spec.Step, laight string) string {
@@ -174,9 +178,23 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 		if h == nil {
 			e.logf("✕ %s: its turn given up on from the inbox", name)
 			s.Turn = false
-		} else if err := e.fail(r.ID, h, errors.New("stuck; failed from the inbox")); err != nil {
+			return nil, nil
+		}
+		// A stopped agent's turn is over. A quiet one's may still be running: its seat waits for
+		// the Stop hook before the next step, or a late `laight done` from that turn would finish
+		// the next hop. A seat without hooks never says, so its turn is interrupted instead.
+		var n *nudge
+		turn := !slices.Contains(it.Choices, inbox.Nudge)
+		if rt, err := runtime.For(r.Spec.SeatOf(name).Runtime); turn && err == nil && !rt.Hooks() {
+			n, turn = &nudge{window: s.Window, keys: []string{"C-c"}}, false
+		}
+		e.logf("✕ %s: stuck; failed from the inbox", h.Step)
+		err := state.WriteDone(e.Home, r.ID, state.Done{Step: h.Step, Hop: h.N, Exit: spec.ExitFailed,
+			Out: map[string]any{"error": "stuck; failed from the inbox"}, Engine: true, Turn: turn})
+		if err != nil && !errors.Is(err, state.ErrAlreadyDone) {
 			e.logf("warning: %v", err)
 		}
+		return n, nil
 	default:
 		e.logf("… %s: waiting on from the inbox", name)
 	}

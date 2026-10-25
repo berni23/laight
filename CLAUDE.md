@@ -457,7 +457,9 @@ choices follow what is known about the pane. A stopped agent is at its prompt: `
 reminder) or `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
 that a paste's Enter would answer: `wait` (the clock starts again) or `fail`; so does a shell
 step. `fail` ends the hop `failed` and routes (a shell step's command is stopped; a seat whose step
-is already done is just freed). Looking first is `laight attach`, which the item's detail names. A
+is already done is just freed). A quiet seat's turn may still be running, so it takes its next
+step only after its Stop hook (a late `laight done` from that turn then finds no step to finish);
+a seat without hooks is interrupted (`C-c`) instead. Looking first is `laight attach`, which the item's detail names. A
 seat with a pending permission item is never stuck, and a gate is never timed: a human is already
 asked (reminding them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn.
 A crashed seat fails its hop at once and is respawned only by a later step (or a `retry`).

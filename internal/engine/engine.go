@@ -128,7 +128,13 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 		}
 	}
 	for _, n := range nudges {
-		if err := e.Rig.Tmux.Paste(r.Session, n.window, n.text); err != nil {
+		var err error
+		if len(n.keys) > 0 {
+			err = e.Rig.Tmux.SendKeys(r.Session, n.window, n.keys...)
+		} else {
+			err = e.Rig.Tmux.Paste(r.Session, n.window, n.text)
+		}
+		if err != nil {
 			e.logf("warning: can't nudge %s: %v", n.window, err)
 		}
 	}
@@ -306,9 +312,9 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 			r.Queue = append(r.Queue, next)
 		}
 		// A seat without hooks is free now; one with hooks once its Stop hook says the turn ended.
-		// An ending the engine wrote has no turn behind it to wait for.
+		// An ending the engine wrote has no turn behind it to wait for, unless it says so.
 		if s := r.Seats[h.Seat]; s != nil {
-			if rt, err := runtime.For(r.Spec.SeatOf(h.Seat).Runtime); d.Engine || (err == nil && !rt.Hooks()) {
+			if rt, err := runtime.For(r.Spec.SeatOf(h.Seat).Runtime); (d.Engine && !d.Turn) || (err == nil && !rt.Hooks()) {
 				s.Turn = false
 			}
 		}

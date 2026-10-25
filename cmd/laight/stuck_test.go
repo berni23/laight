@@ -71,7 +71,7 @@ steps:
 
 // A step quiet past its timeout raises a stuck item, not a kill, with no nudge: a paste could
 // answer a dialog nobody saw. Wait starts the clock again; fail ends the step as failed, through
-// routing.
+// routing, and interrupts the turn of a seat without hooks, which nothing else would end.
 func TestEngineStuckTimeout(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -81,7 +81,10 @@ steps:
     seat: a
     objective: 'sleep 60'
     timeout: 2s
-    next_hop: { on: { failed: end } }
+    next_hop: { on: { failed: after } }
+  - id: after
+    seat: a
+    objective: '"$L" done handoff'
 `))
 	e.mustLaight("run", "demo")
 	id := e.onlyRun().ID
@@ -97,7 +100,8 @@ steps:
 	}
 	e.mustLaight("inbox", second.Short(), inbox.Fail)
 	r := e.waitEnded(id)
-	if r.Status != state.Succeeded || strings.Join(e.stepsDone(id), " ") != "work:failed" ||
+	// The seat has no hooks, so its turn was interrupted: the next step on it ran at once.
+	if r.Status != state.Succeeded || strings.Join(e.stepsDone(id), " ") != "work:failed after:handoff" ||
 		r.Steps["work"].Out["error"] != "stuck; failed from the inbox" {
 		t.Fatalf("status %s %q, steps %v %+v", r.Status, r.Error, e.stepsDone(id), r.Steps["work"])
 	}

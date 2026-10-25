@@ -120,3 +120,36 @@ func TestLastLines(t *testing.T) {
 		t.Errorf("lastLines of nothing = %q", got)
 	}
 }
+
+// Failing a quiet hooked seat from the inbox fails its step, but its turn may still be running:
+// the next step waits for the Stop hook, so a late `laight done` from that turn can't finish it.
+func TestStuckFailWaitsForTurn(t *testing.T) {
+	steps := two(map[string]string{"failed": "two"})
+	timeout := spec.Duration(100 * time.Millisecond)
+	steps[0].Timeout = &timeout
+	e, id := hooked(t, steps, "a")
+	tick(t, e, id)
+	time.Sleep(200 * time.Millisecond)
+	tick(t, e, id)
+	items := stuckItems(t, e, id)
+	if len(items) != 1 {
+		t.Fatalf("items %+v", items)
+	}
+	if _, err := inbox.Answer(e.Home, items[0].ID, inbox.Fail); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, e, id) // the answer fails the hop…
+	tick(t, e, id) // …which routes to two, on the same seat
+	r := load(t, e, id)
+	if r.Steps["one"] == nil || r.Steps["one"].Exit != spec.ExitFailed || r.ActiveOn("a") != nil || !r.Seats["a"].Turn {
+		t.Fatalf("steps %+v, active %+v, seat %+v", r.Steps, r.Active, r.Seats["a"])
+	}
+	mark := filepath.Join(state.Dir(e.Home, id), "seats", "a.idle")
+	if err := os.WriteFile(mark, []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tick(t, e, id)
+	if h := load(t, e, id).ActiveOn("a"); h == nil || h.Step != "two" {
+		t.Fatalf("two didn't start after the turn ended: %+v", h)
+	}
+}

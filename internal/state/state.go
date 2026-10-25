@@ -399,8 +399,11 @@ type Done struct {
 	Exit string         `json:"exit"`
 	Out  map[string]any `json:"out,omitempty"`
 	TS   time.Time      `json:"ts"`
-	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end.
+	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end…
 	Engine bool `json:"engine,omitempty"`
+	// …unless Turn says one may be (a quiet step failed from the inbox): the seat stays busy
+	// until its Stop hook says the turn ended.
+	Turn bool `json:"turn,omitempty"`
 }
 
 // ErrAlreadyDone is returned by WriteDone for a hop that has already finished.
