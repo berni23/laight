@@ -629,27 +629,32 @@ func TestMatrixRoutedWhileRunning(t *testing.T) {
 	}
 }
 
-// A compact step pastes /compact first: Claude queues the objective behind it.
+// A compact step pastes /compact first: Claude queues the objective behind it. Any other step
+// pastes only its objective.
 func TestDeliverCompactFirst(t *testing.T) {
-	steps := []*spec.Step{{ID: "fix", Type: spec.TypeAgent, Seat: "a", Objective: "echo OBJ-$((1+1))", Compact: true, AllowedExits: []string{"handoff"}}}
-	e, id := hooked(t, steps, "a")
-	_, starts := e.step(t, id)
-	if len(starts) != 1 {
-		t.Fatalf("starts %+v", starts)
-	}
-	r := load(t, e, id)
-	if err := e.deliver(context.Background(), r, starts[0]); err != nil {
-		t.Fatal(err)
-	}
-	var screen string
-	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		screen, _ = e.Rig.Tmux.Capture(r.Session, "a")
-		if strings.Contains(screen, "OBJ-2") {
-			break
-		}
-	}
-	c, o := strings.Index(screen, "/compact"), strings.Index(screen, "OBJ-2")
-	if c < 0 || o < 0 || c > o {
-		t.Fatalf("want /compact before the objective's output:\n%s", screen)
+	for _, compact := range []bool{true, false} {
+		t.Run(fmt.Sprint("compact=", compact), func(t *testing.T) {
+			steps := []*spec.Step{{ID: "fix", Type: spec.TypeAgent, Seat: "a", Objective: "echo OBJ-$((1+1))", Compact: compact, AllowedExits: []string{"handoff"}}}
+			e, id := hooked(t, steps, "a")
+			_, starts := e.step(t, id)
+			if len(starts) != 1 {
+				t.Fatalf("starts %+v", starts)
+			}
+			r := load(t, e, id)
+			if err := e.deliver(context.Background(), r, starts[0]); err != nil {
+				t.Fatal(err)
+			}
+			var screen string
+			for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+				screen, _ = e.Rig.Tmux.Capture(r.Session, "a")
+				if strings.Contains(screen, "OBJ-2") {
+					break
+				}
+			}
+			c, o := strings.Index(screen, "/compact"), strings.Index(screen, "OBJ-2")
+			if o < 0 || (c >= 0) != compact || c > o {
+				t.Fatalf("compact %v: want /compact pasted only then, before the objective:\n%s", compact, screen)
+			}
+		})
 	}
 }

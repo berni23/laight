@@ -222,7 +222,8 @@ passed on as YAML read it: integers exactly, but `0x1F` as `31` and `1.10` as `1
 value you need verbatim (`validate` warns).
 **`compact: true`** on an agent step pastes `/compact` before the objective, which Claude queues
 until compaction is done (checked on 2.1.310: compacting fires `SessionStart`, not `Stop`, so the
-step still ends with `laight done`). Only on a claude-code seat with `session: resume`.
+step still ends with `laight done`). Only on a claude-code seat with `session: resume`. On a
+seat's first step there is nothing to compact: Claude says so and runs the objective anyway.
 **Exits:** any identifiers; `allowed_exits` defaults to `[handoff]`; `failed` is implicit and can
 be routed. **`next_hop.mode: end`** ends the branch whatever the exit (an unrouted `failed` is
 still held). **Outputs:** `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values
