@@ -11,35 +11,27 @@ that.
 
 ---
 
-## Last session — 2026-10-22
+## Last session — 2026-10-25
 
-**#12 done: `needs` and `matrix`, so M2 is done.** In two stacked PRs.
-- **`needs`:** a need counts once it has finished and no live step can route back to it, which
-  covers loops.
-- **PR #38 review answered** (`/cross:cr` → `/cross:fix-cr`): steps whose needs are met in the
-  same tick are judged on the pre-tick state, so file order doesn't change what starts; another
-  ready step that can loop back to a need holds it unless this one is in that loop too.
-  `validate` warns on `needs` of a gate. Rule 2 says a needs step runs at most once.
-- **`matrix`:** each copy runs on its own seat instance `dev#k`, closed after its copy. A failed
-  copy is held and retried alone. `.out`/`.exit` are lists. Rebased onto the #38 fixes: no code
-  conflict (matrix never touched the 1b release; a running matrix counts as live there).
-- **Real run** (2 Haiku copies, `permissions: default`, throwaway repo): each instance got its own
-  worktree and window, and its permission item carried `dev#1`/`dev#2`. `range` rendered both
-  outputs, and `dev#2`'s window closed after its Stop hook. `laight attach … dev#2` wasn't tried
-  (no terminal); the same `session:dev#2` target took the paste.
-- **A review agent found two bugs, both fixed with regression tests:** a held entry matrix was
-  re-raised every tick, and a second route re-expanded a running matrix.
-- **Decided on #12:** no matrix on gates; at most 32 copies. Dropped there: rejecting `.exit`
-  "used as a string" (`validate` can't see how a field is used).
+**PR #40 (matrix) review answered** (`/cross:fix-cr`; #38 is merged). Fixed, each with a
+regression test seen red first:
+- A rendered matrix list and a `laight done` output must be exactly one JSON value: trailing text
+  or a stray `]` was silently dropped (`spec.DecodeJSON`, shared).
+- `validate` rejects a matrix agent step whose seat isn't `cwd: worktree`, and a literal matrix
+  over 32 copies.
+- `inbox.raised` carries the seat, hop and copy it holds.
+- Spec: instance `dev#k` keeps its worktree (and conversation unless `fresh`) across expansions.
+- Filed #41 (agent output spliced into a shell step's `run:`); the serial launch is #39.
 
 ---
 
 ## Do this next
 
-### 1. PR #40 — answer its review
+### 1. PR #40 — two review questions, then merge
 
-`/cross:fix-cr 40`: review 5621587565 (one medium, the serial seat-instance start in
-`rig.go` blocking the loop, see #39; four low) has no replies yet. Merge #38 first, then #40.
+The user decides (see the PR's replies): max_hops refusing every pending copy, one `failed` item
+each; and whether a held copy's window stays open until its item is answered. Then retarget #40
+to `main` (its base `12-needs-matrix` was merged in #38) and merge.
 
 ### 2. #15 — stuck detection (M3)
 
@@ -59,6 +51,8 @@ Matters once matrix copies are Claude seats with `max_parallel` > 2.
 
 ## Waiting on the user
 
+- PR #40's two questions (threads on `engine.go` max_hops, and the review body's held-copy
+  window): asked in the reply comment there.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
 - `session: fresh` was exercised (the reviewer relaunched for verify) but not checked for an
   independent conversation; say if that needs its own check.
