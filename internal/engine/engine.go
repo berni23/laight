@@ -39,6 +39,7 @@ type Engine struct {
 	cmu     sync.Mutex                 // cancels is shared with running shell steps
 	cancels map[int]context.CancelFunc // how to stop each running shell step, by hop
 	busy    map[string]time.Time       // run/seat → not stuck before then: its worktree had a write
+	told    map[string]bool            // inbox items raised by hooks already printed
 }
 
 func (e *Engine) logf(format string, args ...any) {
@@ -122,6 +123,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 	for _, ev := range events {
 		e.event(ev)
 	}
+	e.announce(r)
 	for _, name := range stops {
 		if err := e.Rig.Tmux.KillWindow(r.Session, r.Seats[name].Window); err != nil {
 			e.logf("warning: can't close %s: %v", name, err)

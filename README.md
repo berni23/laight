@@ -109,7 +109,8 @@ laight abort <run>          # asks first, then tears down only that rig
 ```
 
 The same items can reach your phone, Slack or any command you configure, with buttons. Answers go straight back to the waiting agent:
-permission hooks block until you decide, replies are pasted into the pane, gates route the run.
+permission and question hooks block until you decide, an agent gets your answer as if you had
+typed it, gates route the run.
 Unanswered permissions time out to *deny*, never *allow*.
 
 ## Seeing what happens

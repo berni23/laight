@@ -265,6 +265,9 @@ type hookInput struct {
 	ToolInput      json.RawMessage `json:"tool_input"`
 }
 
+// askHint steers a question asked in plain text, which nobody reads, to the inbox.
+const askHint = "If you need a human's answer first, ask with the AskUserQuestion tool: it reaches the laight inbox, a question in plain text reaches nobody."
+
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
 // may get its next one. If not, the agent is told once how to finish it (Claude sets
 // stop_hook_active when it is already continuing because of this hook, so it never loops); the
@@ -298,7 +301,7 @@ func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
 	}
 	return json.NewEncoder(stdout).Encode(map[string]string{
 		"decision": "block",
-		"reason":   engine.Reminder(r.Spec.Step(s.Step), laight),
+		"reason":   engine.Reminder(r.Spec.Step(s.Step), laight) + " " + askHint,
 	})
 }
 

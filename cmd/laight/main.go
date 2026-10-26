@@ -23,7 +23,7 @@ Usage:
   laight run <workflow> [key=value…]   spin up the rig of a new run and follow it
   laight attach [run] [seat]           jump into a run's tmux session, or one seat's window
   laight abort [run] [--yes]           stop a live run; on a finished one, delete its worktrees
-  laight inbox [<item> <answer>]       what waits for a human, in every run; or answer one
+  laight inbox [<item> [<answer>…]]    what waits for a human, in every run; show or answer one
   laight done <exit> [key=value…]      for agents: finish the current step
   laight version                       print the version
 

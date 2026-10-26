@@ -214,3 +214,30 @@ func TestNudgeSkippedWhilePermissionWaits(t *testing.T) {
 		t.Fatalf("nudged with a permission item waiting; seat %+v\n%s", r.Seats["a"], screen)
 	}
 }
+
+// A question or permission item a seat's hook raised is printed in the engine window once, with
+// the agent's options and how to answer; items of other runs are not.
+func TestAnnounce(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	var log strings.Builder
+	e.Log = &log
+	q := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?",
+		Questions: []inbox.Ask{{Question: "which fix?", Options: []inbox.Option{{Label: "reject"}, {Label: "document"}}}}}
+	other := inbox.Item{ID: state.NewID(time.Now()), Run: "01OTHER", Seat: "a", Kind: inbox.Permission, Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	for _, it := range []inbox.Item{q, other} {
+		if err := inbox.Put(e.Home, it); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tick(t, e, id)
+	tick(t, e, id)
+	got := log.String()
+	for _, want := range []string{"? a asks: which fix?\n", "1. reject", "2. document", "laight inbox " + q.Short() + " <number"} {
+		if strings.Count(got, want) != 1 {
+			t.Errorf("%q printed %d times:\n%s", want, strings.Count(got, want), got)
+		}
+	}
+	if strings.Contains(got, "Bash") {
+		t.Errorf("another run's item printed:\n%s", got)
+	}
+}

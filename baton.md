@@ -11,14 +11,18 @@ that.
 
 ---
 
-## Last session — 2026-10-25
+## Last session — 2026-10-26
 
-- #50 — `.laight/workflows/issue-cycle.yaml` merged (#51): laight's own development as a workflow
-  (pickup → `/cross:cr` → compact + `/cross:fix-cr` → reviewer verifies → a human gate → merge),
-  and the `compact: true` step field. **Not run for real yet.**
-- The first real run moves to go-orchestrator, so it doesn't develop the tool running it: an
-  `issue-cycle.yaml` adapted to it is in berni23/go-orchestrator#155 (with the move to the plugins). #53 is the
-  analysis of that run.
+- #55 (absorbs #34) — `AskUserQuestion` is a `question` item: the inbox shows the question and
+  its numbered options, takes a number, `1,3` or free text per question, and the hook hands
+  Claude the answers (allow + `updatedInput.answers`). The engine window announces hook items.
+  Verified on real Claude Code 2.1.310 (auto and yolo seats, two questions with a multi-select,
+  and a pane answer withdrawing the item). §6 updated.
+- go-orchestrator run `aaqt7j` (#50) was aborted on exactly this gap; its worktrees are kept.
+- #55 review round (PR #56): option numbers are kept on the item and mapped to the agent's labels
+  by position; typed answers are redacted in events; a late multi-part answer says "already
+  answered"; an unreadable `AskUserQuestion` is denied. §6 says option labels count as choices
+  for M4. `make check` only; the hook's output shape didn't change, so no new real run.
 
 ---
 
@@ -26,17 +30,17 @@ that.
 
 ### 1. #50 — first supervised run of `laight run issue-cycle`, in go-orchestrator
 
-Run it from `../go-orchestrator` with `laight run issue-cycle` and watch it end to end: the slash
-commands as objectives (go-orchestrator now uses the `baton` and `cross` plugins and a `baton.md`,
-berni23/go-orchestrator#155), the compaction before `fix`, and `verify` in the reviewer's same conversation.
-It holds on the `approve` gate before merging into go-orchestrator's `dev`; answer it with
-`laight inbox`. Then #53: analyse the run, one issue per problem.
+Install the binary with #55 in it (`GOPROXY=direct go install github.com/berni23/laight/cmd/laight@main`),
+then run it from `../go-orchestrator` with `laight run issue-cycle` and watch it end to end
+(berni23/go-orchestrator#155 has the workflow). Its `pickup` asked about #115 last time: answer
+it from `laight inbox` now. It holds on the `approve` gate before merging into `dev`. Then #53:
+analyse the run, one issue per problem. Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
-### 2. #34 — AskUserQuestion as a real `question` item (M3)
+### 2. #55 — the rest of the inbox rethink
 
-It arrives as a permission item today, so the answer can't be given there. The other M3 hook;
-the stuck item's pattern (engine-raised item, answer acted on in `watch`) is reusable for the
-plain-text question the Stop hook catches.
+Questions are done. Still open there: a plain-text question that gets past the Stop hook's
+reminder (show the agent's last message on the stuck item, with a free-text reply), and
+permission titles that say what the tool does, not only its name.
 
 ### 3. #39 — seat launches block the engine loop
 
