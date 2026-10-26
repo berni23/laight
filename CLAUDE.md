@@ -304,7 +304,7 @@ pasted into a pane, and panes are logged.
 | `failed` | unrouted `failed`, `max_hops` exceeded, seat crashed | retry step / abort run |
 
 An item: `{id, run, repo, workflow, step, seat, hop, kind, title, detail, choices[], created,
-expires?, answer?, answered?, match?}`. `detail` is a short excerpt (the command, the last lines of
+expires?, answer?, answered?, match?, questions[]?, answers[]?, picks[]?}`. `detail` is a short excerpt (the command, the last lines of
 the pane). **The queue itself redacts** title and detail (secret patterns, and the exact values of
 the seat's secret env named in `LAIGHT_REDACT_ENV`), strips control characters, then cuts the
 detail to 2000 bytes, so no producer can forget.
@@ -326,8 +326,12 @@ The hook raises a `question` item, not a permission: its title is the question (
 the title, never cut), and it has no fixed choices. `laight inbox` lists the options numbered,
 `laight inbox <item>` shows the descriptions too, and the answer is one per question: an option's
 number (several, `1,3`, for a multi-select), or anything else typed, which Claude takes as written.
-The hook returns allow with the tool's input plus `answers` keyed by each question as the agent
-wrote it, which Claude takes as the user's answer. Answered in the pane instead, PostToolUse's
+The item records the numbers picked (`picks`), and the hook maps them to the agent's own labels by
+position, since redacted labels can look alike; typed words go as typed. The hook returns allow
+with the tool's input plus `answers` keyed by each question as the agent wrote it, which Claude
+takes as the user's answer. The answered item keeps the answer as typed, for the hook; the
+`inbox.answered` event gets it redacted. A call laight can't read as questions is denied at once,
+saying why: allowed, it would leave Claude's own dialog in a pane with no item to answer. Answered in the pane instead, PostToolUse's
 input has gained `answers` and `annotations`, which the match ignores, so the item is withdrawn.
 An unanswered question expires like a permission: denied. The engine window prints every item a
 seat's hook raises (the question and its options, or the command) with how to answer it.
@@ -338,7 +342,9 @@ seat's hook raises (the question and its options, or the command) with how to an
   extracted when a second backend arrives. Every backend besides `files` and `terminal` is
   optional, compiled in, and off unless configured.
 - No channel ever opens an inbound port. Phone/chat answers carry the item's one-time token.
-  Only title, project, run, step and choices leave the machine, never `detail`.
+  Only title, project, run, step and choices leave the machine, never `detail`. A question's
+  option labels count as choices (redacted, as the inbox shows them); their descriptions stay
+  local like `detail` (decided in the #56 review).
 - **Routing** in `~/.laight/config.yaml` (overrides in `.laight/laight.yaml`):
 
 ```yaml

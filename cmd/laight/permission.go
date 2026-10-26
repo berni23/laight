@@ -82,7 +82,13 @@ func askPermission(ctx context.Context, home, runID, seat string, in hookInput) 
 		Detail: permissionDetail(in), Choices: []string{inbox.Allow, inbox.Deny},
 		Created: now, Expires: &expires, Match: toolMatch(in),
 	}
-	if qs := questions(in); len(qs) > 0 {
+	if in.ToolName == askQuestion {
+		qs := questions(in)
+		if len(qs) == 0 {
+			// Allowed, Claude would show its own dialog in a pane, with nothing in the inbox to
+			// answer: deny, and say why, so the agent asks again.
+			return inbox.Deny, "laight couldn't read this AskUserQuestion call: give each question its text, and ask again", nil, nil
+		}
 		it.Kind, it.Title, it.Detail, it.Choices, it.Questions = inbox.Question, questionTitle(seat, qs), "", nil, qs
 	}
 	if h := r.ActiveOn(seat); h != nil {
@@ -148,11 +154,11 @@ func expire(home string, it inbox.Item) (*inbox.Item, error) {
 	for i := range none {
 		none[i] = "(" + inbox.Deny + ": nobody answered)"
 	}
-	return inbox.Reply(home, it.ID, none)
+	return inbox.Reply(home, it.ID, none, nil)
 }
 
 // questions reads what an AskUserQuestion call asks; nothing for any other tool, or a call it
-// can't read (which then asks for permission, showing its input).
+// can't read (which is denied).
 func questions(in hookInput) []inbox.Ask {
 	if in.ToolName != askQuestion {
 		return nil
@@ -225,9 +231,8 @@ func answered(it *inbox.Item, in hookInput) (string, string, map[string]any, err
 }
 
 // replied gives Claude a question's answers as the user's: the tool's own input, plus `answers`
-// keyed by each question as the agent wrote it. An answer that is an option's label, as the
-// inbox shows it (redacted), becomes that option's label as the agent wrote it; anything else
-// goes as typed.
+// keyed by each question as the agent wrote it. Options picked by number become their labels as
+// the agent wrote them (the inbox shows them redacted); anything else goes as typed.
 func replied(it *inbox.Item, in hookInput) (string, string, map[string]any, error) {
 	var input map[string]any
 	d := json.NewDecoder(bytes.NewReader(in.ToolInput))
@@ -236,36 +241,26 @@ func replied(it *inbox.Item, in hookInput) (string, string, map[string]any, erro
 		return inbox.Deny, "laight couldn't read the question it was answering", nil, nil
 	}
 	asked := questions(in)
-	if len(asked) != len(it.Questions) || len(it.Answers) != len(asked) {
+	if len(asked) != len(it.Questions) || len(it.Answers) != len(asked) || it.Picks != nil && len(it.Picks) != len(asked) {
 		return inbox.Deny, "laight couldn't match the answers to the questions", nil, nil
 	}
 	answers := map[string]any{}
 	for i, q := range asked {
-		answers[q.Question] = original(it.Answers[i], it.Questions[i], q)
+		answers[q.Question] = it.Answers[i]
+		if it.Picks == nil || len(it.Picks[i]) == 0 {
+			continue
+		}
+		labels := make([]string, len(it.Picks[i]))
+		for j, k := range it.Picks[i] {
+			if k < 1 || k > len(q.Options) {
+				return inbox.Deny, "laight couldn't match the answers to the questions", nil, nil
+			}
+			labels[j] = q.Options[k-1].Label
+		}
+		answers[q.Question] = strings.Join(labels, ", ")
 	}
 	input["answers"] = answers
 	return inbox.Allow, "", input, nil
-}
-
-// original maps an answer given from the inbox's copy of a question back to the agent's labels.
-// A multi-select answer is labels joined by ", ".
-func original(answer string, shown, asked inbox.Ask) string {
-	label := func(a string) (string, bool) {
-		for k, o := range shown.Options {
-			if o.Label == a && k < len(asked.Options) {
-				return asked.Options[k].Label, true
-			}
-		}
-		return a, false
-	}
-	if l, ok := label(answer); ok || !shown.MultiSelect {
-		return l
-	}
-	parts := strings.Split(answer, ", ")
-	for i, p := range parts {
-		parts[i], _ = label(p)
-	}
-	return strings.Join(parts, ", ")
 }
 
 // permissionDetail is what the tool wants to do: a Bash command as it is, anything else as its

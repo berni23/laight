@@ -68,9 +68,12 @@ type Item struct {
 	// input), so the seat's PostToolUse hook can withdraw it when the prompt was answered in the pane.
 	Match string `json:"match,omitempty"`
 	// Questions is what a question item asks, as the agent asked it (AskUserQuestion); it has no
-	// Choices, and its Answers, one per question, are option labels or free text.
+	// Choices, and its Answers, one per question, are option labels (as shown, redacted) or free
+	// text. Picks holds, per question, the option numbers picked (1-based), none for free text:
+	// the hook maps them to the agent's own labels, since redacted labels can look alike.
 	Questions []Ask    `json:"questions,omitempty"`
 	Answers   []string `json:"answers,omitempty"`
+	Picks     [][]int  `json:"picks,omitempty"`
 }
 
 // Ask is one question an agent asks, with the options it offers. An answer may also be
@@ -193,8 +196,9 @@ func Answer(home, id, choice string) (*Item, error) {
 	return commit(home, id, it)
 }
 
-// Reply answers a question item, one answer per question. Like Answer, the first answer wins.
-func Reply(home, id string, answers []string) (*Item, error) {
+// Reply answers a question item, one answer per question, with the option numbers each picked
+// (nil when none were). Like Answer, the first answer wins.
+func Reply(home, id string, answers []string, picks [][]int) (*Item, error) {
 	it, err := read(pendingFile(home, id))
 	if errors.Is(err, os.ErrNotExist) {
 		if exists(answeredFile(home, id)) {
@@ -216,7 +220,10 @@ func Reply(home, id string, answers []string) (*Item, error) {
 			return nil, fmt.Errorf("answer %d to %s is empty", i+1, it.Short())
 		}
 	}
-	it.Answers, it.Answer = answers, strings.Join(answers, "; ")
+	if picks != nil && len(picks) != len(answers) {
+		return nil, fmt.Errorf("%s: %d picks for %d answers", it.Short(), len(picks), len(answers))
+	}
+	it.Answers, it.Picks, it.Answer = answers, picks, strings.Join(answers, "; ")
 	return commit(home, id, it)
 }
 

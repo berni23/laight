@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +99,9 @@ func TestQuestionHook(t *testing.T) {
 	if done, _ := inbox.Answered(home, it.ID); done == nil || strings.Join(done.Answers, "|") != "Use ***|unit, e2e" {
 		t.Errorf("recorded: %+v", done)
 	}
+	if code, out := inboxCmd(t, it.Short(), "1", "1"); code == 0 || !strings.Contains(out, "already answered") {
+		t.Errorf("a late answer: %d %s", code, out)
+	}
 
 	// In words, for a single question.
 	one := `{"tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Colour?","options":[{"label":"Red"},{"label":"Green"}]}]}}`
@@ -104,19 +109,45 @@ func TestQuestionHook(t *testing.T) {
 		if it.Title != "a asks: Colour?" {
 			t.Errorf("title %q", it.Title)
 		}
-		if code, out := inboxCmd(t, it.Short(), "neither: purple"); code != 0 {
+		if code, out := inboxCmd(t, it.Short(), "neither: purple, ghp_cccccccccccccccccccccccccccccc"); code != 0 {
 			t.Errorf("answer: %s", out)
 		}
 	})
-	if a := d["updatedInput"].(map[string]any)["answers"].(map[string]any); a["Colour?"] != "neither: purple" {
+	// The agent gets the words as typed; the run's events, which aren't for agents, don't.
+	if a := d["updatedInput"].(map[string]any)["answers"].(map[string]any); a["Colour?"] != "neither: purple, ghp_cccccccccccccccccccccccccccccc" {
+		t.Errorf("answers %v", a)
+	}
+	if b, err := os.ReadFile(filepath.Join(state.Dir(home, id), "events.jsonl")); err != nil || bytes.Contains(b, []byte("ghp_ccc")) || !bytes.Contains(b, []byte("neither: purple")) {
+		t.Errorf("events keep a typed secret: %v\n%s", err, b)
+	}
+
+	// Options that look the same once redacted: a number picks its own option, and words that
+	// read like a shown label go as typed.
+	twins := `{"tool_name":"AskUserQuestion","tool_input":{"questions":[
+		{"question":"Token?","options":[{"label":"Use ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"label":"Use ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]},
+		{"question":"Again?","options":[{"label":"Use ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"label":"Use ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]}]}}`
+	_, d = permission(t, home, twins, func(it *inbox.Item) {
+		if it.Questions[0].Options[0].Label != it.Questions[0].Options[1].Label {
+			t.Errorf("options not alike once redacted: %+v", it.Questions[0])
+		}
+		if code, out := inboxCmd(t, it.Short(), "2", "Use ***"); code != 0 {
+			t.Errorf("answer: %s", out)
+		}
+	})
+	if a := d["updatedInput"].(map[string]any)["answers"].(map[string]any); a["Token?"] != "Use ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" || a["Again?"] != "Use ***" {
 		t.Errorf("answers %v", a)
 	}
 
-	// A call laight can't read as questions still asks: for permission, showing its input.
+	// A call laight can't read as questions is denied at once: an allow would leave Claude's own
+	// dialog waiting in a pane, with nothing in the inbox to answer.
 	odd := `{"tool_name":"AskUserQuestion","tool_input":{"questions":"what?"}}`
-	it, _ = permission(t, home, odd, func(it *inbox.Item) { inbox.Answer(home, it.ID, inbox.Deny) })
-	if it.Kind != inbox.Permission || !strings.Contains(it.Detail, "what?") {
-		t.Errorf("unreadable question: %+v", it)
+	var out, errs bytes.Buffer
+	if code := cmdHook([]string{"permission-request"}, strings.NewReader(odd), &out, &errs); code != 0 ||
+		!strings.Contains(out.String(), `"behavior":"deny"`) || !strings.Contains(out.String(), "AskUserQuestion") {
+		t.Errorf("unreadable question: %d %s %s", code, out.String(), errs.String())
+	}
+	if items, _ := inbox.Pending(home); len(items) > 0 {
+		t.Errorf("unreadable question raised %+v", items[0])
 	}
 }
 

@@ -13,7 +13,9 @@ All notable changes to laight are documented here. The format follows
   `laight inbox <item> 2` (or your own words, one answer per question, `1,3` for several options)
   answers it; the agent gets the answer as if you had typed it. Answering in the pane withdraws
   the item. The run's engine window now announces every question and permission item with how to
-  answer it, and the Stop hook's reminder tells agents to ask with `AskUserQuestion`. (#55)
+  answer it, and the Stop hook's reminder tells agents to ask with `AskUserQuestion`. A typed
+  answer is redacted in the run's events, and a question laight can't read is denied with the
+  reason instead of becoming an allow/deny item. (#55)
 - `compact: true` on an agent step compacts its seat's conversation (`/compact`) before the
   objective is pasted; Claude runs the objective once compaction is done. Only for claude-code
   seats with `session: resume` (`validate` checks).

@@ -199,21 +199,21 @@ func TestReply(t *testing.T) {
 		t.Error("Answer answered a question")
 	}
 	for _, bad := range [][]string{nil, {"a", "b"}, {" "}} {
-		if _, err := Reply(home, q.ID, bad); err == nil {
+		if _, err := Reply(home, q.ID, bad, nil); err == nil {
 			t.Errorf("Reply took %q", bad)
 		}
 	}
-	if it, err := Reply(home, q.ID, []string{"x "}); err != nil || it.Answer != "x " || it.Answered == nil {
+	if it, err := Reply(home, q.ID, []string{"x "}, nil); err != nil || it.Answer != "x " || it.Answered == nil {
 		t.Fatalf("reply: %+v, %v", it, err)
 	}
-	if it, err := Reply(home, q.ID, []string{"other"}); !errors.Is(err, ErrAlreadyAnswered) || it.Answers[0] != "x " {
+	if it, err := Reply(home, q.ID, []string{"other"}, nil); !errors.Is(err, ErrAlreadyAnswered) || it.Answers[0] != "x " {
 		t.Errorf("a late reply: %+v, %v", it, err)
 	}
 	g := Item{ID: "01AAAAAAAAAAAAAAAAAAAAAAG1", Run: "r", Kind: Gate, Title: "go?", Choices: []string{"yes"}}
 	if err := Put(home, g); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Reply(home, g.ID, []string{"yes"}); err == nil {
+	if _, err := Reply(home, g.ID, []string{"yes"}, nil); err == nil {
 		t.Error("Reply answered a gate")
 	}
 }

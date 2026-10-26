@@ -97,7 +97,9 @@ func unread(home string, srv tmux.Server, it *inbox.Item) string {
 // the options' descriptions.
 func printQuestions(w io.Writer, it *inbox.Item, full bool) {
 	for i, q := range it.Questions {
-		if len(it.Questions) > 1 || full && strings.Contains(q.Question, "\n") { // else the title says it
+		// The title holds the first question on one line. Print each question when there are
+		// several, and in full a lone one that spans lines; otherwise the title already says it.
+		if len(it.Questions) > 1 || (full && strings.Contains(q.Question, "\n")) {
 			fmt.Fprintf(w, "    %s%s\n", numbered(i, len(it.Questions)), indent(q.Question, "    "))
 		}
 		for k, o := range q.Options {
@@ -112,6 +114,7 @@ func printQuestions(w io.Writer, it *inbox.Item, full bool) {
 	}
 }
 
+// numbered labels question i of n ("Q2. "), and a lone question not at all.
 func numbered(i, n int) string {
 	if n == 1 {
 		return ""
@@ -174,32 +177,34 @@ func showItem(home, ref string, stdout, stderr io.Writer) int {
 }
 
 // replies turns what someone typed into a question item's answers: an option's number (several
-// with commas, for a multi-select question) becomes its label; anything else is the answer.
-func replies(it *inbox.Item, args []string) ([]string, error) {
+// with commas, for a multi-select question) becomes its label, and is kept in picks; anything
+// else is the answer, as typed.
+func replies(it *inbox.Item, args []string) (answers []string, picks [][]int, err error) {
 	if len(args) != len(it.Questions) {
-		return nil, fmt.Errorf("%s asks %d questions: give one answer each, quoted if it has spaces", it.Short(), len(it.Questions))
+		return nil, nil, fmt.Errorf("%s asks %d questions: give one answer each, quoted if it has spaces", it.Short(), len(it.Questions))
 	}
-	out := make([]string, len(args))
+	answers, picks = make([]string, len(args)), make([][]int, len(args))
 	for i, a := range args {
 		q := it.Questions[i]
-		out[i] = a
+		answers[i] = a
 		var labels []string
+		var nums []int
 		for _, n := range strings.Split(a, ",") {
 			k, err := strconv.Atoi(strings.TrimSpace(n))
 			if err != nil || k < 1 || k > len(q.Options) {
-				labels = nil
+				labels, nums = nil, nil
 				break
 			}
-			labels = append(labels, q.Options[k-1].Label)
+			labels, nums = append(labels, q.Options[k-1].Label), append(nums, k)
 		}
 		switch {
 		case len(labels) == 1, len(labels) > 1 && q.MultiSelect:
-			out[i] = strings.Join(labels, ", ")
+			answers[i], picks[i] = strings.Join(labels, ", "), nums
 		case len(labels) > 1:
-			return nil, fmt.Errorf("question %d takes one option, not %s", i+1, a)
+			return nil, nil, fmt.Errorf("question %d takes one option, not %s", i+1, a)
 		}
 	}
-	return out, nil
+	return answers, picks, nil
 }
 
 func answerItem(home, ref string, answers []string, stdout, stderr io.Writer) int {
@@ -208,19 +213,26 @@ func answerItem(home, ref string, answers []string, stdout, stderr io.Writer) in
 		return fail(stderr, "%v", err)
 	}
 	pending, err := inbox.Get(home, id)
-	if err == nil {
-		if why := unread(home, tmux.Server{Socket: state.Socket(home)}, pending); why != "" {
-			return fail(stderr, "%s: nothing will read an answer (%s)", pending.Short(), why)
+	if errors.Is(err, os.ErrNotExist) {
+		if done, _ := inbox.Answered(home, id); done != nil {
+			return fail(stderr, "item %s was already answered: %s", done.Short(), done.Answer)
 		}
+	}
+	if err != nil {
+		return fail(stderr, "%v", err)
+	}
+	if why := unread(home, tmux.Server{Socket: state.Socket(home)}, pending); why != "" {
+		return fail(stderr, "%s: nothing will read an answer (%s)", pending.Short(), why)
 	}
 	var it *inbox.Item
 	switch {
-	case pending != nil && pending.Kind == inbox.Question:
+	case pending.Kind == inbox.Question:
 		var given []string
-		if given, err = replies(pending, answers); err != nil {
+		var picks [][]int
+		if given, picks, err = replies(pending, answers); err != nil {
 			return fail(stderr, "%v", err)
 		}
-		it, err = inbox.Reply(home, id, given)
+		it, err = inbox.Reply(home, id, given, picks)
 	case len(answers) != 1:
 		return fail(stderr, "usage: laight inbox [<item> [<answer>…]]")
 	default:
@@ -232,8 +244,10 @@ func answerItem(home, ref string, answers []string, stdout, stderr io.Writer) in
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	// A question's answer is whatever was typed: the hook hands it to the agent as is, the
+	// run's events get it redacted (§6).
 	state.Append(home, state.Event{Run: it.Run, Type: "inbox.answered", Step: it.Step, Seat: it.Seat, Hop: it.Hop,
-		Data: map[string]any{"item": it.ID, "kind": it.Kind, "answer": it.Answer}})
+		Data: map[string]any{"item": it.ID, "kind": it.Kind, "answer": inbox.Redact(it.Answer)}})
 	fmt.Fprintf(stdout, "%s: %s\n", it.Short(), it.Answer)
 	return 0
 }

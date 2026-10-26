@@ -19,6 +19,10 @@ that.
   Verified on real Claude Code 2.1.310 (auto and yolo seats, two questions with a multi-select,
   and a pane answer withdrawing the item). §6 updated.
 - go-orchestrator run `aaqt7j` (#50) was aborted on exactly this gap; its worktrees are kept.
+- #55 review round (PR #56): option numbers are kept on the item and mapped to the agent's labels
+  by position; typed answers are redacted in events; a late multi-part answer says "already
+  answered"; an unreadable `AskUserQuestion` is denied. §6 says option labels count as choices
+  for M4. `make check` only; the hook's output shape didn't change, so no new real run.
 
 ---
 
