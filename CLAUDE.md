@@ -335,6 +335,17 @@ saying why: allowed, it would leave Claude's own dialog in a pane with no item t
 input has gained `answers` and `annotations`, which the match ignores, so the item is withdrawn.
 An unanswered question expires like a permission: denied. The engine window prints every item a
 seat's hook raises (the question and its options, or the command) with how to answer it.
+A question's `detail` is what the agent said in its turn before asking (#55, checked on 2.1.314):
+its text and one line per tool it ran, from the transcript (`transcript_path`), then its last
+message, from its screen, since Claude writes the question's own message to the transcript only
+once it is answered. The last 1500 bytes are kept; like any detail it never leaves the machine.
+
+**The run's inbox pane** (#55): `laight run` splits the engine window and runs
+`laight inbox --follow <run>` under the engine, with the focus. It prints each of the run's items
+in full as it arrives, and answers the oldest with each line typed (another one when the line
+starts with its id; a choice may be shortened to `y`, `a`…); it ends with the run. A window's
+command is its first pane, so the engine's liveness, capture and keys never go to the inbox pane.
+A trial: a popup or the engine window itself may replace it.
 
 - The item's state always lives with its run. A queue backend only *carries* items and answers.
   First answer wins, enforced with an atomic rename, so duplicate deliveries are harmless.
@@ -382,7 +393,8 @@ laight validate [workflow]           schema + semantic checks (run also does thi
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live
 laight watch [run]                   live pipeline view; no run = every run, one line each
 laight show [run] [--export]         the web view (localhost, foreground)
-laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts)
+laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts);
+             [--follow [run]]        kept open, answered at a prompt (the pane `run` opens)
 laight attach <run> [seat]           jump into the run's tmux session (or one seat's window)
 laight abort <run>                   stop a live run; on a finished one, remove its worktrees
 laight doctor                        tmux, git, runtimes, hooks; queue and channels

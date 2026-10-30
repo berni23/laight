@@ -18,6 +18,7 @@ import (
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/runtime"
 	"github.com/berni23/laight/internal/state"
+	"github.com/berni23/laight/internal/tmux"
 )
 
 // permissionWait is how long a permission item waits for an answer before laight denies it. It
@@ -89,7 +90,9 @@ func askPermission(ctx context.Context, home, runID, seat string, in hookInput) 
 			// answer: deny, and say why, so the agent asks again.
 			return inbox.Deny, "laight couldn't read this AskUserQuestion call: give each question its text, and ask again", nil, nil
 		}
-		it.Kind, it.Title, it.Detail, it.Choices, it.Questions = inbox.Question, questionTitle(seat, qs), "", nil, qs
+		// Its detail is what the agent said before asking, which the question alone may not make
+		// clear: like any detail, it stays on this machine (§6).
+		it.Kind, it.Title, it.Detail, it.Choices, it.Questions = inbox.Question, questionTitle(seat, qs), turnContext(in.TranscriptPath, seatSaid(home, r, seat)), nil, qs
 	}
 	if h := r.ActiveOn(seat); h != nil {
 		it.Step, it.Hop = h.Step, h.N
@@ -155,6 +158,19 @@ func expire(home string, it inbox.Item) (*inbox.Item, error) {
 		none[i] = "(" + inbox.Deny + ": nobody answered)"
 	}
 	return inbox.Reply(home, it.ID, none, nil)
+}
+
+// seatSaid is the agent's last message, read from the seat's screen while it shows the question.
+func seatSaid(home string, r *state.Run, seat string) string {
+	s := r.Seats[seat]
+	if s == nil {
+		return ""
+	}
+	screen, err := tmux.Server{Socket: state.Socket(home)}.Capture(r.Session, s.Window)
+	if err != nil {
+		return ""
+	}
+	return lastSaid(screen)
 }
 
 // questions reads what an AskUserQuestion call asks; nothing for any other tool, or a call it

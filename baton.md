@@ -11,18 +11,16 @@ that.
 
 ---
 
-## Last session — 2026-10-26
+## Last session — 2026-10-30
 
-- #55 (absorbs #34) — `AskUserQuestion` is a `question` item: the inbox shows the question and
-  its numbered options, takes a number, `1,3` or free text per question, and the hook hands
-  Claude the answers (allow + `updatedInput.answers`). The engine window announces hook items.
-  Verified on real Claude Code 2.1.310 (auto and yolo seats, two questions with a multi-select,
-  and a pane answer withdrawing the item). §6 updated.
-- go-orchestrator run `aaqt7j` (#50) was aborted on exactly this gap; its worktrees are kept.
-- #55 review round (PR #56): option numbers are kept on the item and mapped to the agent's labels
-  by position; typed answers are redacted in events; a late multi-part answer says "already
-  answered"; an unreadable `AskUserQuestion` is denied. §6 says option labels count as choices
-  for M4. `make check` only; the hook's output shape didn't change, so no new real run.
+- #55 — a question item's detail is what the agent said
+  in its turn before asking: its text and tool calls from the transcript, plus its last message
+  from its screen (Claude writes that one to the transcript only once the question is answered).
+- #55 — `laight run` splits the engine window: `laight inbox --follow <run>` runs under the
+  engine, with the focus, shows each item in full and answers at a prompt. tmux pane-level calls
+  now target a window's first pane (`.{top-left}`), so the engine's liveness never reads the
+  inbox pane. Both verified on real Claude Code 2.1.314 (`ask-context`, a throwaway workflow:
+  answered by number and in words from the pane). §6 and §8 updated.
 
 ---
 
@@ -38,7 +36,8 @@ analyse the run, one issue per problem. Clean up `aaqt7j`'s worktrees with `laig
 
 ### 2. #55 — the rest of the inbox rethink
 
-Questions are done. Still open there: a plain-text question that gets past the Stop hook's
+Questions, their context and the run's inbox pane are done. The pane is a trial: the user may
+prefer a tmux popup or answering in the engine window; ask after they've used it. Still open: a plain-text question that gets past the Stop hook's
 reminder (show the agent's last message on the stuck item, with a free-text reply), and
 permission titles that say what the tool does, not only its name.
 

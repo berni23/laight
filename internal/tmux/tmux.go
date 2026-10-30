@@ -83,6 +83,14 @@ func (s Server) NewWindow(session string, w Window) error {
 	return err
 }
 
+// SplitWindow adds a pane running w.Cmd under the window's own, 40% of its height, and gives it
+// the focus. The window's command stays its first pane (see Alive); w.Name is not used.
+func (s Server) SplitWindow(session, window string, w Window) error {
+	args := []string{"split-window", "-v", "-l", "40%", "-t", target(session, window)}
+	_, err := s.run(append(args, windowArgs(w)...)...)
+	return err
+}
+
 func windowArgs(w Window) []string {
 	var args []string
 	if w.Dir != "" {
@@ -141,6 +149,10 @@ func (s Server) CurrentWindow(session string) string {
 // target is session:window, matched exactly.
 func target(session, window string) string { return "=" + session + ":" + window }
 
+// pane is the window's own pane, the one its command runs in: its first, whichever has the focus
+// (a pane split off later, like the engine's inbox, is below or beside it).
+func pane(session, window string) string { return target(session, window) + ".{top-left}" }
+
 // KillWindow stops one window and its process. A missing window is not an error.
 func (s Server) KillWindow(session, window string) error {
 	if !s.HasWindow(session, window) {
@@ -184,18 +196,20 @@ func (s Server) HasWindow(session, window string) bool {
 
 // PaneDead reports whether the window's command has exited (its pane is kept by remain-on-exit).
 func (s Server) PaneDead(session, window string) bool {
-	out, err := s.run("display-message", "-p", "-t", target(session, window), "#{pane_dead}")
+	out, err := s.run("display-message", "-p", "-t", pane(session, window), "#{pane_dead}")
 	return err == nil && strings.TrimSpace(out) == "1"
 }
 
 // ErrGone is returned by Alive when the window, its session or the whole server no longer exists.
 var ErrGone = errors.New("window gone")
 
-// Alive reports whether the window's command is still running. It returns ErrGone when the
-// window doesn't exist any more, and any other error when tmux couldn't say: a caller deciding
-// that an agent crashed must not mistake one for the other.
+// Alive reports whether the window's command, its first pane, is still running (a pane split
+// off later, like the engine's inbox, doesn't count). It returns ErrGone when the window
+// doesn't exist any more, and any other error when tmux couldn't say: a caller deciding that an
+// agent crashed must not mistake one for the other.
 func (s Server) Alive(session, window string) (bool, error) {
-	out, err := s.run("list-windows", "-t", "="+session, "-F", "#{window_name}\t#{pane_dead}")
+	// Panes come window by window, each window's in index order: its first line is its first pane.
+	out, err := s.run("list-panes", "-s", "-t", "="+session, "-F", "#{window_name}\t#{pane_dead}")
 	if err != nil {
 		msg := err.Error()
 		// tmux says "error connecting to <socket> (No such file or directory)" when the socket
@@ -216,18 +230,18 @@ func (s Server) Alive(session, window string) (bool, error) {
 
 // Capture returns the visible text of the window's pane.
 func (s Server) Capture(session, window string) (string, error) {
-	return s.run("capture-pane", "-p", "-J", "-t", target(session, window))
+	return s.run("capture-pane", "-p", "-J", "-t", pane(session, window))
 }
 
 // PipeTo appends everything the window's pane prints to file.
 func (s Server) PipeTo(session, window, file string) error {
-	_, err := s.run("pipe-pane", "-o", "-t", target(session, window), "cat >> "+Quote(file))
+	_, err := s.run("pipe-pane", "-o", "-t", pane(session, window), "cat >> "+Quote(file))
 	return err
 }
 
 // SendKeys sends tmux key names (Enter, Down, "2"…) to the window. For text, use Paste.
 func (s Server) SendKeys(session, window string, keys ...string) error {
-	_, err := s.run(append([]string{"send-keys", "-t", target(session, window)}, keys...)...)
+	_, err := s.run(append([]string{"send-keys", "-t", pane(session, window)}, keys...)...)
 	return err
 }
 
@@ -243,7 +257,7 @@ func (s Server) Paste(session, window, text string) error {
 	if out, err := c.CombinedOutput(); err != nil {
 		return fmt.Errorf("tmux load-buffer: %s", strings.TrimSpace(string(out)))
 	}
-	if _, err := s.run("paste-buffer", "-p", "-d", "-b", buf, "-t", target(session, window)); err != nil {
+	if _, err := s.run("paste-buffer", "-p", "-d", "-b", buf, "-t", pane(session, window)); err != nil {
 		return err
 	}
 	return s.SendKeys(session, window, "Enter")

@@ -24,6 +24,7 @@ Usage:
   laight attach [run] [seat]           jump into a run's tmux session, or one seat's window
   laight abort [run] [--yes]           stop a live run; on a finished one, delete its worktrees
   laight inbox [<item> [<answer>…]]    what waits for a human, in every run; show or answer one
+               [--follow [run]]        keep it open and answer at a prompt (laight run opens one)
   laight done <exit> [key=value…]      for agents: finish the current step
   laight version                       print the version
 

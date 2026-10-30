@@ -432,7 +432,7 @@ func TestEngineDiedCantSay(t *testing.T) {
 // killEngine kills the run's engine as a crash would, leaving its pane dead.
 func (e *rigEnv) killEngine(r *state.Run) {
 	e.t.Helper()
-	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
+	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine.{top-left}", "#{pane_pid}").Output()
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil || pid == 0 {
 		e.t.Fatalf("engine pid %q: %v", out, err)
