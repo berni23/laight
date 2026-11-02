@@ -21,6 +21,9 @@ that.
 - #55's last piece (question context and the run's inbox pane) is committed as finished work;
   the rest of #55 is superseded by #64 and #61.
 - `CLAUDE.md` §11 points to the companion plugins repo, berni23/laight-plugins.
+- PR #69's review answered: a question's context is redacted before it is cut; the inbox pane
+  refuses a line typed for an item that has gone, and exits when its engine dies. Points for the
+  pane's future (items printed twice, `%id` targeting, tmux 3.1) are on #67.
 
 ---
 

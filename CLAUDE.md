@@ -338,12 +338,16 @@ seat's hook raises (the question and its options, or the command) with how to an
 A question's `detail` is what the agent said in its turn before asking (#55, checked on 2.1.314):
 its text and one line per tool it ran, from the transcript (`transcript_path`), then its last
 message, from its screen, since Claude writes the question's own message to the transcript only
-once it is answered. The last 1500 bytes are kept; like any detail it never leaves the machine.
+once it is answered. It is redacted, then the last 1500 bytes are kept (a cut secret no longer
+matches, so whatever cuts text before the queue scrubs it first); like any detail it never leaves
+the machine.
 
 **The run's inbox pane** (#55): `laight run` splits the engine window and runs
 `laight inbox --follow <run>` under the engine, with the focus. It prints each of the run's items
 in full as it arrives, and answers the oldest with each line typed (another one when the line
-starts with its id; a choice may be shortened to `y`, `a`…); it ends with the run. A window's
+starts with its id; a choice may be shortened to `y`, `a`…). When the item the prompt named goes
+before a line reaches it, that line is refused, never given to the next item. It ends with the
+run, and says so when its engine dies. A window's
 command is its first pane, so the engine's liveness, capture and keys never go to the inbox pane.
 A trial: a popup or the engine window itself may replace it.
 
