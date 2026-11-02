@@ -243,7 +243,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
 	case "stop":
-		if err := stopHook(home, runID, seat, in.StopHookActive, stdout); err != nil {
+		if err := stopHook(home, runID, seat, in, stdout); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
 	case "permission-request":
@@ -254,7 +254,11 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	}
 	if args[0] == "session-start" || args[0] == "stop" { // the tool hooks log what they did, as inbox events
-		state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: map[string]any{"source": in.Source}})
+		data := map[string]any{"source": in.Source}
+		if n := in.waiting(); n > 0 {
+			data["background"] = n
+		}
+		state.Append(home, state.Event{Run: runID, Seat: seat, Type: "hook." + args[0], Data: data})
 	}
 	return 0
 }
@@ -271,6 +275,23 @@ type hookInput struct {
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	TranscriptPath string          `json:"transcript_path"`
+	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background agents and
+	// shells; one still running will start a new turn when it finishes.
+	BackgroundTasks []struct {
+		Type   string `json:"type"`
+		Status string `json:"status"`
+	} `json:"background_tasks"`
+}
+
+// waiting counts the background tasks still running when the turn ended.
+func (in hookInput) waiting() int {
+	n := 0
+	for _, t := range in.BackgroundTasks {
+		if t.Status == "running" {
+			n++
+		}
+	}
+	return n
 }
 
 // askHint steers a question asked in plain text, which nobody reads, to the inbox.
@@ -279,8 +300,10 @@ const askHint = "If you need a human's answer first, ask with the AskUserQuestio
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
 // may get its next one. If not, the agent is told once how to finish it (Claude sets
 // stop_hook_active when it is already continuing because of this hook, so it never loops); the
-// second time, it marks the seat stopped, and the engine asks a human (a stuck item).
-func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
+// second time, it marks the seat stopped, and the engine asks a human (a stuck item). A turn that
+// ends while background agents run isn't a stop: the agent resumes when they finish (#57), so it
+// is neither reminded nor counted, and the step's timeout still bounds it.
+func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	r, err := state.Load(home, runID)
 	if err != nil {
 		return err
@@ -297,10 +320,10 @@ func stopHook(home, runID, seat string, again bool, stdout io.Writer) error {
 		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
 		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
 	}
-	if r.ActiveOn(seat) == nil {
+	if r.ActiveOn(seat) == nil || in.waiting() > 0 {
 		return nil
 	}
-	if again { // told once already: the engine raises a stuck item
+	if in.StopHookActive { // told once already: the engine raises a stuck item
 		return os.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
 	}
 	laight, err := os.Executable()

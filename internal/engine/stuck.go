@@ -169,6 +169,9 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 		if p, err := inbox.Get(e.Home, s.Stuck); err == nil && (!s.Turn || p.Hop != s.Hop) {
 			inbox.Drop(e.Home, s.Stuck)
 			s.Stuck = ""
+			// Logged like an answer, so a reader of the events can tell it is no longer asked.
+			return nil, []state.Event{{Run: r.ID, Type: "inbox.answered", Step: p.Step, Seat: name, Hop: p.Hop,
+				Data: map[string]any{"item": p.ID, "kind": p.Kind, "answer": "withdrawn"}}}
 		}
 		return nil, nil
 	}

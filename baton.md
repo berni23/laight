@@ -13,14 +13,13 @@ that.
 
 ## Last session — 2026-11-02
 
-- **#60 done: the spec is unattended by design.** Requirement 4, §1, §2, §3 (rule 4: a failed run
-  ends; example with `human:`, `permissions.deny`, gate `default:`), §6 rewritten as before /
-  during / after the run with the inbox parked in §6.4, §7, §8 (nine commands,
-  `run --from-failed`), §10 (M3 unattended, M4 observability, M5 supervisor, inbox parked),
-  §12.2–12.3. README and CHANGELOG follow. The status line says where code still lags (#63).
-- #63's two open calls, confirmed by the user: running siblings finish before a run ends red;
-  stuck steps nudge once then fail, as their own kind `stuck` (quiet seats: `timeout`).
-- Stacked on PR #69 (both edit `CLAUDE.md`).
+- **#60 merged**: the spec is unattended by design (requirement 4, §3 rule 4, §6, §8, §10).
+  #63's two calls are settled on the issue: running siblings finish before a run ends red; a
+  stuck step nudges once, then fails as kind `stuck` (a quiet seat: `timeout`).
+- **#57 fixed**: Claude Code's Stop hook input lists `background_tasks` (checked on 2.1.316); a
+  turn that ends with one `running` gets no reminder and doesn't count toward stuck (§12.2). A
+  withdrawn stuck item now logs `inbox.answered` (`answer: withdrawn`). Verified on a real run
+  with `.laight/workflows/background-agent.yaml`.
 
 ---
 
@@ -28,10 +27,9 @@ that.
 
 ### 1. #61 and #63 — deny lists on auto mode, and the failure report
 
-The first code. #61 starts by checking three things against current Claude Code (listed in the
-issue). #63's decisions are on the issue; **#57 (false stuck) first**, since a stuck step now
-fails the run. Then #62 (credentials),
-then #66 (rerun from failed) before anything that makes runs fail more often. Order: §10 M3.
+The first unattended code. #61 starts by checking three things against current Claude Code
+(listed in the issue). #63's decisions are in its comments. Then #62 (credentials), then #66
+(rerun from failed) before anything that makes runs fail more often. Order: §10 M3.
 
 ### 2. #67 — park the inbox in code
 
@@ -41,11 +39,11 @@ Small; can go alongside #61.
 ### 3. #50 — a real issue-cycle run in go-orchestrator, as evidence
 
 Once #61/#63 land: what it gets denied and where it fails is the data for #64 and `/laight:plan`.
-Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
+Its review and fix steps (background agents) no longer raise false stuck items. Clean up
+`aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
 ---
 
 ## Waiting on the user
 
-- Merge PR #69, then this one (stacked on it).
 - #17 (shell step `cwd`) waits for a workflow that needs it.

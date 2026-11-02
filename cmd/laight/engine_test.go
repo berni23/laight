@@ -889,8 +889,19 @@ func TestStopHook(t *testing.T) {
 		}
 		return out.String()
 	}
+	// A turn that ends while a background agent runs (input as Claude Code 2.1.316 sends it) is
+	// not a stop: no reminder, no stopped mark, however often it happens (#57).
+	waiting := `{"background_tasks":[{"id":"a3","type":"subagent","status":"running","description":"review"}]}`
+	for _, in := range []string{waiting, strings.Replace(waiting, `{`, `{"stop_hook_active": true,`, 1)} {
+		if out := hook(in); out != "" {
+			t.Errorf("stop while a background agent runs blocked: %s", out)
+		}
+	}
+	if _, err := os.Stat(engine.StoppedMark(home, id, "a")); !os.IsNotExist(err) {
+		t.Errorf("stopped mark while a background agent runs: %v", err)
+	}
 	var got map[string]string
-	if err := json.Unmarshal([]byte(hook(`{}`)), &got); err != nil || got["decision"] != "block" ||
+	if err := json.Unmarshal([]byte(hook(`{"background_tasks":[{"type":"subagent","status":"completed"}]}`)), &got); err != nil || got["decision"] != "block" ||
 		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail, failed)") {
 		t.Errorf("first stop: %v %v", got, err)
 	}
