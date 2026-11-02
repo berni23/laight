@@ -13,43 +13,41 @@ that.
 
 ## Last session — 2026-11-02
 
-- **#60 merged**: the spec is unattended by design (requirement 4, §3 rule 4, §6, §8, §10).
-  #63's two calls are settled on the issue: running siblings finish before a run ends red; a
-  stuck step nudges once, then fails as kind `stuck` (a quiet seat: `timeout`).
-- **#57 fixed**: Claude Code's Stop hook input lists `background_tasks` (checked on 2.1.316); a
-  turn that ends with one `running` gets no reminder and doesn't count toward stuck (§12.2). A
-  withdrawn stuck item now logs `inbox.answered` (`answer: withdrawn`). After PR #71's review:
-  only background *agents* count (shells may never end), and a seat isn't idle after `done` while
-  one runs. Verified on real runs with `.laight/workflows/background-agent.yaml`. Filed #72 (the
-  spinner keeps the seat log moving, so the quiet clock can't fire) and #73 (unchecked
-  `background_tasks` types and statuses): both matter before #63 makes timeouts fail runs. Second
-  review round: a seat held after `done` has no bound until #72, and #63 must stop a waiting
-  agent before it frees its seat (noted on #63 and #72).
+- **#61 done**: deny lists (workflow and per seat, `permissions: { mode, deny }`) go into each
+  seat's `--settings`. A permission prompt is denied at once and recorded as a `permission.denied`
+  event (auto mode's own refusals too, through `PermissionDenied`). `validate` rejects rules
+  Claude would skip or never match, and `init` scaffolds a starter list. Checked on 2.1.316: deny
+  rules hold under yolo, and a deny-rule hit reaches no hook (noted on #63, which must read those
+  hits from transcripts if its report lists them). Verified on a real run with
+  `.laight/workflows/deny-check.yaml`. Not yet seen on a run: `PermissionDenied`, and auto mode
+  falling back to a prompt after 3 or 20 refusals; #50 is where they'll show up.
 
 ---
 
 ## Do this next
 
-### 1. #61 and #63 — deny lists on auto mode, and the failure report
+### 1. #63, the failure report (with #72 and #73)
 
-The first unattended code. #61 starts by checking three things against current Claude Code
-(listed in the issue). #63's decisions are in its comments; #72 and #73 should land before or
-with it, since #63 turns a timeout or a false stop into a failed run. Then #62 (credentials), then #66
-(rerun from failed) before anything that makes runs fail more often. Order: §10 M3.
+A failed run ends red with `failure: {…}` in run.json and a report from `laight run`, listing the
+`permission.denied` events (#61's comment on #63 has the fields). #72 and #73 should land before
+or with it, since #63 turns a timeout or a false stop into a failed run. Then #62 (credentials),
+then #66 (rerun from failed). Order: §10 M3.
 
-### 2. #67 — park the inbox in code
+### 2. #67, park the inbox in code
 
-Hide `laight inbox`, stop opening the inbox pane by default; the spec already says so (§6.4, §8).
-Small; can go alongside #61.
+Hide `laight inbox` and stop opening the inbox pane by default. Since #61 the only items a hook
+raises are questions. Small; can go alongside #63.
 
-### 3. #50 — a real issue-cycle run in go-orchestrator, as evidence
+### 3. #50, a real issue-cycle run in go-orchestrator, as evidence
 
-Once #61/#63 land: what it gets denied and where it fails is the data for #64 and `/laight:plan`.
-Its review and fix steps (background agents) no longer raise false stuck items. Clean up
+The data for #64 and `/laight:plan`: which requests get denied (deny rule, hook or auto mode) and
+where the run fails. It also confirms the `PermissionDenied` hook on a real refusal. Clean up
 `aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
 ---
 
 ## Waiting on the user
 
+- #74: should a seat's `permissions` default to `auto`? In `default` mode every prompt is now
+  denied.
 - #17 (shell step `cwd`) waits for a workflow that needs it.

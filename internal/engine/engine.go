@@ -40,6 +40,7 @@ type Engine struct {
 	cancels map[int]context.CancelFunc // how to stop each running shell step, by hop
 	busy    map[string]time.Time       // run/seat → not stuck before then: its worktree had a write
 	told    map[string]bool            // inbox items raised by hooks already printed
+	evOff   map[string]int64           // run → how much of its events.jsonl announce has read
 }
 
 func (e *Engine) logf(format string, args ...any) {

@@ -15,9 +15,11 @@ gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight i
 `failed` and `permission` items, the last from the `PermissionRequest` hook). The acceptance run
 passed (#11: two real issues to merged PRs, one review/fix round each); `question` items followed
 (#55). **Direction change (#68, 2026-11-02): unattended by design.** The inbox is parked, not
-deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists (#61) and failure
-reports (#63) are next. Where this spec describes that model, the code catches up issue by issue:
-until #63 lands, a failed step still holds on a `failed` inbox item instead of ending the run.
+deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists are in (#61: a
+permission is denied at once and recorded, never an inbox item); failure reports (#63) are next.
+Where this spec describes that model, the code catches up issue by issue: until #63 lands, a
+failed step still holds on a `failed` inbox item instead of ending the run, and until #64 a
+question still goes to the inbox.
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -304,7 +306,8 @@ pasted into a pane, and panes are logged.
   `Bash(<abs path to laight> done:*)` and `Bash(laight done:*)` (what agents type). Permission
   modes map to `--permission-mode`: `default` → `manual`, `auto` → `auto`, `yolo` →
   `bypassPermissions`. The workflow's and the seat's `permissions.deny` go into the same settings
-  file's `permissions.deny` (#61).
+  file's `permissions.deny` (#61), with hooks for `PermissionRequest` (deny, §6.1) and
+  `PermissionDenied` (record auto mode's own refusals).
 - **Launch prompts:** the folder-trust dialog and yolo's warning are accepted via `capture-pane`,
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.
@@ -334,6 +337,16 @@ an entry point (issue, ticket, prompt) into a brief, deny lists and credentials 
   in `default` mode) is **denied at once** by the `PermissionRequest` hook, which tells the agent
   no human is available and records the denial (tool and input, redacted) on the step. The step
   doesn't fail on its own; the agent decides. Every denial is in the run report, green runs too.
+  Checked on Claude Code 2.1.316 (#61): deny rules hold in every mode, `bypassPermissions`
+  included, so a deny list is never ignored; a call a deny rule blocks reaches no hook after
+  `PreToolUse` (not `PermissionRequest`, not `PermissionDenied`), so it is the agent's to see and
+  only the transcript records it; in `default` mode an unmatched call reaches `PermissionRequest`.
+  From the docs, not yet seen on a run: auto mode prompts again after 3 refusals in a row or 20 in
+  all (that prompt is a `PermissionRequest`, so it is denied too), and each refusal of its own
+  fires `PermissionDenied` (tool, input, reason), recorded as `by: auto mode`. `validate` checks
+  the rules' shape and rejects those Claude accepts but never matches (`Write(…)`, `Glob(…)`,
+  `NotebookEdit(…)`; an MCP rule with `(…)`; `:*` before the end), since a broken deny rule is
+  silently skipped.
 - **Credentials are a preflight** (#62): `credentials: { <name>: { check, login?, min_valid? } }`.
   `laight run` runs every `check` before the rig spins up; a failing one with a `login` runs it in
   the user's terminal (the one human moment, at the start) and checks again; otherwise the run
@@ -398,7 +411,8 @@ the pane). **The queue itself redacts** title and detail (secret patterns, and t
 the seat's secret env named in `LAIGHT_REDACT_ENV`), strips control characters, then cuts the
 detail to 2000 bytes, so no producer can forget.
 
-**Permission items** (#10, verified against Claude Code 2.1.302): title `<seat> wants to use
+**Permission items** (no longer raised since #61: a permission is denied at once; the `laight
+inbox` side still handles them) (#10, verified against Claude Code 2.1.302): title `<seat> wants to use
 <tool>`, detail the command or tool input. Claude shows its own dialog while the hook waits, so
 either place can answer: the inbox (the hook returns allow/deny), *No*/Esc in the pane (Claude
 stops the hook, which drops its item), or *Yes* in the pane (a `PostToolUse` hook withdraws the
@@ -468,8 +482,9 @@ it, and an expired item fell back to *deny*, never allow.
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
   `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
-  `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` and
-  `assumption` (#61, #64), `inbox.raised|answered` (parked; `answered` also covers an item that
+  `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
+  `input` redacted and cut, `by` laight or auto mode, auto mode's `reason`; the engine window
+  prints each) and `assumption` (#64), `inbox.raised|answered` (parked; `answered` also covers an item that
   expired or was withdrawn, not only a human's answer), `hook.<name>` (session start and stop; a
   stop waiting on background agents carries `background: N`), `tool` (name + duration, never arguments), `usage` (tokens/cost per seat per step).
 - `laight watch`: every run, one line each. `laight watch <run>`: a live CI-style pipeline

@@ -186,9 +186,9 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 			return nil, nil // finished meanwhile: nothing to remind it of
 		}
 		if waitingOnPermission(e.Home, r.ID, name) {
-			// It started working again and reached a permission dialog: the paste's Enter would
+			// It started working again and reached a question's dialog: the paste's Enter would
 			// answer it. The permission item already asks a human.
-			e.logf("… %s: not nudged, a permission item is waiting", name)
+			e.logf("… %s: not nudged, a question item is waiting", name)
 			return nil, nil
 		}
 		e.logf("↻ %s: nudged from the inbox", name)
@@ -300,32 +300,29 @@ func (e *Engine) stopShell(hop int) {
 	}
 }
 
-// waitingOnPermission reports whether the seat has a permission or question item pending: its
-// pane shows Claude's dialog, and a human is asked.
+// waitingOnPermission reports whether the seat has a question item pending: its pane shows
+// Claude's dialog, and a human is asked. (A permission is denied at once, never an item: #61.)
 func waitingOnPermission(home, run, seat string) bool {
 	items, _ := inbox.Pending(home)
 	return slices.ContainsFunc(items, func(it *inbox.Item) bool {
-		return it.Run == run && it.Seat == seat && (it.Kind == inbox.Permission || it.Kind == inbox.Question)
+		return it.Run == run && it.Seat == seat && it.Kind == inbox.Question
 	})
 }
 
-// announce prints, once each, the run's items that a seat's hook raised (the engine prints its
-// own as it raises them), so the run's terminal says what waits and how to answer it.
+// announce prints, once each, the run's question items that a seat's hook raised (the engine
+// prints its own as it raises them), so the run's terminal says what waits and how to answer
+// it, and every request a seat was denied.
 func (e *Engine) announce(r *state.Run) {
+	e.announceDenials(r)
 	items, _ := inbox.Pending(e.Home)
 	for _, it := range items {
-		if it.Run != r.ID || (it.Kind != inbox.Permission && it.Kind != inbox.Question) || e.told[it.ID] {
+		if it.Run != r.ID || it.Kind != inbox.Question || e.told[it.ID] {
 			continue
 		}
 		if e.told == nil {
 			e.told = map[string]bool{}
 		}
 		e.told[it.ID] = true
-		if it.Kind == inbox.Permission {
-			what, _, _ := strings.Cut(it.Detail, "\n")
-			e.logf("? %s: %s (laight inbox %s allow|deny)", it.Title, what, it.Short())
-			continue
-		}
 		e.logf("? %s", it.Title)
 		for i, q := range it.Questions {
 			if len(it.Questions) > 1 {
@@ -337,6 +334,33 @@ func (e *Engine) announce(r *state.Run) {
 		}
 		e.logf("  answer: laight inbox %s <number or \"your own words\">%s; in full: laight inbox %s; or in window %s",
 			it.Short(), strings.Repeat(" …", len(it.Questions)-1), it.Short(), it.Seat)
+	}
+}
+
+// announceDenials prints the permission.denied events the seats' hooks appended since the last
+// tick: what a seat asked for and wasn't given.
+func (e *Engine) announceDenials(r *state.Run) {
+	evs, off, err := state.EventsFrom(e.Home, r.ID, e.evOff[r.ID])
+	if err != nil {
+		return
+	}
+	if e.evOff == nil {
+		e.evOff = map[string]int64{}
+	}
+	e.evOff[r.ID] = off
+	for _, ev := range evs {
+		if ev.Type != "permission.denied" {
+			continue
+		}
+		what, _, _ := strings.Cut(fmt.Sprint(ev.Data["input"]), "\n")
+		by := "nobody to ask"
+		if ev.Data["by"] == "auto mode" {
+			by = "auto mode"
+			if reason, ok := ev.Data["reason"].(string); ok && reason != "" {
+				by += ": " + reason
+			}
+		}
+		e.logf("⊘ %s denied %v: %s (%s)", ev.Seat, ev.Data["tool"], what, by)
 	}
 }
 

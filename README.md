@@ -10,9 +10,10 @@ you before the run, and get a green or red result, CircleCI-style.**
 > its rig of agents in tmux, hands each agent its steps, in series or in parallel (`needs`, and
 > `matrix` for one agent per item), runs shell steps and gates, routes on their exits (loops
 > included), and tears the rig down. **The design just changed to unattended by design**
-> ([#68](https://github.com/berni23/laight/issues/68)): deny lists, a credentials preflight,
-> failure reports and rerun-from-failed are next (M3, see the [milestones](CLAUDE.md#10-milestones));
-> until they land, permission prompts and failed steps still go to a (now parked) inbox.
+> ([#68](https://github.com/berni23/laight/issues/68)): deny lists are in (a permission prompt is
+> denied at once and recorded); failure reports, a credentials preflight and rerun-from-failed are
+> next (M3, see the [milestones](CLAUDE.md#10-milestones)); until they land, questions and failed
+> steps still go to a (now parked) inbox.
 > The specification is in [CLAUDE.md](CLAUDE.md).
 > Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).

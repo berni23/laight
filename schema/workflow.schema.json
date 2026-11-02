@@ -26,6 +26,14 @@
       }
     },
     "env": { "$ref": "#/$defs/env", "description": "Environment for every seat and shell step." },
+    "permissions": {
+      "type": "object",
+      "description": "What no seat may ever do. Claude blocks a matching call itself, in every permission mode; auto mode judges the rest.",
+      "additionalProperties": false,
+      "properties": {
+        "deny": { "$ref": "#/$defs/deny" }
+      }
+    },
     "seats": {
       "type": "object",
       "description": "The rig: exactly these agents are started for a run.",
@@ -72,6 +80,16 @@
       "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$",
       "description": "A Go duration such as 90m, 1h30m or 45s."
     },
+    "permission_mode": {
+      "enum": ["default", "auto", "yolo"],
+      "description": "Claude's --permission-mode: default (manual), auto, or yolo (bypassPermissions)."
+    },
+    "deny": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true,
+      "description": "Claude Code permission rules, Tool or Tool(specifier): Bash(git push --force:*), Edit(//etc/**), WebFetch(domain:example.com), mcp__server."
+    },
     "env": {
       "type": "object",
       "description": "Environment variables. An unquoted value is passed on as YAML read it (0x1F as 31, 1.10 as 1.1): quote a value you need verbatim.",
@@ -88,7 +106,20 @@
         "command": { "type": "string", "description": "For runtime shell: the command to run in the pane." },
         "cwd": { "type": "string", "minLength": 1, "description": "worktree (own per run, default) | repo (the main checkout) | a path." },
         "session": { "enum": ["resume", "fresh"], "description": "fresh restarts the CLI before each step. Default resume." },
-        "permissions": { "enum": ["default", "auto", "yolo"], "description": "Default: default (every permission prompt goes to the inbox)." },
+        "permissions": {
+          "description": "default | auto | yolo, or { mode, deny }: a deny list added to the workflow's. Default: default. A request that would ask a human is denied at once: nobody watches a run. A seat's `permissions` replaces a shared seat's whole.",
+          "oneOf": [
+            { "$ref": "#/$defs/permission_mode" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "mode": { "$ref": "#/$defs/permission_mode" },
+                "deny": { "$ref": "#/$defs/deny" }
+              }
+            }
+          ]
+        },
         "guidance": { "type": "string", "description": "A Markdown file, relative to .laight/, appended to the agent's system prompt." },
         "model": { "type": "string" },
         "env": { "$ref": "#/$defs/env" },

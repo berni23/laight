@@ -407,8 +407,8 @@ func applyDefaults(w *Workflow) {
 		if s.Session == "" {
 			s.Session = "resume"
 		}
-		if s.Permissions == "" {
-			s.Permissions = "default"
+		if s.Permissions.Mode == "" {
+			s.Permissions.Mode = "default"
 		}
 	}
 	for _, st := range w.Steps {

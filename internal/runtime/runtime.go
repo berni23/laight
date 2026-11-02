@@ -29,8 +29,9 @@ type Launch struct {
 type Runtime interface {
 	// Command is the shell command line that starts the seat.
 	Command(l Launch) string
-	// Settings is the per-seat settings file to generate (hooks, permissions), or nil.
-	Settings(laight string) []byte
+	// Settings is the per-seat settings file to generate (hooks, permissions), or nil. deny is
+	// the seat's deny rules, the workflow's included.
+	Settings(laight string, deny []string) []byte
 	// Hooks reports whether the runtime announces ready through the SessionStart hook.
 	Hooks() bool
 	// Accept is the launch prompts the driver may answer, as the text of the option to pick.
@@ -58,7 +59,7 @@ func (claude) Command(l Launch) string {
 	if l.Resume && transcriptExists(l.SessionID) {
 		argv = []string{"claude", "--resume", l.SessionID}
 	}
-	argv = append(argv, "--permission-mode", permissionModes[l.Seat.Permissions])
+	argv = append(argv, "--permission-mode", permissionModes[l.Seat.Permissions.Mode])
 	if l.Name != "" {
 		argv = append(argv, "--name", l.Name)
 	}
@@ -89,16 +90,18 @@ func transcriptExists(id string) bool {
 	return len(m) > 0
 }
 
-// PermissionTimeout is how long Claude waits for the PermissionRequest hook, which waits for a
-// human to answer in the inbox. Claude's default (10 minutes) is short for someone away from the
-// desk; the hook denies a little before this, so a timeout never leaves only Claude's dialog in the pane.
+// PermissionTimeout is how long Claude waits for the PermissionRequest hook. A permission is
+// denied at once; a question (AskUserQuestion) waits for a human in the inbox, until #64. Claude's
+// default (10 minutes) is short for someone away from the desk; the hook gives up a little
+// before this, so a timeout never leaves only Claude's dialog in the pane.
 const PermissionTimeout = time.Hour
 
-// Settings lets the seat finish steps without a prompt, reports ready through SessionStart and
-// the end of each turn through Stop, and sends every permission prompt to the inbox through
-// PermissionRequest.
+// Settings lets the seat finish steps without a prompt, forbids its deny rules (which Claude
+// enforces in every mode, bypassPermissions too: checked on 2.1.316), reports ready through
+// SessionStart and the end of each turn through Stop, denies through PermissionRequest whatever
+// would ask a human, and records auto mode's own denials through PermissionDenied.
 // Passed with --settings, so the user's own ~/.claude/settings.json is never written.
-func (claude) Settings(laight string) []byte {
+func (claude) Settings(laight string, deny []string) []byte {
 	hook := func(event string, timeout time.Duration) []any {
 		h := map[string]any{"type": "command", "command": tmux.Quote(laight) + " hook " + event}
 		if timeout > 0 {
@@ -106,12 +109,17 @@ func (claude) Settings(laight string) []byte {
 		}
 		return []any{map[string]any{"hooks": []any{h}}}
 	}
+	perms := map[string]any{"allow": []string{"Bash(" + laight + " done:*)", "Bash(laight done:*)"}}
+	if len(deny) > 0 {
+		perms["deny"] = deny
+	}
 	b, _ := json.MarshalIndent(map[string]any{
-		"permissions": map[string]any{"allow": []string{"Bash(" + laight + " done:*)", "Bash(laight done:*)"}},
+		"permissions": perms,
 		"hooks": map[string]any{
 			"SessionStart":      hook("session-start", 0),
 			"Stop":              hook("stop", 0),
 			"PermissionRequest": hook("permission-request", PermissionTimeout),
+			"PermissionDenied":  hook("permission-denied", 0),
 			// A prompt allowed in the pane: withdraw its inbox item.
 			"PostToolUse":        hook("post-tool-use", 0),
 			"PostToolUseFailure": hook("post-tool-use", 0),
@@ -127,10 +135,10 @@ func (claude) Accept() []string { return []string{"Yes, I trust this folder", "Y
 
 type shell struct{}
 
-func (shell) Command(l Launch) string { return l.Seat.Command }
-func (shell) Settings(string) []byte  { return nil }
-func (shell) Hooks() bool             { return false }
-func (shell) Accept() []string        { return nil }
+func (shell) Command(l Launch) string          { return l.Seat.Command }
+func (shell) Settings(string, []string) []byte { return nil }
+func (shell) Hooks() bool                      { return false }
+func (shell) Accept() []string                 { return nil }
 
 // Choose looks for a launch prompt on screen offering one of the accept options. It returns the
 // key to press next: "Enter" when the cursor (❯) is on the option, "Down" to move towards it,

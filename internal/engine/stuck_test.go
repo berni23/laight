@@ -39,7 +39,7 @@ func tick(t *testing.T, e *Engine, id string) {
 
 // A hooked seat that ran `laight done` but whose Stop hook never said its turn ended (the hook
 // failed) holds its next step: past the step's timeout that is a stuck item, not a silent stall.
-// While a permission item is pending for the seat, a human is already asked, so it isn't one.
+// While a question item is pending for the seat, a human is already asked, so it isn't one.
 // Fail frees the seat.
 func TestStuckTurnNeverEnded(t *testing.T) {
 	steps := two(map[string]string{"handoff": "two"})
@@ -55,14 +55,14 @@ func TestStuckTurnNeverEnded(t *testing.T) {
 		t.Fatalf("stuck before the timeout: %+v", items)
 	}
 
-	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Permission, Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?", Questions: []inbox.Ask{{Question: "which fix?"}}}
 	if err := inbox.Put(e.Home, perm); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1200 * time.Millisecond)
 	tick(t, e, id)
 	if items := stuckItems(t, e, id); len(items) != 0 {
-		t.Fatalf("stuck while a permission item waits: %+v", items)
+		t.Fatalf("stuck while a question item waits: %+v", items)
 	}
 	inbox.Drop(e.Home, perm.ID)
 
@@ -193,9 +193,9 @@ func TestGateNeverStuck(t *testing.T) {
 	}
 }
 
-// A nudge answered after the agent started working again and reached a permission dialog is not
-// pasted: its Enter would approve the tool without anyone answering the permission item.
-func TestNudgeSkippedWhilePermissionWaits(t *testing.T) {
+// A nudge answered after the agent started working again and reached a question's dialog is not
+// pasted: its Enter would answer the question without anyone answering the question item.
+func TestNudgeSkippedWhileQuestionWaits(t *testing.T) {
 	e, id := hooked(t, two(nil), "a")
 	tick(t, e, id)
 	if err := os.WriteFile(StoppedMark(e.Home, id, "a"), []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
@@ -206,7 +206,7 @@ func TestNudgeSkippedWhilePermissionWaits(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("items %+v", items)
 	}
-	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Permission, Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?", Questions: []inbox.Ask{{Question: "which fix?"}}}
 	if err := inbox.Put(e.Home, perm); err != nil {
 		t.Fatal(err)
 	}
@@ -221,33 +221,41 @@ func TestNudgeSkippedWhilePermissionWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(screen, "laight: Step") || r.Seats["a"].Stuck != "" {
-		t.Fatalf("nudged with a permission item waiting; seat %+v\n%s", r.Seats["a"], screen)
+		t.Fatalf("nudged with a question item waiting; seat %+v\n%s", r.Seats["a"], screen)
 	}
 }
 
-// A question or permission item a seat's hook raised is printed in the engine window once, with
-// the agent's options and how to answer; items of other runs are not.
+// A question item a seat's hook raised is printed in the engine window once, with the agent's
+// options and how to answer, and so is every request a seat was denied; other runs' are not.
 func TestAnnounce(t *testing.T) {
 	e, id := hooked(t, two(nil), "a")
 	var log strings.Builder
 	e.Log = &log
 	q := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?",
 		Questions: []inbox.Ask{{Question: "which fix?", Options: []inbox.Option{{Label: "reject"}, {Label: "document"}}}}}
-	other := inbox.Item{ID: state.NewID(time.Now()), Run: "01OTHER", Seat: "a", Kind: inbox.Permission, Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	other := inbox.Item{ID: state.NewID(time.Now()), Run: "01OTHER", Seat: "a", Kind: inbox.Question, Title: "a asks: Bash?", Questions: []inbox.Ask{{Question: "Bash?"}}}
 	for _, it := range []inbox.Item{q, other} {
 		if err := inbox.Put(e.Home, it); err != nil {
 			t.Fatal(err)
 		}
 	}
+	deny := func(run string, data map[string]any) {
+		if err := state.Append(e.Home, state.Event{Run: run, Type: "permission.denied", Seat: "a", Data: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deny(id, map[string]any{"tool": "Bash", "input": "git push origin dev\nsecond line", "by": "laight"})
 	tick(t, e, id)
+	deny(id, map[string]any{"tool": "WebFetch", "input": `{"url":"https://x"}`, "by": "auto mode", "reason": "exfiltration"})
 	tick(t, e, id)
 	got := log.String()
-	for _, want := range []string{"? a asks: which fix?\n", "1. reject", "2. document", "laight inbox " + q.Short() + " <number"} {
+	for _, want := range []string{"? a asks: which fix?\n", "1. reject", "2. document", "laight inbox " + q.Short() + " <number",
+		"⊘ a denied Bash: git push origin dev (nobody to ask)\n", `⊘ a denied WebFetch: {"url":"https://x"} (auto mode: exfiltration)` + "\n"} {
 		if strings.Count(got, want) != 1 {
 			t.Errorf("%q printed %d times:\n%s", want, strings.Count(got, want), got)
 		}
 	}
-	if strings.Contains(got, "Bash") {
+	if strings.Contains(got, "Bash?") {
 		t.Errorf("another run's item printed:\n%s", got)
 	}
 }

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/state"
@@ -50,58 +52,72 @@ func permission(t *testing.T, home, input string, answer func(it *inbox.Item)) (
 	return it, got.Out["decision"].(map[string]any)
 }
 
+// A permission request (auto mode escalating, or a seat in default mode) is denied at once:
+// no item, nobody asked. The agent is told why and what to do, and the denial is recorded on
+// the seat's step, its input redacted.
 func TestPermissionHook(t *testing.T) {
-	home, _ := doneEnv(t)
+	home, id := doneEnv(t)
 	t.Setenv("GH_TOKEN", "hunter2-not-a-pattern")
 	t.Setenv(inbox.RedactEnv, "GH_TOKEN")
-	bash := `{"tool_name":"Bash","tool_input":{"command":"curl -H 'x: hunter2-not-a-pattern' https://x","description":"d"}}`
-
-	it, d := permission(t, home, bash, func(it *inbox.Item) {
-		if _, err := inbox.Answer(home, it.ID, inbox.Allow); err != nil {
-			t.Fatal(err)
+	for _, input := range []string{
+		`{"tool_name":"Bash","tool_input":{"command":"curl -H 'x: hunter2-not-a-pattern' https://x","description":"d"}}`,
+		`{"tool_name":"Edit","tool_input":{"file_path":"/x/y.go"}}`,
+	} {
+		var out, errOut bytes.Buffer
+		done := make(chan int)
+		go func() { done <- cmdHook([]string{"permission-request"}, strings.NewReader(input), &out, &errOut) }()
+		select {
+		case code := <-done:
+			if code != 0 || errOut.Len() > 0 {
+				t.Fatalf("hook: %d %s", code, errOut.String())
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("the hook waits: a permission must be denied at once")
 		}
-	})
-	if d["behavior"] != "allow" {
-		t.Errorf("allowed: %v", d)
-	}
-	if it.Kind != inbox.Permission || it.Step != "verify" || it.Hop != 3 || it.Seat != "a" || it.Expires == nil ||
-		it.Title != "a wants to use Bash" || it.Detail != "curl -H 'x: ***' https://x" {
-		t.Errorf("item: %+v", it)
-	}
-
-	_, d = permission(t, home, `{"tool_name":"Edit","tool_input":{"file_path":"/x/y.go"}}`, func(it *inbox.Item) {
-		if it.Detail != `{"file_path":"/x/y.go"}` {
-			t.Errorf("edit detail %q", it.Detail)
+		var got struct {
+			Out struct {
+				Decision map[string]any `json:"decision"`
+			} `json:"hookSpecificOutput"`
 		}
-		inbox.Answer(home, it.ID, inbox.Deny)
-	})
-	if d["behavior"] != "deny" || d["message"] == "" {
-		t.Errorf("denied: %v", d)
+		if err := json.Unmarshal(out.Bytes(), &got); err != nil || got.Out.Decision["behavior"] != "deny" || got.Out.Decision["message"] != NoHuman {
+			t.Errorf("decision %q: %v", out.String(), err)
+		}
 	}
-
-	// The run ended: its items are withdrawn, and the hook denies.
-	_, d = permission(t, home, bash, func(it *inbox.Item) { inbox.Withdraw(home, it.Run) })
-	if d["behavior"] != "deny" || !strings.Contains(d["message"].(string), "run ended") {
-		t.Errorf("withdrawn: %v", d)
+	if items, _ := inbox.Pending(home); len(items) > 0 {
+		t.Errorf("raised %+v", items[0])
+	}
+	evs, _ := state.Events(home, id)
+	var denied []string
+	for _, ev := range evs {
+		if ev.Type == "permission.denied" && ev.Step == "verify" && ev.Hop == 3 && ev.Seat == "a" && ev.Data["by"] == "laight" {
+			denied = append(denied, fmt.Sprint(ev.Data["tool"], ": ", ev.Data["input"]))
+		}
+	}
+	if want := []string{"Bash: curl -H 'x: ***' https://x", `Edit: {"file_path":"/x/y.go"}`}; !slices.Equal(denied, want) {
+		t.Errorf("recorded %q, want %q (events %+v)", denied, want, evs)
 	}
 }
 
-// Nobody answers: the hook denies before Claude's own timeout, and records the deny as the
-// item's answer, so a late answer hears it was late.
-func TestPermissionHookExpires(t *testing.T) {
-	home, _ := doneEnv(t)
-	defer func(w time.Duration) { permissionWait = w }(permissionWait)
-	permissionWait = 50 * time.Millisecond
-	it, d := permission(t, home, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, func(*inbox.Item) {})
-	if d["behavior"] != "deny" || !strings.Contains(d["message"].(string), "nobody answered") {
-		t.Errorf("expired: %v", d)
+// Auto mode refusing a call (PermissionDenied) is recorded with its reason; nothing is answered.
+// A huge input is cut, after redaction.
+func TestPermissionDeniedHook(t *testing.T) {
+	home, id := doneEnv(t)
+	t.Setenv("GH_TOKEN", "hunter2-not-a-pattern")
+	t.Setenv(inbox.RedactEnv, "GH_TOKEN")
+	big := strings.Repeat("é", deniedInputMax)
+	input := `{"tool_name":"Bash","tool_input":{"command":"echo hunter2-not-a-pattern ` + big + `"},"tool_use_id":"t1","reason":"Irreversible Local Destruction"}`
+	var out, errOut bytes.Buffer
+	if code := cmdHook([]string{"permission-denied"}, strings.NewReader(input), &out, &errOut); code != 0 || out.Len()+errOut.Len() > 0 {
+		t.Fatalf("hook: %d %q %q", code, out.String(), errOut.String())
 	}
-	if done, _ := inbox.Answered(home, it.ID); done == nil || done.Answer != inbox.Deny {
-		t.Errorf("answer recorded: %+v", done)
+	evs, _ := state.Events(home, id)
+	if len(evs) != 1 || evs[0].Type != "permission.denied" || evs[0].Step != "verify" || evs[0].Data["by"] != "auto mode" ||
+		evs[0].Data["reason"] != "Irreversible Local Destruction" {
+		t.Fatalf("events: %+v", evs)
 	}
-	evs, _ := state.Events(home, it.Run)
-	if n := len(evs); n == 0 || evs[n-1].Type != "inbox.answered" || evs[n-1].Data["item"] != it.ID || evs[n-1].Data["answer"] != inbox.Deny || evs[n-1].Data["expired"] != true {
-		t.Errorf("events: %+v", evs) // the last one says the item expired
+	got := evs[0].Data["input"].(string)
+	if !strings.HasPrefix(got, "echo *** é") || !strings.HasSuffix(got, "…") || len(got) > deniedInputMax+len("…") || !utf8.ValidString(got) {
+		t.Errorf("input %d bytes: %.40q…", len(got), got)
 	}
 }
 
@@ -116,11 +132,11 @@ func TestPermissionHookNoInbox(t *testing.T) {
 	}
 }
 
-// A prompt allowed in Claude's own dialog: PostToolUse for the same call withdraws the item, and
-// the waiting hook returns. Another call's PostToolUse leaves it alone.
+// A question answered in Claude's own dialog: PostToolUse for another call leaves its item
+// alone; for the same call it withdraws it, and the waiting hook returns.
 func TestPermissionAnsweredInPane(t *testing.T) {
 	home, _ := doneEnv(t)
-	_, d := permission(t, home, `{"tool_name":"Bash","tool_input":{"command":"ls","description":"list"}}`, func(it *inbox.Item) {
+	_, d := permission(t, home, ask, func(it *inbox.Item) {
 		post := func(input string) {
 			var out, errOut bytes.Buffer
 			if code := cmdHook([]string{"post-tool-use"}, strings.NewReader(input), &out, &errOut); code != 0 || out.Len()+errOut.Len() > 0 {
@@ -128,10 +144,11 @@ func TestPermissionAnsweredInPane(t *testing.T) {
 			}
 		}
 		post(`{"tool_name":"Bash","tool_input":{"command":"pwd","description":"list"}}`)
+		post(strings.Replace(ask, "which fix?", "which other fix?", 1))
 		if _, err := inbox.Get(home, it.ID); err != nil {
 			t.Errorf("another call withdrew the item: %v", err)
 		}
-		post(`{"tool_name":"Bash","tool_input":{"description":"list","command":"ls"},"tool_response":{}}`)
+		post(ask)
 	})
 	if d["behavior"] != "deny" || !strings.Contains(d["message"].(string), "withdrawn") {
 		t.Errorf("withdrawn: %v", d)
@@ -161,8 +178,8 @@ func TestPermissionHookUnreadable(t *testing.T) {
 		}
 	}
 
-	it := inbox.Item{ID: "01ZERO", Run: os.Getenv("LAIGHT_RUN"), Seat: "a", Kind: inbox.Permission, Title: "t",
-		Choices: []string{inbox.Allow, inbox.Deny}, Match: toolMatch(hookInput{})}
+	it := inbox.Item{ID: "01ZERO", Run: os.Getenv("LAIGHT_RUN"), Seat: "a", Kind: inbox.Question, Title: "t",
+		Questions: []inbox.Ask{{Question: "q"}}, Match: toolMatch(hookInput{})}
 	if err := inbox.Put(home, it); err != nil {
 		t.Fatal(err)
 	}
@@ -173,11 +190,11 @@ func TestPermissionHookUnreadable(t *testing.T) {
 	}
 }
 
-// Claude stops a hook it no longer waits for (No or Esc in the pane): the hook drops its item,
+// Claude stops a hook it no longer waits for (Esc in the pane): the hook drops its item,
 // records no answer, and denies.
 func TestPermissionHookCancelled(t *testing.T) {
 	home, _ := doneEnv(t)
-	it, d := permission(t, home, `{"tool_name":"Bash","tool_input":{"command":"ls"}}`, func(*inbox.Item) {
+	it, d := permission(t, home, ask, func(*inbox.Item) {
 		syscall.Kill(os.Getpid(), syscall.SIGHUP)
 	})
 	if d["behavior"] != "deny" || d["message"] != "cancelled" {
@@ -199,7 +216,7 @@ func TestPermissionHookRunEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errOut bytes.Buffer
-	cmdHook([]string{"permission-request"}, strings.NewReader(`{"tool_name":"Bash","tool_input":{"command":"ls"}}`), &out, &errOut)
+	cmdHook([]string{"permission-request"}, strings.NewReader(ask), &out, &errOut)
 	if !strings.Contains(out.String(), `"behavior":"deny"`) || !strings.Contains(out.String(), "run ended") {
 		t.Errorf("hook: %q %q", out.String(), errOut.String())
 	}
@@ -215,8 +232,8 @@ func TestPermissionAnsweredInPaneOrder(t *testing.T) {
 	home, id := doneEnv(t)
 	call := hookInput{ToolName: "Bash", ToolInput: json.RawMessage(`{"command":"ls"}`)}
 	put := func(ref, seat string) {
-		it := inbox.Item{ID: "01" + ref, Run: id, Seat: seat, Kind: inbox.Permission, Title: "t",
-			Choices: []string{inbox.Allow, inbox.Deny}, Match: toolMatch(call)}
+		it := inbox.Item{ID: "01" + ref, Run: id, Seat: seat, Kind: inbox.Question, Title: "t",
+			Questions: []inbox.Ask{{Question: "q"}}, Match: toolMatch(call)}
 		if err := inbox.Put(home, it); err != nil {
 			t.Fatal(err)
 		}
