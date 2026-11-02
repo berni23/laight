@@ -457,6 +457,10 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
   on an issue or into this spec). Escape hatch for a commit that teaches the next session nothing:
   `[no-baton]` in the command, and say so. Reviews: `/cr` posts a two-reviewer review, `/check-cr`
   answers it; their local scratch is `scratch.review` (gitignored).
+- **Companion plugins live in [berni23/laight-plugins](https://github.com/berni23/laight-plugins)**
+  (Claude Code plugins: `baton`, `cross`, and laight's own, such as a workflow planner). A skill
+  that works alongside laight but isn't part of the binary goes there, not here; this repo
+  refers to it by plugin and skill name. Check that repo before writing a new one.
 - Maintainer-only local notes (paths, private reference repos) live in `CLAUDE.local.md`, which is
   gitignored. Read it if it exists; never commit it.
 

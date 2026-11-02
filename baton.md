@@ -11,49 +11,43 @@ that.
 
 ---
 
-## Last session — 2026-10-30
+## Last session — 2026-11-02
 
-- #55 — a question item's detail is what the agent said
-  in its turn before asking: its text and tool calls from the transcript, plus its last message
-  from its screen (Claude writes that one to the transcript only once the question is answered).
-- #55 — `laight run` splits the engine window: `laight inbox --follow <run>` runs under the
-  engine, with the focus, shows each item in full and answers at a prompt. tmux pane-level calls
-  now target a window's first pane (`.{top-left}`), so the engine's liveness never reads the
-  inbox pane. Both verified on real Claude Code 2.1.314 (`ask-context`, a throwaway workflow:
-  answered by number and in words from the pane). §6 and §8 updated.
+- **Direction change: unattended by design** (umbrella #68). A run should need no human mid-run:
+  questions are settled before the run (`/laight:plan`), permissions are deny lists on auto mode,
+  credentials are a preflight, and a failed run ends with where and why, CircleCI-style. Filed
+  #60–#67 and berni23/laight-plugins#3–#4; rewrote #58 (`laight show`) for it. The inbox is
+  **parked, not deleted** (#67; #55, #59, #49, #26 labelled `parked`).
+- #55's last piece (question context and the run's inbox pane) is committed as finished work;
+  the rest of #55 is superseded by #64 and #61.
+- `CLAUDE.md` §11 points to the companion plugins repo, berni23/laight-plugins.
 
 ---
 
 ## Do this next
 
-### 1. #50 — first supervised run of `laight run issue-cycle`, in go-orchestrator
+### 1. #60 — rewrite the spec for "unattended by design"
 
-Install the binary with #55 in it (`GOPROXY=direct go install github.com/berni23/laight/cmd/laight@main`),
-then run it from `../go-orchestrator` with `laight run issue-cycle` and watch it end to end
-(berni23/go-orchestrator#155 has the workflow). Its `pickup` asked about #115 last time: answer
-it from `laight inbox` now. It holds on the `approve` gate before merging into `dev`. Then #53:
-analyse the run, one issue per problem. Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
+On branch `60-unattended-spec`. Requirement 4, §3 rule 4 (a failed run ends), §6 (parked inbox,
+`human:` policy), §8 (`inbox` hidden), §10 (new milestones). The six decisions are listed in #60;
+the user confirmed `assume` as the default and deny lists over allowlists. No code changes.
 
-### 2. #55 — the rest of the inbox rethink
+### 2. #61 and #63 — deny lists on auto mode, and the failure report
 
-Questions, their context and the run's inbox pane are done. The pane is a trial: the user may
-prefer a tmux popup or answering in the engine window; ask after they've used it. Still open: a plain-text question that gets past the Stop hook's
-reminder (show the agent's last message on the stuck item, with a free-text reply), and
-permission titles that say what the tool does, not only its name.
+The first code. #61 starts by checking three things against current Claude Code (listed in the
+issue). Then #62 (credentials), then #66 (rerun from failed) before anything that makes runs fail
+more often. Build order: #68.
 
-### 3. #39 — seat launches block the engine loop
+### 3. #50 — a real issue-cycle run in go-orchestrator, as evidence
 
-Matters once matrix copies are Claude seats with `max_parallel` > 2. Read the #15 comment on it
-first: async launches must make `watch` skip a seat still launching.
-
-### 4. M3: `laight inbox` (TUI)
-
-The last M3 piece once questions land; every item kind now exists to show.
+Once #61/#63 land: what it gets denied and where it fails is the data for #64 and `/laight:plan`.
+Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
 ---
 
 ## Waiting on the user
 
+- #58: v1 scope (read-only pages first?), websocket or SSE + POST.
+- `inbox_vs_supervisor.md` (untracked, repo root): the design comparison from this session; keep
+  it somewhere (e.g. `scratch.docs/`) or delete it. Not committed.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
-- `session: fresh` was exercised (the reviewer relaunched for verify) but not checked for an
-  independent conversation; say if that needs its own check.
