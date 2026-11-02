@@ -335,6 +335,21 @@ saying why: allowed, it would leave Claude's own dialog in a pane with no item t
 input has gained `answers` and `annotations`, which the match ignores, so the item is withdrawn.
 An unanswered question expires like a permission: denied. The engine window prints every item a
 seat's hook raises (the question and its options, or the command) with how to answer it.
+A question's `detail` is what the agent said in its turn before asking (#55, checked on 2.1.314):
+its text and one line per tool it ran, from the transcript (`transcript_path`), then its last
+message, from its screen, since Claude writes the question's own message to the transcript only
+once it is answered. It is redacted, then the last 1500 bytes are kept (a cut secret no longer
+matches, so whatever cuts text before the queue scrubs it first); like any detail it never leaves
+the machine.
+
+**The run's inbox pane** (#55): `laight run` splits the engine window and runs
+`laight inbox --follow <run>` under the engine, with the focus. It prints each of the run's items
+in full as it arrives, and answers the oldest with each line typed (another one when the line
+starts with its id; a choice may be shortened to `y`, `a`…). When the item the prompt named goes
+before a line reaches it, that line is refused, never given to the next item. It ends with the
+run, and says so when its engine dies. A window's
+command is its first pane, so the engine's liveness, capture and keys never go to the inbox pane.
+A trial: a popup or the engine window itself may replace it.
 
 - The item's state always lives with its run. A queue backend only *carries* items and answers.
   First answer wins, enforced with an atomic rename, so duplicate deliveries are harmless.
@@ -382,7 +397,8 @@ laight validate [workflow]           schema + semantic checks (run also does thi
 laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live
 laight watch [run]                   live pipeline view; no run = every run, one line each
 laight show [run] [--export]         the web view (localhost, foreground)
-laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts)
+laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts);
+             [--follow [run]]        kept open, answered at a prompt (the pane `run` opens)
 laight attach <run> [seat]           jump into the run's tmux session (or one seat's window)
 laight abort <run>                   stop a live run; on a finished one, remove its worktrees
 laight doctor                        tmux, git, runtimes, hooks; queue and channels
@@ -445,6 +461,10 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
   on an issue or into this spec). Escape hatch for a commit that teaches the next session nothing:
   `[no-baton]` in the command, and say so. Reviews: `/cr` posts a two-reviewer review, `/check-cr`
   answers it; their local scratch is `scratch.review` (gitignored).
+- **Companion plugins live in [berni23/laight-plugins](https://github.com/berni23/laight-plugins)**
+  (Claude Code plugins: `baton`, `cross`, and laight's own, such as a workflow planner). A skill
+  that works alongside laight but isn't part of the binary goes there, not here; this repo
+  refers to it by plugin and skill name. Check that repo before writing a new one.
 - Maintainer-only local notes (paths, private reference repos) live in `CLAUDE.local.md`, which is
   gitignored. Read it if it exists; never commit it.
 

@@ -8,6 +8,11 @@ All notable changes to laight are documented here. The format follows
 
 ### Added
 
+- A question item shows what the agent said in its turn before asking: its messages and the
+  tools it ran, so you can answer without attaching to its window. (#55)
+- `laight run` opens the run's inbox in a pane under the engine: each question, permission, gate
+  or failed step shows up there in full, and you answer it by typing at the prompt (`2`, your own
+  words, `a` for allow…). `laight inbox --follow [run]` does the same anywhere. (#55)
 - Questions an agent asks (`AskUserQuestion`) are `question` items: `laight inbox` shows the
   question and its numbered options, `laight inbox <item>` shows the whole item, and
   `laight inbox <item> 2` (or your own words, one answer per question, `1,3` for several options)

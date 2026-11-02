@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# A supervised check of question items (#55): an agent asks with AskUserQuestion, a human answers
+# from `laight inbox`, and the agent reports back exactly what it received.
+#   ask (2 questions, answered by number) → words (1 question, answered in words) → report
+# Start it with:  laight run ask-question
+# Then:           laight inbox                      (the questions, numbered)
+#                 laight inbox <item> 2 1,3         (step ask: an option, then several)
+#                 laight inbox <item> "your words"  (step words)
+version: 1
+id: ask-question
+summary: An agent asks a human through the laight inbox and reports the answers it got.
+base: main
+
+seats:
+  asker:
+    label: Asker
+    session: resume
+    permissions: auto
+
+steps:
+  - id: ask
+    seat: asker
+    objective: |
+      This is a test of how questions reach a human. Do not read or change any file.
+      Ask exactly these two questions in ONE AskUserQuestion call, then wait for the answers:
+      1. question "Which colour should the test use?", header "Colour", single select,
+         options: "Red" (warm), "Green" (calm), "Blue" (cool)
+      2. question "Which checks should run?", header "Checks", multi select,
+         options: "unit", "integration", "e2e"
+      Do not guess or pick for the human. When the tool returns, report each answer exactly as you
+      received it, and finish with:
+      laight done handoff colour="<answer 1 as received>" checks="<answer 2 as received>"
+    next_hop: { on: { handoff: words } }
+
+  - id: words
+    seat: asker
+    objective: |
+      Ask one more question with AskUserQuestion: question "Anything else the test should
+      know?", header "Notes", single select, options: "No" and "Yes, I'll type it".
+      When the tool returns, report the answer exactly as received, and finish with:
+      laight done handoff note="<the answer as received>"
+    next_hop: { on: { handoff: report } }
+
+  - id: report
+    type: shell
+    env:
+      COLOUR: "{{ .steps.ask.out.colour }}"
+      CHECKS: "{{ .steps.ask.out.checks }}"
+      NOTE: '{{ .steps.words.out.note }}'
+    run: |
+      printf 'colour: %s\nchecks: %s\nnote:   %s\n' "$COLOUR" "$CHECKS" "$NOTE"
+
+loop_guards: { max_hops: 4 }
+timeouts: { step: 30m }
+on_finish: { success: destroy, failure: keep }

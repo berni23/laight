@@ -185,6 +185,13 @@ steps:
 	if err != nil || strings.Join(ws, " ") != "engine a b" {
 		t.Errorf("windows = %v, %v", ws, err)
 	}
+	// The engine window holds the run's inbox in a second pane, under the engine (#55).
+	panes, err := exec.Command("tmux", "-L", e.srv.Socket, "list-panes", "-t", r.Session+":"+rig.EngineWindow,
+		"-F", "#{pane_start_command}").Output()
+	if p := strings.Split(strings.TrimSpace(string(panes)), "\n"); err != nil || len(p) != 2 ||
+		!strings.Contains(p[0], " engine "+r.ID) || !strings.Contains(p[1], " inbox --follow "+r.ID) {
+		t.Errorf("engine window panes: %q, %v", panes, err)
+	}
 	wt := r.Seats["a"].Dir
 	if _, err := os.Stat(filepath.Join(wt, "setup-ran")); err != nil {
 		t.Errorf("setup didn't run in the worktree: %v", err)
@@ -432,7 +439,7 @@ func TestEngineDiedCantSay(t *testing.T) {
 // killEngine kills the run's engine as a crash would, leaving its pane dead.
 func (e *rigEnv) killEngine(r *state.Run) {
 	e.t.Helper()
-	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine", "#{pane_pid}").Output()
+	out, err := exec.Command("tmux", "-L", e.srv.Socket, "display-message", "-p", "-t", "="+r.Session+":engine.{top-left}", "#{pane_pid}").Output()
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil || pid == 0 {
 		e.t.Fatalf("engine pid %q: %v", out, err)

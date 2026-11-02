@@ -23,6 +23,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	if len(args) > 0 && args[0] == "--follow" {
+		return liveInbox(home, args[1:], os.Stdin, stdout, stderr)
+	}
 	switch len(args) {
 	case 0:
 	case 1:
@@ -141,25 +144,7 @@ func showItem(home, ref string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	fmt.Fprintf(stdout, "%s  %s  %s/%s %s", it.Short(), it.Kind, filepath.Base(it.Repo), it.Workflow, state.Short(it.Run))
-	if it.Step != "" {
-		fmt.Fprintf(stdout, " %s", it.Step)
-	}
-	if it.Seat != "" {
-		fmt.Fprintf(stdout, " (%s)", it.Seat)
-	}
-	fmt.Fprintf(stdout, ", %s ago\n\n%s\n", ago(it.Created), it.Title)
-	if it.Kind == inbox.Question {
-		fmt.Fprintln(stdout)
-		printQuestions(stdout, it, true)
-	}
-	if it.Detail != "" && it.Detail != it.Title {
-		fmt.Fprintf(stdout, "\n%s\n", it.Detail)
-	}
-	fmt.Fprintln(stdout)
-	if it.Seat != "" {
-		fmt.Fprintf(stdout, "look: laight attach %s %s\n", state.Short(it.Run), it.Seat)
-	}
+	printItem(stdout, it)
 	if why := unread(home, tmux.Server{Socket: state.Socket(home)}, it); why != "" {
 		fmt.Fprintf(stdout, "nothing will read an answer: %s\n", why)
 		return 0
@@ -174,6 +159,32 @@ func showItem(home, ref string, stdout, stderr io.Writer) int {
 			strings.TrimSpace(strings.Repeat("<answer> ", len(it.Questions))))
 	}
 	return 0
+}
+
+// printItem prints what an item asks and where it comes from: for a question, the agent's
+// options and what it said before asking.
+func printItem(w io.Writer, it *inbox.Item) {
+	fmt.Fprintf(w, "%s  %s  %s/%s %s", it.Short(), it.Kind, filepath.Base(it.Repo), it.Workflow, state.Short(it.Run))
+	if it.Step != "" {
+		fmt.Fprintf(w, " %s", it.Step)
+	}
+	if it.Seat != "" {
+		fmt.Fprintf(w, " (%s)", it.Seat)
+	}
+	fmt.Fprintf(w, ", %s ago\n\n%s\n", ago(it.Created), it.Title)
+	if it.Kind == inbox.Question {
+		if it.Detail != "" {
+			fmt.Fprintf(w, "\n  what %s said before asking:\n    %s\n", it.Seat, indent(it.Detail, "    "))
+		}
+		fmt.Fprintln(w)
+		printQuestions(w, it, true)
+	} else if it.Detail != "" && it.Detail != it.Title {
+		fmt.Fprintf(w, "\n%s\n", it.Detail)
+	}
+	fmt.Fprintln(w)
+	if it.Seat != "" {
+		fmt.Fprintf(w, "look: laight attach %s %s\n", state.Short(it.Run), it.Seat)
+	}
 }
 
 // replies turns what someone typed into a question item's answers: an option's number (several
@@ -212,17 +223,28 @@ func answerItem(home, ref string, answers []string, stdout, stderr io.Writer) in
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	pending, err := inbox.Get(home, id)
-	if errors.Is(err, os.ErrNotExist) {
-		if done, _ := inbox.Answered(home, id); done != nil {
-			return fail(stderr, "item %s was already answered: %s", done.Short(), done.Answer)
-		}
-	}
+	it, err := answer(home, id, answers)
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
+	fmt.Fprintf(stdout, "%s: %s\n", it.Short(), it.Answer)
+	return 0
+}
+
+// answer answers a pending item, with one answer per question for a question item, and records
+// it in the run's events.
+func answer(home, id string, answers []string) (*inbox.Item, error) {
+	pending, err := inbox.Get(home, id)
+	if errors.Is(err, os.ErrNotExist) {
+		if done, _ := inbox.Answered(home, id); done != nil {
+			return nil, fmt.Errorf("item %s was already answered: %s", done.Short(), done.Answer)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
 	if why := unread(home, tmux.Server{Socket: state.Socket(home)}, pending); why != "" {
-		return fail(stderr, "%s: nothing will read an answer (%s)", pending.Short(), why)
+		return nil, fmt.Errorf("%s: nothing will read an answer (%s)", pending.Short(), why)
 	}
 	var it *inbox.Item
 	switch {
@@ -230,26 +252,25 @@ func answerItem(home, ref string, answers []string, stdout, stderr io.Writer) in
 		var given []string
 		var picks [][]int
 		if given, picks, err = replies(pending, answers); err != nil {
-			return fail(stderr, "%v", err)
+			return nil, err
 		}
 		it, err = inbox.Reply(home, id, given, picks)
 	case len(answers) != 1:
-		return fail(stderr, "usage: laight inbox [<item> [<answer>…]]")
+		return nil, errors.New("usage: laight inbox [<item> [<answer>…]]")
 	default:
 		it, err = inbox.Answer(home, id, answers[0])
 	}
 	if errors.Is(err, inbox.ErrAlreadyAnswered) {
-		return fail(stderr, "item %s was already answered: %s", it.Short(), it.Answer)
+		return nil, fmt.Errorf("item %s was already answered: %s", it.Short(), it.Answer)
 	}
 	if err != nil {
-		return fail(stderr, "%v", err)
+		return nil, err
 	}
 	// A question's answer is whatever was typed: the hook hands it to the agent as is, the
 	// run's events get it redacted (§6).
 	state.Append(home, state.Event{Run: it.Run, Type: "inbox.answered", Step: it.Step, Seat: it.Seat, Hop: it.Hop,
 		Data: map[string]any{"item": it.ID, "kind": it.Kind, "answer": inbox.Redact(it.Answer)}})
-	fmt.Fprintf(stdout, "%s: %s\n", it.Short(), it.Answer)
-	return 0
+	return it, nil
 }
 
 // ago is how long ago t was, for people: 40s, 12m, 3h, 2d.

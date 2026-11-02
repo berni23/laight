@@ -77,6 +77,13 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		state.Update(home, id, func(r *state.Run) error { r.Status, r.Error = state.Failed, err.Error(); return nil })
 		return fail(stderr, "%v", err)
 	}
+	// The run's inbox, under the engine: whoever follows the run answers its agents there.
+	err = srv.SplitWindow(r.Session, rig.EngineWindow, tmux.Window{
+		Dir: p.Root, Cmd: tmux.Join([]string{"env", "LAIGHT_HOME=" + home, laight, "inbox", "--follow", id}),
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "laight: warning: no inbox pane (%v); answer with: laight inbox\n", err)
+	}
 	fmt.Fprintf(stdout, "run %s: %s started (tmux session %s)\n", r.Short(), w.ID, r.Session)
 	if !interactive() {
 		fmt.Fprintf(stdout, "follow it: laight attach %s\n", r.Short())
@@ -263,6 +270,7 @@ type hookInput struct {
 	StopHookActive bool            `json:"stop_hook_active"`
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
+	TranscriptPath string          `json:"transcript_path"`
 }
 
 // askHint steers a question asked in plain text, which nobody reads, to the inbox.

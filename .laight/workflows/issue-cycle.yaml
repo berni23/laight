@@ -7,7 +7,7 @@
 # Start it with:  laight run issue-cycle
 #
 # Needs, before a run:
-# - the `baton` and `cross` Claude Code plugins (marketplace github.com/berni23/claude-plugins)
+# - the `baton` and `cross` Claude Code plugins (marketplace github.com/berni23/laight-plugins)
 #   installed for the user running it: the objectives call /baton:pickup, /cross:cr and /cross:fix-cr;
 # - origin/dev up to date with main: worktrees start there, and /baton:pickup reads its baton.md.
 version: 1
