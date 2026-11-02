@@ -21,6 +21,11 @@ that.
   hits from transcripts if its report lists them). Verified on a real run with
   `.laight/workflows/deny-check.yaml`. Not yet seen on a run: `PermissionDenied`, and auto mode
   falling back to a prompt after 3 or 20 refusals; #50 is where they'll show up.
+- **PR #75's review answered**: validate now accepts hyphenated MCP rules and rejects templates
+  and rules that would forbid `laight done`; it warns about `permissions` without a `mode`.
+  Denials in the run's last tick are printed, and the starter list covers `+refspec` and
+  `refs/heads/<base>`. Filed #76 (push rules have other spellings; this repo's `dev` and `main`
+  aren't protected on GitHub).
 
 ---
 
@@ -50,4 +55,7 @@ where the run fails. It also confirms the `PermissionDenied` hook on a real refu
 
 - #74: should a seat's `permissions` default to `auto`? In `default` mode every prompt is now
   denied.
+- Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
+  push protection? `validate` rejects templates in rules for now.
+- Protect `dev` and `main` on GitHub (#76): they aren't today.
 - #17 (shell step `cwd`) waits for a workflow that needs it.

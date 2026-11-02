@@ -160,7 +160,7 @@ func TestLoadProblems(t *testing.T) {
 		{"gate timeout warns", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    timeout: 1h\n", 1) }, "a gate is never timed", 0, true},
 		{"yolo warns", func(s string) string { return strings.Replace(s, "permissions: auto", "permissions: yolo", 1) }, "yolo", 13, true},
 		{"deny rules are fine", func(s string) string {
-			return strings.Replace(strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git push --force:*)\", \"Bash(aws * delete-*)\", \"Edit(//etc/**)\", \"WebFetch(domain:x.com)\", mcp__github, mcp__github__merge_pr, Agent(Explore)] }", 1),
+			return strings.Replace(strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git push --force:*)\", \"Bash(aws * delete-*)\", \"Edit(//etc/**)\", \"WebFetch(domain:x.com)\", mcp__github, mcp__github__merge_pr, mcp__claude-in-chrome__navigate, mcp__context7__resolve-library-id, mcp__github__*, Agent(Explore)] }", 1),
 				"permissions: auto", "permissions: { mode: auto, deny: [\"Read(~/.ssh/**)\"] }", 1)
 		}, "", 0, false},
 		{"schema: seat deny is a list", func(s string) string {
@@ -178,6 +178,21 @@ func TestLoadProblems(t *testing.T) {
 		{"mcp deny rule with a specifier", func(s string) string {
 			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"mcp__github(merge)\"] }", 1)
 		}, "an MCP rule takes no", 0, false},
+		{"template in a deny rule", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git push * {{ .base }})\"] }", 1)
+		}, "deny rules are not templates", 0, false},
+		{"deny every Bash call", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [Bash] }", 1)
+		}, "forbids `laight done`", 0, false},
+		{"deny laight done by wildcard", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: { mode: auto, deny: [\"Bash(laight *)\"] }", 1)
+		}, "forbids `laight done`", 0, false},
+		{"deny laight done by prefix", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(*)\", \"Bash(laight done:*)\"] }", 1)
+		}, "forbids `laight done`", 0, false},
+		{"deny without a mode warns", func(s string) string {
+			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
+		}, "permissions has no mode", 0, true},
 		{"bash :* in the middle", func(s string) string {
 			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git:* push)\"] }", 1)
 		}, ":* only works at the end", 0, false},

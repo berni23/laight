@@ -116,6 +116,9 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 		for _, ev := range events {
 			e.event(ev)
 		}
+		if r != nil {
+			e.announceDenials(r) // a seat denied just before the run's last laight done
+		}
 		return status, reason, nil
 	}
 	if err != nil {

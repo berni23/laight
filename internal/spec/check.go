@@ -97,6 +97,10 @@ func (c *checker) seats() {
 		if len(s.Permissions.Deny) > 0 && s.Runtime != "claude-code" {
 			c.add(Warning, at("permissions"), "a deny list only applies to claude-code seats; runtime %s ignores it", s.Runtime)
 		}
+		if s.Permissions.noMode {
+			// A seat's `permissions` replaces a shared seat's whole, mode included.
+			c.add(Warning, at("permissions"), "permissions has no mode, so it is default: every prompt is denied; add mode: auto")
+		}
 		if s.Permissions.Mode == "yolo" {
 			c.add(Warning, at("permissions"), "yolo: this agent runs every command unasked, with your credentials")
 		}
@@ -499,8 +503,9 @@ func all(list []string, ok func(string) bool) bool {
 	return true
 }
 
-// denyRule is a Claude Code permission rule: Tool or Tool(specifier).
-var denyRule = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)(?:\((.+)\))?$`)
+// denyRule is a Claude Code permission rule: Tool or Tool(specifier). An MCP tool's server and
+// tool names may hold hyphens, and a deny rule may end them in a wildcard (mcp__github__*).
+var denyRule = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*|mcp__[A-Za-z0-9_*-]+)(?:\((.+)\))?$`)
 
 // noMatch are tools whose rules Claude accepts but never matches (checked against the Claude Code
 // permission docs, 2026-11): a deny rule on them would deny nothing.
@@ -513,6 +518,9 @@ func (c *checker) deny(path []string, rules []string) {
 		at := append(slices.Clone(path), strconv.Itoa(i))
 		m := denyRule.FindStringSubmatch(r)
 		switch {
+		case strings.Contains(r, "{{"):
+			// Deny rules are passed to Claude as written: a template would be literal text.
+			c.add(Error, at, "%q: deny rules are not templates; write the branch or value itself", r)
 		case m == nil:
 			c.add(Error, at, "%q is not a permission rule: write Tool or Tool(specifier), e.g. Bash(git push --force:*)", r)
 		case strings.HasPrefix(m[1], "mcp__") && m[2] != "":
@@ -521,6 +529,29 @@ func (c *checker) deny(path []string, rules []string) {
 			c.add(Error, at, "%q never matches: Claude checks paths only on Edit and Read rules; write %s(%s)", r, noMatch[m[1]], m[2])
 		case m[1] == "Bash" && strings.Contains(strings.TrimSuffix(m[2], ":*"), ":*"):
 			c.add(Error, at, "%q: :* only works at the end; use * for a wildcard elsewhere", r)
+		case denies(m, "laight done handoff"):
+			// Deny beats laight's own allow rule: the seat could never finish a step, and the
+			// run would blame the agent (stuck) for the workflow's rule.
+			c.add(Error, at, "%q forbids `laight done`: a seat could never finish its step", r)
 		}
 	}
+}
+
+// denies reports whether a parsed Bash deny rule matches cmd, roughly as Claude matches it (*
+// matches anything, a trailing :* is " *"). Only for catching a workflow author's mistake:
+// Claude decides permissions, never this.
+func denies(m []string, cmd string) bool {
+	if m[1] != "Bash" {
+		return false
+	}
+	if m[2] == "" {
+		return true // every Bash call
+	}
+	pat := m[2]
+	if strings.HasSuffix(pat, ":*") {
+		pat = strings.TrimSuffix(pat, ":*") + " *"
+	}
+	re := "^" + strings.ReplaceAll(regexp.QuoteMeta(pat), `\*`, ".*") + "$"
+	ok, _ := regexp.MatchString(re, cmd)
+	return ok
 }

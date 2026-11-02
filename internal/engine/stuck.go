@@ -110,7 +110,7 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 		if now.Sub(last) < timeout || now.Before(e.busy[r.ID+"/"+name]) {
 			return nil, nil
 		}
-		if waitingOnPermission(e.Home, r.ID, name) {
+		if waitingOnQuestion(e.Home, r.ID, name) {
 			return nil, nil // a human is already asked
 		}
 		// Last and costliest: a quiet build or test run still writes files. Only in a worktree
@@ -185,9 +185,9 @@ func (e *Engine) stuckAnswer(r *state.Run, name string, now time.Time) (*nudge, 
 		if h == nil {
 			return nil, nil // finished meanwhile: nothing to remind it of
 		}
-		if waitingOnPermission(e.Home, r.ID, name) {
+		if waitingOnQuestion(e.Home, r.ID, name) {
 			// It started working again and reached a question's dialog: the paste's Enter would
-			// answer it. The permission item already asks a human.
+			// answer it. The question item already asks a human.
 			e.logf("… %s: not nudged, a question item is waiting", name)
 			return nil, nil
 		}
@@ -300,9 +300,9 @@ func (e *Engine) stopShell(hop int) {
 	}
 }
 
-// waitingOnPermission reports whether the seat has a question item pending: its pane shows
+// waitingOnQuestion reports whether the seat has a question item pending: its pane shows
 // Claude's dialog, and a human is asked. (A permission is denied at once, never an item: #61.)
-func waitingOnPermission(home, run, seat string) bool {
+func waitingOnQuestion(home, run, seat string) bool {
 	items, _ := inbox.Pending(home)
 	return slices.ContainsFunc(items, func(it *inbox.Item) bool {
 		return it.Run == run && it.Seat == seat && it.Kind == inbox.Question
