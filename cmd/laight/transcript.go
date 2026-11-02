@@ -7,6 +7,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/berni23/laight/internal/inbox"
 )
 
 // contextMax is how much of what the agent said before asking a question its item keeps: the
@@ -34,7 +36,7 @@ func turnContext(path, said string) string {
 	if said != "" && (len(turn) == 0 || strings.Join(strings.Fields(turn[len(turn)-1]), " ") != strings.Join(strings.Fields(said), " ")) {
 		turn = append(turn, said)
 	}
-	return lastBytes(strings.TrimSpace(strings.Join(turn, "\n")), contextMax)
+	return lastBytes(inbox.Scrub(strings.TrimSpace(strings.Join(turn, "\n"))), contextMax) // scrub, then cut
 }
 
 // lastSaid is the agent's last message on a Claude screen showing a question: the last block
@@ -163,7 +165,7 @@ func toolGist(name string, input json.RawMessage) string {
 	}
 	for _, k := range []string{"command", "file_path", "notebook_path", "pattern", "url", "description"} {
 		if s, ok := in[k].(string); ok && s != "" {
-			first, _, more := strings.Cut(s, "\n")
+			first, _, more := strings.Cut(inbox.Scrub(s), "\n") // scrub, then cut
 			if more {
 				first += " …"
 			}

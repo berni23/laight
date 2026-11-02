@@ -126,3 +126,21 @@ func TestQuestionContext(t *testing.T) {
 		inboxCmd(t, it.Short(), "1")
 	})
 }
+
+// A question's context is redacted before it is cut: a secret the cut lands in is no longer
+// recognisable once cut, so the queue's own redaction would miss it (#69 review).
+func TestContextCutSecret(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("Ab1", 10)
+	cmd, _ := json.Marshal(map[string]string{"command": strings.Repeat("x", 110) + " " + tok})
+	if got := toolGist("Bash", cmd); strings.Contains(got, "ghp_") {
+		t.Errorf("toolGist kept part of a token: %q", got)
+	}
+
+	secret := "hunter2-plain-secret-value-xyz"
+	t.Setenv(inbox.RedactEnv, "MY_SECRET")
+	t.Setenv("MY_SECRET", secret)
+	said := "start " + secret + strings.Repeat(" word", (contextMax+10-len(secret))/5)
+	if got := turnContext("", said); strings.Contains(got, secret[10:]) {
+		t.Errorf("turnContext kept part of a seat secret: %q", got[:60])
+	}
+}

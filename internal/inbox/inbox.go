@@ -114,12 +114,7 @@ func Put(home string, it Item, secrets ...string) error {
 		it.Created = time.Now().UTC()
 	}
 	forms := secretForms(append(SeatSecrets(), secrets...))
-	scrub := func(s string, lines bool) string {
-		for _, v := range forms {
-			s = strings.ReplaceAll(s, v, "***")
-		}
-		return clean(Redact(s), lines)
-	}
+	scrub := func(s string, lines bool) string { return clean(scrubForms(s, forms), lines) }
 	it.Title = scrub(it.Title, false)
 	it.Detail = cut(scrub(it.Detail, true)) // cut last: a cut secret no longer matches
 	// A question is shown as the agent wrote it: redacted and cleaned like the title, never cut.
@@ -300,6 +295,20 @@ func Withdraw(home, run string) {
 			os.Remove(pendingFile(home, it.ID))
 		}
 	}
+}
+
+// Scrub redacts s as Put does: the seat's secret values (and secrets), then anything that looks
+// like a token. A caller that cuts text before putting it must scrub it first, since a cut secret
+// no longer matches.
+func Scrub(s string, secrets ...string) string {
+	return scrubForms(s, secretForms(append(SeatSecrets(), secrets...)))
+}
+
+func scrubForms(s string, forms []string) string {
+	for _, v := range forms {
+		s = strings.ReplaceAll(s, v, "***")
+	}
+	return Redact(s)
 }
 
 // RedactEnv is the seat env variable that names the keys holding a secret (never the values).
