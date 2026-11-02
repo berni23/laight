@@ -370,7 +370,8 @@ for most workflows; that is a design goal, measure it.
 
 A run is green or red. A red run's `run.json` holds `failure: {step, hop, seat, kind, reason,
 detail, at}`, `kind` one of `exit` (`laight done failed reason=…`), `permission`, `question`,
-`credential`, `timeout`, `crash`, `max_hops`, `shell`, `aborted`; `detail` is the last lines of
+`credential`, `timeout` (quiet past its timeout), `stuck` (stopped twice without `laight done`),
+`crash`, `max_hops`, `shell`, `aborted`; `detail` is the last lines of
 the pane or the shell step's log, redacted (§12.4). A `run.failed` event carries the same.
 `laight watch` shows ✕ and the reason on the failed step, and `laight run` exits non-zero and
 prints the report. Every run's report also lists the denied requests and the assumptions made.
@@ -605,9 +606,13 @@ seat with a pending permission or question item is never stuck, and a gate is ne
 asked. An item whose turn ends on its own is withdrawn.
 A crashed seat fails its hop at once and is respawned only by a later step (or a rerun).
 
-**Unattended (#60), settled in #63:** nobody is asked any more. A stopped agent is nudged once by
-the engine itself (the same reminder, pasted), and fails its hop if it stops again; a quiet seat
-or shell step fails its hop (`kind: timeout`), since a paste could answer a dialog nobody has read.
+**Unattended (#60), decided on #63 (2026-11-02):** nobody is asked any more. A stopped agent is
+nudged once by the engine itself (the same reminder, pasted), and fails its hop (`kind: stuck`)
+if it stops again; a quiet seat or shell step fails its hop (`kind: timeout`), since a paste
+could answer a dialog nobody has read, and the report's pane lines show what it was waiting on.
+Two kinds, because the fixes differ: the objective or guidance for `stuck`, a hang or a dialog
+for `timeout`. Failing on a false stop would kill a healthy run, so #57 (a turn that ends while
+background agents run looks like a stop) is fixed before or with #63.
 Under `human.mode: wait` the `stuck` item is still raised as above, with `human.timeout` as its
 clock. Until #63 lands the code raises the item in every mode.
 
