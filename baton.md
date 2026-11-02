@@ -47,7 +47,6 @@ Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
 ## Waiting on the user
 
-- #58: v1 scope (read-only pages first?), websocket or SSE + POST.
 - `inbox_vs_supervisor.md` (untracked, repo root): the design comparison from this session; keep
   it somewhere (e.g. `scratch.docs/`) or delete it. Not committed.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
