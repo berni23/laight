@@ -593,11 +593,14 @@ the open item and when its clock last restarted, and nothing routes on it. An ag
 without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it
 stops a second time (`.stopped`); a seat quiet past its timeout gets the item directly. It also
 covers a seat that ran `done` but whose turn never ended (a Stop hook that failed), and a shell
-step (its log is its only trace). A turn that ends while background agents or shells run is not a
-stop (#57): the agent starts a new turn when they finish, so the Stop hook neither reminds it nor
-counts it, and only the step's timeout bounds it. Claude says so in the Stop hook's input
-(`background_tasks`, an entry with `status: running`; checked on 2.1.316), the hook's evidence,
-not the pane's "Waiting for N background agents". Decided in #15 (2026-10-25, revised in the #47 review): the
+step (its log is its only trace). A turn that ends while background agents run is not over
+(#57): the agent starts a new turn when they finish, so the Stop hook neither reminds it nor
+counts it, and its seat isn't idle even after `laight done` (their results would land in its next
+step). Claude says so in the Stop hook's input (`background_tasks`, a `subagent` entry with
+`status: running`; checked on 2.1.316), the hook's evidence, not the pane's "Waiting for N
+background agents". Background shells don't count: one may never end (a dev server), and Claude's
+own line leaves them out. Other statuses are unchecked (#73). The quiet clock doesn't bound the
+wait yet: the spinner keeps the seat log moving (#72). Decided in #15 (2026-10-25, revised in the #47 review): the
 choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
 reminder; skipped if it has since reached a permission dialog, whose item already asks) or
 `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog

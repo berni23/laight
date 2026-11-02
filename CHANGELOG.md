@@ -137,7 +137,8 @@ All notable changes to laight are documented here. The format follows
 ### Fixed
 
 - A step whose agent waits on background agents (`/cross:cr`, `/cross:fix-cr`…) is no longer taken
-  for a stopped agent: no reminder and no `stuck` item while they run. A withdrawn stuck item now
+  for a stopped agent: no reminder and no `stuck` item while they run, and the seat gets its next
+  step only once they are back. Background shells (a dev server) don't count. A withdrawn stuck item now
   logs an `inbox.answered` event (`answer: withdrawn`). (#57)
 - An unquoted integer in `env` (workflow, seat or shell step) reaches the command exactly, even
   above 2^53 (`9007199254740993` was passed on as `9007199254740992`). `validate` warns about an

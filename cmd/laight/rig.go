@@ -275,19 +275,21 @@ type hookInput struct {
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	TranscriptPath string          `json:"transcript_path"`
-	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background agents and
-	// shells; one still running will start a new turn when it finishes.
+	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background tasks:
+	// `subagent` and `shell` entries, `running` while they run, dropped once they finish.
 	BackgroundTasks []struct {
 		Type   string `json:"type"`
 		Status string `json:"status"`
 	} `json:"background_tasks"`
 }
 
-// waiting counts the background tasks still running when the turn ended.
+// waiting counts the background agents still running when the turn ended: each starts a new
+// turn when it finishes. Shells don't count: one may never end (a dev server), and Claude's own
+// "Waiting for N background agents" leaves them out too.
 func (in hookInput) waiting() int {
 	n := 0
 	for _, t := range in.BackgroundTasks {
-		if t.Status == "running" {
+		if t.Type == "subagent" && t.Status == "running" {
 			n++
 		}
 	}
@@ -301,8 +303,8 @@ const askHint = "If you need a human's answer first, ask with the AskUserQuestio
 // may get its next one. If not, the agent is told once how to finish it (Claude sets
 // stop_hook_active when it is already continuing because of this hook, so it never loops); the
 // second time, it marks the seat stopped, and the engine asks a human (a stuck item). A turn that
-// ends while background agents run isn't a stop: the agent resumes when they finish (#57), so it
-// is neither reminded nor counted, and the step's timeout still bounds it.
+// ends while background agents run isn't over: the agent resumes when they finish (#57), so it is
+// neither reminded nor counted, and the seat isn't idle even after `laight done`.
 func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	r, err := state.Load(home, runID)
 	if err != nil {
@@ -312,6 +314,11 @@ func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	if s == nil || s.Step == "" {
 		return nil // no step given yet: someone is talking to the agent
 	}
+	if in.waiting() > 0 {
+		// Not over: the agent resumes when its background agents finish. Done or not, the seat
+		// stays busy, or their results would land in its next step.
+		return nil
+	}
 	d, err := state.ReadDone(home, runID, s.Step, s.Hop)
 	if err != nil {
 		return err
@@ -320,7 +327,7 @@ func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
 		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
 	}
-	if r.ActiveOn(seat) == nil || in.waiting() > 0 {
+	if r.ActiveOn(seat) == nil {
 		return nil
 	}
 	if in.StopHookActive { // told once already: the engine raises a stuck item

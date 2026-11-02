@@ -18,8 +18,11 @@ that.
   stuck step nudges once, then fails as kind `stuck` (a quiet seat: `timeout`).
 - **#57 fixed**: Claude Code's Stop hook input lists `background_tasks` (checked on 2.1.316); a
   turn that ends with one `running` gets no reminder and doesn't count toward stuck (§12.2). A
-  withdrawn stuck item now logs `inbox.answered` (`answer: withdrawn`). Verified on a real run
-  with `.laight/workflows/background-agent.yaml`.
+  withdrawn stuck item now logs `inbox.answered` (`answer: withdrawn`). After PR #71's review:
+  only background *agents* count (shells may never end), and a seat isn't idle after `done` while
+  one runs. Verified on real runs with `.laight/workflows/background-agent.yaml`. Filed #72 (the
+  spinner keeps the seat log moving, so the quiet clock can't fire) and #73 (unchecked
+  `background_tasks` statuses): both matter before #63 makes timeouts fail runs.
 
 ---
 
@@ -28,7 +31,8 @@ that.
 ### 1. #61 and #63 — deny lists on auto mode, and the failure report
 
 The first unattended code. #61 starts by checking three things against current Claude Code
-(listed in the issue). #63's decisions are in its comments. Then #62 (credentials), then #66
+(listed in the issue). #63's decisions are in its comments; #72 and #73 should land before or
+with it, since #63 turns a timeout or a false stop into a failed run. Then #62 (credentials), then #66
 (rerun from failed) before anything that makes runs fail more often. Order: §10 M3.
 
 ### 2. #67 — park the inbox in code

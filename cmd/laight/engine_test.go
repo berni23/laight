@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -901,7 +902,10 @@ func TestStopHook(t *testing.T) {
 		t.Errorf("stopped mark while a background agent runs: %v", err)
 	}
 	var got map[string]string
-	if err := json.Unmarshal([]byte(hook(`{"background_tasks":[{"type":"subagent","status":"completed"}]}`)), &got); err != nil || got["decision"] != "block" ||
+	// A background shell is not waited on: it may never end (a dev server), and Claude's own
+	// "Waiting for N background agents" counts agents only (checked on 2.1.316).
+	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"}]}`
+	if err := json.Unmarshal([]byte(hook(shell)), &got); err != nil || got["decision"] != "block" ||
 		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail, failed)") {
 		t.Errorf("first stop: %v %v", got, err)
 	}
@@ -917,10 +921,32 @@ func TestStopHook(t *testing.T) {
 	if err := state.WriteDone(home, id, state.Done{Step: "verify", Hop: 3, Exit: "pass"}); err != nil {
 		t.Fatal(err)
 	}
+	// Done, but a background agent still runs: the turn isn't over, the agent's result would land
+	// in the seat's next step. The seat is idle only once the turn ends with nothing running.
+	if out := hook(waiting); out != "" {
+		t.Errorf("stop after done, agent running: %s", out)
+	}
+	if _, err := os.Stat(idle); !os.IsNotExist(err) {
+		t.Errorf("idle while a background agent runs: %v", err)
+	}
 	if out := hook(`{}`); out != "" {
 		t.Errorf("stop after done: %s", out)
 	}
 	if b, _ := os.ReadFile(idle); string(b) != "verify-3\n" {
 		t.Errorf("idle = %q", b)
+	}
+	// Each hook.stop event says how many background agents the turn ended with, if any.
+	evs, err := state.Events(home, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var background []any
+	for _, ev := range evs {
+		if ev.Type == "hook.stop" {
+			background = append(background, ev.Data["background"])
+		}
+	}
+	if want := []any{1.0, 1.0, nil, nil, 1.0, nil}; fmt.Sprint(background) != fmt.Sprint(want) {
+		t.Errorf("hook.stop background = %v, want %v", background, want)
 	}
 }
