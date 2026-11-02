@@ -3,15 +3,17 @@
 [![CI](https://github.com/berni23/laight/actions/workflows/ci.yml/badge.svg)](https://github.com/berni23/laight/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Run teams of coding agents in tmux from two small YAML files, and answer everything they need
-from you in one place.**
+**Run teams of coding agents in tmux from one YAML file, unattended: settle what they need from
+you before the run, and get a green or red result, CircleCI-style.**
 
-> **Status: early.** `init`, `validate`, `run`, `attach`, `abort`, `inbox` and `done` work: a run
-> spins up its rig of agents in tmux, hands each agent its steps, in series or in parallel
-> (`needs`, and `matrix` for one agent per item), runs shell steps and gates, routes on their exits
-> (loops included), sends permission prompts to the inbox, holds a failed step there for retry or
-> abort, and tears the rig down. The rest of the inbox is next (M3, see the
-> [milestones](CLAUDE.md#10-milestones)). The specification is in [CLAUDE.md](CLAUDE.md).
+> **Status: early.** `init`, `validate`, `run`, `attach`, `abort` and `done` work: a run spins up
+> its rig of agents in tmux, hands each agent its steps, in series or in parallel (`needs`, and
+> `matrix` for one agent per item), runs shell steps and gates, routes on their exits (loops
+> included), and tears the rig down. **The design just changed to unattended by design**
+> ([#68](https://github.com/berni23/laight/issues/68)): deny lists, a credentials preflight,
+> failure reports and rerun-from-failed are next (M3, see the [milestones](CLAUDE.md#10-milestones));
+> until they land, permission prompts and failed steps still go to a (now parked) inbox.
+> The specification is in [CLAUDE.md](CLAUDE.md).
 > Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).
 
@@ -32,10 +34,12 @@ laight keeps the idea and drops the machinery:
   or in parallel. Starting it spins up a rig of those agents; finishing it tears the rig down.
 - **Isolated rigs**: each rig gets its own tmux session, git worktrees and state. Many rigs run side
   by side in one project.
-- **One human channel**: permission prompts, questions, approval gates and stuck steps from every
-  run in every project land in one queue, answered from one place: `laight inbox` in a terminal,
-  your phone ([ntfy](https://ntfy.sh)), Slack, a webhook or your own command. The queue is files by
-  default, or a real queue such as Amazon SQS when your agents run on several machines.
+- **Unattended by design**: what a run needs from you is settled before it starts. Permissions are
+  deny lists (what agents must never do; Claude's auto mode judges the rest), credentials are
+  checked (and logged into) before any agent starts, and when an agent has a question anyway it
+  makes a reasonable assumption and records it for review on the PR, or the workflow says to fail,
+  wait, or ask a supervisor agent. A run is green or red, and a red one says which step failed and
+  why; rerun it from that step once you've fixed the cause.
 - **See it**: `laight show` opens a simple, CircleCI-style web view of your workflows and runs.
 - **Plain YAML**: OpenRig-style vocabulary (seats, steps, `allowed_exits`, `next_hop`, `max_hops`),
   so OpenRig users read it instantly, and a published JSON Schema for editor completion and validation.
@@ -76,7 +80,7 @@ Parallel work uses `needs` and `matrix`, CircleCI-style:
 ```
 
 Agents finish a step with one command, `laight done <exit> [key=value…]`. If they forget, a hook
-reminds them; if that fails too, you get an inbox item.
+reminds them; if that fails too, the step fails with the reason.
 
 ## Install (planned)
 
@@ -92,27 +96,29 @@ laight doctor                       # checks Claude Code, gh and tmux
 laight init                 # scaffolds .laight/ with an issue-cycle workflow
 laight validate
 laight run issue-cycle      # spins up the workflow's rig and shows the live view
-laight inbox                # everything waiting for you, across all runs
-                            #   (a run's own items also show in a pane under it, answered there)
 laight watch                # every run / one run's live pipeline
 laight attach <run> impl    # jump into an agent's terminal
 laight abort <run>          # asks first, then tears down only that rig
+laight run --from-failed <run>   # a red run, rerun from the step that failed
 ```
 
-## The inbox
+## When an agent needs you anyway
 
-```
- INBOX  3 waiting                                                        laight
- ─────────────────────────────────────────────────────────────────────────────
- ⚠ permission  issue-cycle·01M4…S7  impl     Bash: gh pr create --base dev …    [a]llow [d]eny
- ? question    issue-cycle·01M5…2Q  impl     "The issue has two specs. Which?"  [r]eply  [o]pen
- ✋ gate        docs·01M5…9X      approve  Merge PR #144 into dev?            [1] yes [2] no
+```yaml
+human: { mode: assume }        # assume (default) | fail | wait | supervisor
+permissions:
+  deny: ["Bash(git push --force:*)", "Bash(terraform apply:*)"]
+credentials:
+  aws-dev: { check: "aws sts get-caller-identity", login: "aws sso login" }
 ```
 
-The same items can reach your phone, Slack or any command you configure, with buttons. Answers go straight back to the waiting agent:
-permission and question hooks block until you decide, an agent gets your answer as if you had
-typed it, gates route the run.
-Unanswered permissions time out to *deny*, never *allow*.
+- **Questions**: by default the agent picks the most reasonable answer, records the assumption and
+  carries on; the assumptions are listed in the run's report and the PR. Or fail the step, wait for
+  you in the agent's pane, or let a supervisor agent with the run's context answer.
+- **Permissions** are never asked mid-run: a deny rule blocks, auto mode judges the rest, and a
+  request that would need a human is denied and recorded.
+- **Logins** happen in your terminal before the agents start, not halfway through.
+- **Gates** you declare still ask you; with no one around they take their `default:`.
 
 ## Seeing what happens
 
@@ -123,7 +129,8 @@ laight watch           # the same pipeline, live in the terminal
 
 `laight show` is a small read-only page served from your machine only while the command runs:
 runs per project, each run's steps as a pipeline (done, running, failed, loops ×N, durations),
-each step's events and agent log, and the open inbox items. Every run also writes an append-only
+each step's events and agent log, and a red run's failure report: the step, the reason, the
+denied requests and the assumptions made. Every run also writes an append-only
 `events.jsonl` (steps, exits, hooks, tool calls, tokens and cost) and a full log of every pane.
 
 ## Contributing
@@ -132,4 +139,4 @@ laight is open source under the [Apache 2.0 licence](LICENSE) and contributions 
 design feedback, issues, docs and code. Start with [CONTRIBUTING.md](CONTRIBUTING.md); please
 follow the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: see [SECURITY.md](SECURITY.md).
 
-A VS Code extension, laight-vscode-ui (not public yet), will give laight a sidebar: the pipeline, the agents' terminals and the inbox.
+A VS Code extension, laight-vscode-ui (not public yet), will give laight a sidebar: the pipeline and the agents' terminals.

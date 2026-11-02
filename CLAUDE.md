@@ -3,8 +3,9 @@
 A lightweight framework for running teams of coding agents (Claude Code first, Codex later) in
 **tmux**, driven entirely by **YAML**: a workflow file declares its agents (seats) and its steps, in
 series or in parallel; starting it spins up a **rig** of those agents, which dies when it's done.
-Every run is **isolated**, and every moment an agent needs a human lands in **one queue** that you
-answer from one place (a terminal, your phone, Slack…), so nobody has to watch agents.
+Every run is **isolated** and **unattended by design**: what a run needs from a human (permissions,
+credentials, answers, decisions) is declared or settled before it starts, so nobody has to watch
+agents; a run ends green or red, and a red one says where and why, like a CircleCI pipeline.
 
 This file is the spec. README.md is the user-facing overview. Background, research and details for
 later milestones are parked in `scratch.docs/scratch.spec_parked.md` (local, untracked).
@@ -12,16 +13,18 @@ Status: **M1 done** (`init`, `validate`, `run`, `attach`, `abort`: rigs spin up 
 **M2 done**: the engine loop runs agent and shell steps (`laight done`, routing, `max_hops`),
 gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight inbox`, `gate`,
 `failed` and `permission` items, the last from the `PermissionRequest` hook). The acceptance run
-passed (#11: two real issues to merged PRs, one review/fix round each). **M3** (the inbox) is
-next; its first piece is done: `question` items (#55, §6). Resuming a run whose engine died is
-deferred (#8, §4).
+passed (#11: two real issues to merged PRs, one review/fix round each); `question` items followed
+(#55). **Direction change (#68, 2026-11-02): unattended by design.** The inbox is parked, not
+deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists (#61) and failure
+reports (#63) are next. Where this spec describes that model, the code catches up issue by issue:
+until #63 lands, a failed step still holds on a `failed` inbox item instead of ending the run.
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
 The four hard requirements, in order of priority. Anything that compromises one is wrong:
 
 1. **Lightweight.** One binary, no daemon, no database server, no always-on server. State is plain
-   files. A user learns 10 commands (section 8), an agent learns 1. The one exception is `laight show`, a
+   files. A user learns 9 commands (section 8), an agent learns 1. The one exception is `laight show`, a
    read-only web view bound to 127.0.0.1 that runs in the foreground only while you look at it.
 2. **tmux.** Every agent is a real interactive CLI session in a tmux pane that a human can attach to,
    read and type into at any time.
@@ -29,10 +32,16 @@ The four hard requirements, in order of priority. Anything that compromises one 
    spins up when the workflow starts and dies when it finishes, with its own tmux session, git
    worktrees and state folder. Many rigs coexist in a project; they never share a working tree or a
    terminal. Everything a rig does is declared in the workflow's YAML, as in Kubernetes or CircleCI.
-4. **One channel for human intervention.** Permission prompts, questions, approval gates, stuck or
-   failed steps, from every run in every project, are queued in one place and answered from one
-   place. This is the most important feature. Files and a terminal inbox by default; a real queue
-   (SQS…) and any messaging (phone push, Slack, a webhook, your own command) when you want them.
+4. **Unattended by design.** The point of laight is to cut the interaction between a human and
+   the agents as far as it goes. Everything a run needs (permissions, credentials, answers,
+   decisions) is declared in the workflow or obtained before the run starts; **if an agent needs a
+   human mid-run, the entry point (issue, ticket, prompt) wasn't specified enough**. When a question
+   comes up anyway, the agent **assumes** by default: it picks the most reasonable answer, records
+   the assumption and carries on, and the assumptions are reviewed on the PR. A workflow can
+   instead fail fast, wait in the pane, or hand questions to a supervisor seat (§6). A run is
+   green or red; a red one names the step that failed and why, and is rerun from that step.
+   Humans don't disappear, they move: logins to the start of the run, merge approvals into declared
+   gates, the review of assumptions onto the PR.
 
 ---
 
@@ -43,8 +52,9 @@ maintainer ran on a Go project (`CLAUDE.local.md` has the details): an implement
 seat, `implement → review → fix → verify → merge`, unattended, issues to merged PRs with no human
 typing. The idea worked; the machinery hurt, and each pain became a rule here:
 - a daemon on a local port → **no daemon**, state in files;
-- ~350 commands → **10 commands**, and agents learn only `laight done`;
-- prompts stuck in panes nobody watched → **every blocking moment goes to the inbox**;
+- ~350 commands → **9 commands**, and agents learn only `laight done`;
+- prompts stuck in panes nobody watched → **nothing waits on a human mid-run** (first answered
+  with an inbox, now parked: a queue of prompts still needs someone watching it, §6);
 - long-lived rigs that collided → **one ephemeral rig per run**;
 - team and steps in separate files → **one self-contained file per workflow**;
 - setup steps outside the tool → **the engine owns worktrees and guidance**, never tracked files;
@@ -68,9 +78,10 @@ file, it's a bug in laight.
 - **Rig / run**: one execution of a workflow and its agents: tmux session `laight-<workflow>-<run6>`
   (on laight's own tmux server), one worktree per seat that asks for one, one state folder. When the
   run ends, the session stops; worktrees are removed on success and kept on failure (`on_finish`).
-- **Inbox item**: one thing waiting for a human. A **queue** carries items and answers (`files` by
-  default); a **channel** shows and answers them (`terminal`, `web`, `ntfy`, `slack`, `webhook`,
-  `command`), picked per item by routing rules.
+- **Human policy**: what a run does when an agent needs a human anyway (`human:`, §6): assume,
+  fail, wait, or ask a supervisor seat. Permissions are deny lists (`permissions.deny`), access is
+  a credentials preflight; neither ever asks mid-run.
+- **Failure report**: why a red run is red: the step, hop, seat, kind and reason (§6, #63).
 
 ## 3. Specs (YAML)
 
@@ -86,7 +97,7 @@ route, `needs` cycle, missing guidance file).
   workflows/issue-cycle.yaml      # one self-contained file per workflow: seats + steps
   seats/reviewer.yaml             # optional: seat definitions shared by several workflows (`uses:`)
   guidance/implementer.md
-  laight.yaml                     # optional: per-project queue/channel routing overrides
+  laight.yaml                     # optional: per-project overrides (parked: inbox routing)
 ```
 
 ### A workflow (the acceptance test: M2 is done when it runs end to end on a real issue)
@@ -100,13 +111,18 @@ base: dev                         # branch worktrees start from and PRs go into
 inputs:
   issue: { required: false, description: Issue number; empty = the next one in the backlog }
 
+human: { mode: assume }           # assume (default) | fail | wait | supervisor: §6 (#64)
+permissions:                      # what no seat may ever do; auto mode judges the rest (#61)
+  deny: ["Bash(git push --force:*)", "Bash(gh pr merge:*)"]
+
 seats:                            # the rig: exactly these agents are started for a run
   impl:
     label: Implementer
     runtime: claude-code          # claude-code | codex | shell (any command)
     cwd: worktree                 # worktree (own per run, default) | repo (the main checkout) | <path>
     session: resume               # resume | fresh
-    permissions: auto             # default | auto | yolo   (yolo prints a warning at `run`)
+    permissions: auto             # default | auto | yolo   (yolo prints a warning at `run`);
+                                  # or { mode: auto, deny: [...] }, added to the workflow's list
     guidance: guidance/implementer.md
     model: opus                   # optional, passed to the runtime
     env: { GH_TOKEN: "{{ secret \"gh-this-repo\" }}" }   # optional; secrets never logged
@@ -139,18 +155,19 @@ steps:
     allowed_exits: [pass, fail]
     next_hop: { on: { pass: approve, fail: fix } }
 
-  - id: approve                   # optional human gate; delete it for fully unattended merges
+  - id: approve                   # a declared human decision; delete it for unattended merges
     type: gate
     ask: Merge {{ .steps.implement.out.pr }} into {{ .base }}?
     allowed_exits: [yes, no]
+    default: no                   # taken when no human answers (#64); none → the run fails
     next_hop: { on: { yes: merge, no: end } }
 
   - id: merge
     type: shell                   # deterministic step, no agent
     run: gh pr merge {{ .steps.implement.out.pr }} --squash && gh issue close {{ .steps.implement.out.issue }}
 
-loop_guards: { max_hops: 11 }     # exceeding it → a `failed` inbox item: retry or abort
-timeouts: { step: 90m }           # a step quiet this long → a `stuck` inbox item (not a kill)
+loop_guards: { max_hops: 11 }     # exceeding it fails the run (rule 4)
+timeouts: { step: 90m }           # a step quiet this long is stuck: it fails (§12.2)
 on_finish: { success: destroy, failure: keep }   # worktrees; the tmux session always stops
 ```
 
@@ -177,7 +194,7 @@ steps:
 1. Entry steps start at once: the first step of the file (unless it has `needs`; it may be a loop
    target), and every other step with no `needs` and no incoming route.
 2. A step with `needs` starts when every needed step (every matrix copy) has finished with a
-   non-`failed` exit, and no queued, running or held step can route back to it (a step in a
+   non-`failed` exit, and no queued or running step can route back to it (a step in a
    review/fix loop counts once the loop has left it); nor can another step whose needs are met
    in the same tick, unless this one can too (both are in that loop), so file order never
    matters. It runs at most once, even if a loop later runs a needed step again. Any non-`failed`
@@ -186,16 +203,18 @@ steps:
    the run still succeeds.
 3. A finished step's `next_hop.on[<exit>]` starts that step (series, branches and loops). A step
    without `next_hop` ends its branch; `end` ends it explicitly.
-4. The run succeeds when no step is running, ready or held. An unrouted `failed`, or a step
-   `max_hops` refuses, is **held** on a `failed` inbox item while everything else carries on:
-   `retry` starts that step again (past `max_hops`, with one more hop), `abort` fails the run.
-   It also fails on `laight abort`. (Decided in #9: with no resume, waiting is how a run survives.)
+4. The run succeeds when no step is running or ready. An unrouted `failed`, or a step `max_hops`
+   refuses, **fails the run** (#63): nothing new starts, steps already running finish and their
+   exits are recorded (§12.3), then the run ends red with its failure report (§6) and worktrees
+   follow `on_finish.failure`. It also fails on `laight abort`. A failed run is retried by
+   **rerunning it from the failed step** (`laight run --from-failed`, #66), after fixing the cause.
+   (This reverses #9, which held the step on a `failed` inbox item for retry or abort while the
+   rest carried on: a held run needs someone watching it, and once a rerun is cheap a red run
+   costs nothing to continue. Decided in #60, 2026-11-02.)
 5. One seat runs one step at a time; a step waiting for a busy seat queues for it. Matrix copies get
    their own seat instance (`dev#1`, `dev#2`…), with its own window, worktree and session, started
    with its copy (so the seat must be `cwd: worktree`); a seat only matrix steps use never starts
-   on its own. The window closes once the copy's turn ends, unless the copy is held on a `failed`
-   item: then it stays up to look at until the item is answered, and a `retry` is delivered to it.
-   The worktree follows `on_finish`. `max_parallel` caps live copies (default 4).
+   on its own. The window closes once the copy's turn ends; the worktree follows `on_finish`. `max_parallel` caps live copies (default 4).
 6. Routes and `needs` don't mix: a step with `needs` can't be a route target, and a matrix step
    can't have `next_hop`. `.steps.<id>.out` is the latest hop's output. A hop is one step start
    (each matrix copy counts). `validate` enforces all of this.
@@ -203,8 +222,9 @@ steps:
 **Matrix** (decided in #12): keys sorted, then the cartesian product in list order, numbers the
 copies `#1…#N`. A value is a list of scalars, or a template: one that is a single action
 (`{{ .steps.plan.out.tasks }}`) gives its value, anything else must render a JSON list. An empty
-list, a non-scalar or more than 32 copies holds the step on a `failed` item before any copy
-starts (`validate` rejects it already when every value is a literal list). A failed copy is held alone while its siblings run on; `retry` reruns that copy only.
+list, a non-scalar or more than 32 copies fails the step before any copy starts (`validate`
+rejects it already when every value is a literal list). A failed copy fails the run once its
+running siblings finish; a rerun from failed reruns the failed copies only.
 Instance `dev#k` serves copy k of every matrix step on `dev`, and of every later expansion: it
 keeps its worktree and, unless `session: fresh`, its conversation, like any seat. A gate can't
 have a matrix. Later steps see a matrix step's `.out` as a **list**, one entry per copy
@@ -212,7 +232,8 @@ in copy order, and `.exit` as the list of exits (Argo's `withParam` model, not "
 finish wins"): `{{ range .steps.build.out }}{{ .pr }}{{ end }}`; `validate` rejects `.out.<key>`.
 
 **Step types:** `agent` (default when `seat` is set), `shell` (`run:`; exit 0 → `ok`, else
-`failed`, unless `exits:` maps codes), `gate` (a human decision, via the inbox).
+`failed`, unless `exits:` maps codes), `gate` (a decision the workflow asks a human for: answered
+in the engine window under `human.mode: wait`, else it takes its `default:` exit, §6).
 A **shell step** has no seat: the engine runs `sh -c '<run>'` in the repo's main checkout, in its
 own session with no terminal (a command that prompts fails instead of hanging), with the workflow's
 and the step's `env`. Whatever it leaves running is stopped when `sh` exits or the run ends. Output
@@ -226,8 +247,9 @@ until compaction is done (checked on 2.1.310: compacting fires `SessionStart`, n
 step still ends with `laight done`). Only on a claude-code seat with `session: resume`. On a
 seat's first step there is nothing to compact: Claude says so and runs the objective anyway.
 **Exits:** any identifiers; `allowed_exits` defaults to `[handoff]`; `failed` is implicit and can
-be routed. **`next_hop.mode: end`** ends the branch whatever the exit (an unrouted `failed` is
-still held). **Outputs:** `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values
+be routed. **`next_hop.mode: end`** ends the branch whatever the exit (an unrouted `failed` still
+fails the run). An agent fails a step with `laight done failed reason="…"`: the reason goes into
+the failure report. **Outputs:** `laight done <exit> key=value…` sets `.steps.<id>.out.<key>` (JSON values
 allowed). Templates see only `.inputs`, `.steps.<id>.out`/`.exit`, `.matrix`, `.base`,
 `.run.id`/`.project`/`.workflow` and, **in `env` only**, `secret`: every other template can be
 pasted into a pane, and panes are logged.
@@ -235,19 +257,20 @@ pasted into a pane, and panes are logged.
 ## 4. Runtime layout
 
 ```
-~/.laight/                            # global, so the inbox spans every project
+~/.laight/                            # global: every project's runs in one place
   projects.json
   runs/<run-id>/
-    run.json                          # spec snapshot, inputs, status, current step, hops
+    run.json                          # spec snapshot, inputs, status, current step, hops,
+                                      #   and a red run's `failure` (§6.3)
     events.jsonl                      # append-only, the source of truth for observability
     out/<step>-<hop>.json             # what `laight done` wrote (or the engine, for shell steps)
     out/<step>-<hop>.log              # a shell step's output, known secrets redacted
     seats/<seat>.log                  # tmux pipe-pane of the seat
     seats/<seat>.idle, .stopped       # Stop hook: turn ended after `done`; stopped twice without it
     worktrees/<seat>/
-  inbox/<item-id>.json                # one file per pending decision (the `files` queue)
+  inbox/<item-id>.json                # parked (§6.4): one file per pending item
   inbox/answered/<item-id>.json
-  config.yaml                         # queue, channels, routing, defaults
+  config.yaml                         # defaults (parked: queue, channels, routing)
 ```
 
 - Run ids are ULIDs. Writes are atomic (temp + rename). The only lock is `flock` on `run.json`.
@@ -256,8 +279,8 @@ pasted into a pane, and panes are logged.
   and kills the session.
 - **When the engine dies**, the run is lost, not resumed: `attach` and `abort` report "engine
   died", `laight abort` cleans up, worktrees follow `on_finish.failure`, a new run starts over.
-  **Resume is deferred (#8)** until real runs show engines dying; the state stays in files so it
-  remains possible.
+  **Resume is deferred (#8)**: rerun from failed (#66) comes first and may later cover a dead
+  engine too; the state stays in files so it remains possible.
 
 ## 5. Driving a seat
 
@@ -271,7 +294,7 @@ pasted into a pane, and panes are logged.
   `send-keys` long text.
 - **Finish a step:** the agent runs `laight done <exit> [k=v…]` (no flags; it reads env). If it
   stops without it, the **Stop hook** blocks once with a reminder; the second time it writes
-  `seats/<seat>.stopped` instead of looping, and the engine raises a `stuck` item (§12.2). A seat
+  `seats/<seat>.stopped` instead of looping, and the step is stuck (§12.2). A seat
   gets its next step only after `done` *and* its Stop hook.
 - **Fresh vs resume:** `fresh` restarts the CLI before each step (`/clear` is not enough);
   `resume` keeps the session. Every Claude session gets a `--session-id`, so a seat relaunched
@@ -280,7 +303,8 @@ pasted into a pane, and panes are logged.
   never written into tracked files, `CLAUDE.md` or `~/.claude/settings.json`. The settings allow
   `Bash(<abs path to laight> done:*)` and `Bash(laight done:*)` (what agents type). Permission
   modes map to `--permission-mode`: `default` → `manual`, `auto` → `auto`, `yolo` →
-  `bypassPermissions`.
+  `bypassPermissions`. The workflow's and the seat's `permissions.deny` go into the same settings
+  file's `permissions.deny` (#61).
 - **Launch prompts:** the folder-trust dialog and yolo's warning are accepted via `capture-pane`,
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.
@@ -293,7 +317,71 @@ pasted into a pane, and panes are logged.
 - Every runtime is an adapter: `launch`, `ready`, `deliver`, `hooks`, and `detectBlocked(screen)`
   for runtimes without hooks.
 
-## 6. The human channel (the point of the project)
+## 6. Humans: before the run, not during it (the point of the project)
+
+Decided in #60 (2026-11-02), umbrella #68. Every moment a run would need a human is moved out of
+the run: settled before it, declared as policy in the workflow, or reported after it. The
+companion plugins (berni23/laight-plugins, §11) cover the human ends: **`/laight:plan`** turns
+an entry point (issue, ticket, prompt) into a brief, deny lists and credentials before the run;
+**`/laight:postmortem`** turns a red run's report into the fix.
+
+### 6.1 Before the run
+
+- **Permissions are deny lists on auto mode** (#61), never allowlists: a complete list of what a
+  seat may do can't be written in advance, so the workflow says what agents must never do
+  (`permissions.deny`, workflow-wide plus per seat), Claude blocks a matching call itself, and
+  auto mode judges the rest. A request that would still ask a human (auto mode escalating, a seat
+  in `default` mode) is **denied at once** by the `PermissionRequest` hook, which tells the agent
+  no human is available and records the denial (tool and input, redacted) on the step. The step
+  doesn't fail on its own; the agent decides. Every denial is in the run report, green runs too.
+- **Credentials are a preflight** (#62): `credentials: { <name>: { check, login?, min_valid? } }`.
+  `laight run` runs every `check` before the rig spins up; a failing one with a `login` runs it in
+  the user's terminal (the one human moment, at the start) and checks again; otherwise the run
+  doesn't start. A credential that expires mid-run fails its step, never hangs.
+- **Declared gates stay**: they are decisions the YAML asks for, not gaps in the spec.
+
+### 6.2 During the run: the `human:` policy (#64)
+
+```yaml
+human:
+  mode: assume        # assume (default) | fail | wait | supervisor
+  timeout: 15m        # for wait, and for a supervisor's escalation
+```
+
+| Mode | A question (`AskUserQuestion`) | A gate |
+|---|---|---|
+| `assume` | denied by the hook: the agent picks the most reasonable answer, records it (`laight done … assumptions='[…]'`) and carries on; assumptions go into the run report and the PR description | takes its `default:` exit; none → the run fails (`kind: question`) |
+| `fail` | the step fails, `kind: question`, the question as its reason | as `assume` |
+| `wait` | answered in the agent's own pane (Claude's dialog, found with `laight attach`); unanswered within `timeout` → the step fails | answered in the engine window; unanswered within `timeout` → `default:`, else fails |
+| `supervisor` | a turn for the supervisor seat (#65), which answers or escalates | as `wait` |
+
+Permissions are never a question: denied and recorded in every mode, the supervisor's included
+(§6.1). `assume` is the default so runs finish instead of failing on every gap; how often an
+assumption turns out wrong decides whether it stays the default (measure it). **The supervisor**
+(#65, built last) is a seat with the run's context that answers questions from the brief and is
+the one place a human can talk to the run live; its answers are recorded like assumptions.
+
+**Rules:** an agent is never blocked on a human nobody was asked for: every hook answers at once
+except under `wait`, whose clock is the stuck clock (§12.2). Whatever times out falls back to
+*deny* or *fail*, never *allow*. `permissions: auto` + deny lists should make `yolo` unnecessary
+for most workflows; that is a design goal, measure it.
+
+### 6.3 After the run: the failure report (#63)
+
+A run is green or red. A red run's `run.json` holds `failure: {step, hop, seat, kind, reason,
+detail, at}`, `kind` one of `exit` (`laight done failed reason=…`), `permission`, `question`,
+`credential`, `timeout`, `crash`, `max_hops`, `shell`, `aborted`; `detail` is the last lines of
+the pane or the shell step's log, redacted (§12.4). A `run.failed` event carries the same.
+`laight watch` shows ✕ and the reason on the failed step, and `laight run` exits non-zero and
+prints the report. Every run's report also lists the denied requests and the assumptions made.
+
+### 6.4 Parked: the inbox (#67)
+
+The inbox, M3's first design, is **parked, not deleted**: it may come back (phone, Slack, a team
+inbox) once runs are unattended by default. Its code stays, builds and passes its tests, and its
+hooks are what #61, #64 and the supervisor start from. `laight inbox` is hidden (out of `--help`,
+the README and §8) but still works, and `laight run` stops opening the inbox pane by default (#67).
+What follows is the design as built, kept as the reference for those hooks.
 
 | Kind | Source | Answer goes back via |
 |---|---|---|
@@ -372,36 +460,37 @@ routes:                           # first match wins; terminal and web always se
   - { to: [phone], escalate_after: 10m, then: [team] }
 ```
 
-**Rules:** an agent must never be blocked without an inbox item existing for it. An expired item
-falls back to *deny*, never allow. `permissions: auto` + the inbox should make `yolo` unnecessary
-for most workflows; that is a design goal, measure it.
+Its rule, while it was the model: an agent was never blocked without an inbox item existing for
+it, and an expired item fell back to *deny*, never allow.
 
 ## 7. Observability
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
-  `run.started|finished|aborted`, `step.started|done|skipped|timeout`, `seat.up|down|crashed`,
-  `inbox.raised|answered`, `hook.<name>` (session start and stop), `tool` (name + duration, never
-  arguments), `usage` (tokens/cost per seat per step).
+  `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
+  `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` and
+  `assumption` (#61, #64), `inbox.raised|answered` (parked), `hook.<name>` (session start and
+  stop), `tool` (name + duration, never arguments), `usage` (tokens/cost per seat per step).
 - `laight watch`: every run, one line each. `laight watch <run>`: a live CI-style pipeline
-  (✓ ● ✕ ○, ×N for loops), durations, cost, last events, open items. The engine window shows it.
+  (✓ ● ✕ ○, ×N for loops), durations, cost, last events, and a red run's failure report. The
+  engine window shows it.
 - `laight show`: the same as a CircleCI-like web page on 127.0.0.1, live via SSE, plain HTML
   embedded with `go:embed` (no npm, no external requests); `--export` writes one static file.
 
 ## 8. CLI (the whole surface)
 
-Ten commands, and it stays that way; a new command needs a use none of these covers.
+Nine commands, and it stays that way; a new command needs a use none of these covers. (A tenth,
+`laight inbox`, is parked: hidden, still working, §6.4.)
 
 ```
 laight init                          scaffold .laight/
 laight validate [workflow]           schema + semantic checks (run also does this first)
-laight run <workflow> [k=v…]         spin up the rig, start the engine, follow it live
+laight run <workflow> [k=v…]         preflight credentials, spin up the rig, follow it live;
+           --from-failed <run>       rerun a red run from its failed step (#66)
 laight watch [run]                   live pipeline view; no run = every run, one line each
 laight show [run] [--export]         the web view (localhost, foreground)
-laight inbox [<item> [<answer>…]]    the human queue; one item in full, or answer it (scripts);
-             [--follow [run]]        kept open, answered at a prompt (the pane `run` opens)
 laight attach <run> [seat]           jump into the run's tmux session (or one seat's window)
 laight abort <run>                   stop a live run; on a finished one, remove its worktrees
-laight doctor                        tmux, git, runtimes, hooks; queue and channels
+laight doctor                        tmux (≥ 3.1), git, runtimes, hooks
 laight done <exit> [k=v…]            for agents: finish the current step (the only one they learn)
 ```
 
@@ -412,7 +501,7 @@ command with side effects outside the run asks first and lists what it will do; 
 
 - **Go, latest stable** (`go 1.27`), pure Go, `CGO_ENABLED=0`. `cmd/laight/`, packages under
   `internal/`. Few dependencies (YAML, JSON Schema, bubbletea); prefer the standard library.
-  `gofmt`, `go vet`, `staticcheck` clean. Target ~2,000 lines before M5.
+  `gofmt`, `go vet`, `staticcheck` clean. Target ~2,000 lines before M4.
 - tmux via the CLI on its own server (`tmux -L laight`), so the user's sessions are never touched.
 - Hooks are the same binary: `laight hook <event>` reads the hook JSON on stdin.
 - Tests: unit tests for spec parsing, routing, templating; an integration test with a fake runtime
@@ -429,11 +518,18 @@ command with side effects outside the run asks first and lists what it will do; 
 3. **M2** Engine: steps, `laight done`, routing, `max_hops`, shell steps; a minimal inbox
    (the `files` queue, `laight inbox <item> <answer>`, gates, the `PermissionRequest` hook); then
    `needs` and `matrix`. Acceptance: the issue cycle of section 3 on a real issue in a real repo.
-4. **M3** Inbox: the remaining hooks (questions, Stop), `laight inbox` (TUI), stuck detection.
-5. **M4** Channels and routing: `ntfy` (phone), `command`, then `slack` and `webhook`.
-6. **M5** Observability: `watch`, `show`, usage/cost.
-7. **M6** `sqs` queue (several machines, one inbox).
-8. **M7** Codex runtime; `shell` runtime for arbitrary CLIs.
+4. **M3** Unattended (#68, in this order): deny lists on auto mode (#61) and the failure report,
+   a failed run ending (#63); the credentials preflight (#62); rerun from failed (#66), before
+   anything makes runs fail more often; the `human:` policy and gate defaults (#64); parking the
+   inbox (#67). With `/laight:plan` and `/laight:postmortem` in berni23/laight-plugins.
+   Stuck detection (§12.2) and `question` items (#55) were built before the change.
+5. **M4** Observability: `watch`, `show` (#58: the pipeline, click a step for its agent's
+   terminal), usage/cost.
+6. **M5** Supervisor seat (#65), once real runs show which questions come up.
+7. **M6** Codex runtime; `shell` runtime for arbitrary CLIs.
+
+**Parked** (the old M3–M6, §6.4): the inbox TUI; channels and routing (`ntfy`, `command`,
+`slack`, `webhook`); the `sqs` queue.
 
 ## 11. Rules for working on this repo
 
@@ -447,7 +543,7 @@ For contributors and for coding agents working here (AGENTS.md points to this fi
 - Requirement 1 beats features: if something needs a daemon, an always-on server or a database,
   it's out. Optional integrations (SQS, Slack…) stay optional: off unless configured, and the
   default install needs no account anywhere.
-- No secrets in logs, events, inbox details or ntfy payloads.
+- No secrets in logs, events, failure reports, inbox details or anything that leaves the machine.
 - Verify against real tmux and a real Claude Code before calling a milestone done; a passing unit
   test does not prove an agent got its prompt.
 - Ideas, not code, from other projects unless their licence allows it; say where an idea came from
@@ -479,7 +575,7 @@ Archon, Orca and Claude Squad handle them is in the parked notes; ideas only, ne
 before the paste, and treat the paste as a nudge that can be resent (OpenRig's split, with files).
 The agent's side acknowledges: a `UserPromptSubmit` hook writes `seats/<seat>.ack`. On resume, a
 hop with no ack is pasted again; an acked hop with no `done` is left running; re-pasting an acked
-hop is never automatic (Archon's rule): laight raises a `stuck` item. A hop whose seat died while
+hop is never automatic (Archon's rule): the hop is stuck (§12.2). A hop whose seat died while
 the engine was down continues only if the seat can resume its conversation, with a short note to
 carry on, once per hop; otherwise it fails like a crashed seat. A seat that crashes again on a hop
 resume respawned it for raises a `failed` item instead of being respawned again. Runtimes without hooks fall back to
@@ -506,15 +602,22 @@ is already done is just freed). A quiet seat's turn may still be running, so it 
 step only after its Stop hook (a late `laight done` from that turn then finds no step to finish);
 a seat without hooks is interrupted (`C-c`) instead. Looking first is `laight attach`, which the item's detail names. A
 seat with a pending permission or question item is never stuck, and a gate is never timed: a human is already
-asked (reminding them is M4's `escalate_after`). An item whose turn ends on its own is withdrawn.
-A crashed seat fails its hop at once and is respawned only by a later step (or a `retry`).
+asked. An item whose turn ends on its own is withdrawn.
+A crashed seat fails its hop at once and is respawned only by a later step (or a rerun).
+
+**Unattended (#60), settled in #63:** nobody is asked any more. A stopped agent is nudged once by
+the engine itself (the same reminder, pasted), and fails its hop if it stops again; a quiet seat
+or shell step fails its hop (`kind: timeout`), since a paste could answer a dialog nobody has read.
+Under `human.mode: wait` the `stuck` item is still raised as above, with `human.timeout` as its
+clock. Until #63 lands the code raises the item in every mode.
 
 ### 12.3 One parallel branch fails while others run (#12)
 
-Archon's model: when a parallel copy fails with no route, running siblings finish and their exits
-are recorded; the failed one is held on its `failed` item (rule 4 of §3), the one thing the human
-answers, and every step that `needs` it waits: `retry` can still let them run, `abort` fails the
-run and they never start (decided in #12, 2026-10-21). Stopping siblings stays explicit
+Archon's model: when a parallel copy (or any step) fails with no route, running siblings finish
+and their exits are recorded, nothing new starts, and the run ends red (rule 4 of §3); the steps
+that `needs` it never start. Letting siblings finish, unlike CircleCI's cancel, keeps their work
+for a rerun from failed (#66), which reruns only what failed (decided in #12, 2026-10-21; held
+on a `failed` item until #60 reversed that, 2026-11-02). Stopping siblings stays explicit
 (`laight abort`, or later an opt-in `on_failure: cancel`).
 
 ### 12.4 Secrets and agent panes (#7, #16)
