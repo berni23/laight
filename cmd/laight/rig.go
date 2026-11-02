@@ -285,7 +285,8 @@ type hookInput struct {
 
 // waiting counts the background agents still running when the turn ended: each starts a new
 // turn when it finishes. Shells don't count: one may never end (a dev server), and Claude's own
-// "Waiting for N background agents" leaves them out too.
+// "Waiting for N background agents" leaves them out too. Other types and statuses are unchecked
+// (#73), so they don't count either.
 func (in hookInput) waiting() int {
 	n := 0
 	for _, t := range in.BackgroundTasks {

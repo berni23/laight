@@ -22,7 +22,9 @@ that.
   only background *agents* count (shells may never end), and a seat isn't idle after `done` while
   one runs. Verified on real runs with `.laight/workflows/background-agent.yaml`. Filed #72 (the
   spinner keeps the seat log moving, so the quiet clock can't fire) and #73 (unchecked
-  `background_tasks` statuses): both matter before #63 makes timeouts fail runs.
+  `background_tasks` types and statuses): both matter before #63 makes timeouts fail runs. Second
+  review round: a seat held after `done` has no bound until #72, and #63 must stop a waiting
+  agent before it frees its seat (noted on #63 and #72).
 
 ---
 
