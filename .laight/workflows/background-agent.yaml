@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# A supervised check of #57: an agent's turn ends while a background agent runs, which is not a
+# stopped agent. Expect no reminder and no stuck item while it waits (`hook.stop` events carry
+# `background: 1`), then the agent resumes on its own and finishes the step.
+# Start it with:  laight run background-agent
+version: 1
+id: background-agent
+summary: An agent waits on a background agent, and laight doesn't take it for stuck.
+base: main
+
+seats:
+  agent:
+    label: Agent
+    session: resume
+    permissions: auto
+    model: haiku
+
+steps:
+  - id: wait
+    seat: agent
+    objective: |
+      This is a test of how laight sees background agents. Do not change any file.
+      1. Start ONE background agent (Agent tool, run_in_background: true) whose task is: "List
+         every .go file under internal/ with the Glob tool and reply with only their count."
+      2. Do NOT wait for it: as soon as it is launched, end your turn with the single word
+         "launched". Do not run laight done yet.
+      3. When its result arrives, finish with: laight done handoff files=<the count>

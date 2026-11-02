@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -108,6 +109,15 @@ func TestStuckItemWithdrawn(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(e.Home, "inbox", items[0].ID+".json")); !os.IsNotExist(err) {
 		t.Errorf("item file: %v", err)
+	}
+	evs, err := state.Events(e.Home, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if i := slices.IndexFunc(evs, func(ev state.Event) bool {
+		return ev.Type == "inbox.answered" && ev.Data["item"] == items[0].ID && ev.Data["answer"] == "withdrawn"
+	}); i < 0 {
+		t.Errorf("no withdrawn event: %+v", evs)
 	}
 }
 

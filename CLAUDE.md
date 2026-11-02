@@ -469,8 +469,9 @@ it, and an expired item fell back to *deny*, never allow.
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
   `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
   `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` and
-  `assumption` (#61, #64), `inbox.raised|answered` (parked), `hook.<name>` (session start and
-  stop), `tool` (name + duration, never arguments), `usage` (tokens/cost per seat per step).
+  `assumption` (#61, #64), `inbox.raised|answered` (parked; `answered` also covers an item that
+  expired or was withdrawn, not only a human's answer), `hook.<name>` (session start and stop; a
+  stop waiting on background agents carries `background: N`), `tool` (name + duration, never arguments), `usage` (tokens/cost per seat per step).
 - `laight watch`: every run, one line each. `laight watch <run>`: a live CI-style pipeline
   (✓ ● ✕ ○, ×N for loops), durations, cost, last events, and a red run's failure report. The
   engine window shows it.
@@ -593,7 +594,14 @@ the open item and when its clock last restarted, and nothing routes on it. An ag
 without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it
 stops a second time (`.stopped`); a seat quiet past its timeout gets the item directly. It also
 covers a seat that ran `done` but whose turn never ended (a Stop hook that failed), and a shell
-step (its log is its only trace). Decided in #15 (2026-10-25, revised in the #47 review): the
+step (its log is its only trace). A turn that ends while background agents run is not over
+(#57): the agent starts a new turn when they finish, so the Stop hook neither reminds it nor
+counts it, and its seat isn't idle even after `laight done` (their results would land in its next
+step). Claude says so in the Stop hook's input (`background_tasks`, a `subagent` entry with
+`status: running`; checked on 2.1.316), the hook's evidence, not the pane's "Waiting for N
+background agents". Background shells don't count: one may never end (a dev server), and Claude's
+own line leaves them out. Other types and statuses are unchecked (#73). The quiet clock doesn't bound the
+wait yet: the spinner keeps the seat log moving (#72). Decided in #15 (2026-10-25, revised in the #47 review): the
 choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
 reminder; skipped if it has since reached a permission dialog, whose item already asks) or
 `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
