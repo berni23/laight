@@ -49,19 +49,43 @@ func liveInbox(home string, args []string, stdin io.Reader, stdout, stderr io.Wr
 	shown := map[string]*inbox.Item{} // printed and still open, by id
 	mine := map[string]bool{}         // answered here: no need to say it went
 	prompted := ""
+	stale := "" // the item the prompt named went before a line reached it: refuse the next id-less line
 	for {
+		// First: a run that ended, or whose engine died, takes its items with it, and they
+		// went for that reason, not because someone answered them elsewhere.
+		if run != nil {
+			if r, err := state.Load(home, run.ID); err == nil && engineDied(srv, r) {
+				fmt.Fprintln(stdout, "\n"+deadEngine(r))
+				return 1
+			} else if err == nil && !r.Live() {
+				fmt.Fprintf(stdout, "\nrun %s %s\n", r.Short(), r.Status)
+				return 0
+			}
+		}
 		items, _ := inbox.Pending(home)
 		var open []*inbox.Item
+		why := map[string]string{} // still pending, but nothing will read an answer: why not
 		for _, it := range items {
-			if (run == nil || it.Run == run.ID) && unread(home, srv, it) == "" {
-				open = append(open, it)
+			if run == nil || it.Run == run.ID {
+				if w := unread(home, srv, it); w == "" {
+					open = append(open, it)
+				} else {
+					why[it.ID] = w
+				}
 			}
 		}
 		changed := false
 		for id, it := range shown {
 			if !has(open, id) {
 				if !mine[id] {
-					fmt.Fprintf(stdout, "\n%s: answered elsewhere, or withdrawn\n", it.Short())
+					w := why[id]
+					if w == "" {
+						w = "answered elsewhere, or withdrawn"
+					}
+					fmt.Fprintf(stdout, "\n%s: %s\n", it.Short(), w)
+					if id == prompted {
+						stale = it.Short()
+					}
 				}
 				delete(shown, id)
 				changed = true
@@ -83,24 +107,26 @@ func liveInbox(home string, args []string, stdin io.Reader, stdout, stderr io.Wr
 			fmt.Fprintln(stdout, "\nnothing waiting")
 			prompted = ""
 		}
-		if run != nil {
-			if r, err := state.Load(home, run.ID); err == nil && !r.Live() {
-				fmt.Fprintf(stdout, "\nrun %s %s\n", r.Short(), r.Status)
-				return 0
-			}
-		}
-
 		select {
 		case line, ok := <-lines:
 			if !ok {
 				return 0
 			}
+			gone := stale
+			stale = ""
 			if strings.TrimSpace(line) == "" {
 				prompted = "" // prompt again
 				continue
 			}
 			if len(open) == 0 {
 				fmt.Fprintln(stdout, "nothing to answer")
+				continue
+			}
+			// A line typed for an item that has since gone is not given to the next one, which
+			// the human may not have read: they type it again, or start it with an item's id.
+			if gone != "" && !namesItem(open, line) {
+				fmt.Fprintf(stdout, "%s went before your answer reached it; nothing sent. %s is waiting: type your answer again.\n", gone, open[0].Short())
+				prompted = ""
 				continue
 			}
 			it, answers, err := liveAnswer(open, line)
@@ -117,6 +143,17 @@ func liveInbox(home string, args []string, stdin io.Reader, stdout, stderr io.Wr
 		case <-tick.C:
 		}
 	}
+}
+
+// namesItem says whether line starts with the id of one of the open items.
+func namesItem(open []*inbox.Item, line string) bool {
+	first, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+	for _, o := range open {
+		if strings.EqualFold(first, o.Short()) {
+			return true
+		}
+	}
+	return false
 }
 
 func has(items []*inbox.Item, id string) bool {
@@ -158,7 +195,7 @@ func liveAnswer(open []*inbox.Item, line string) (*inbox.Item, []string, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	if it.Kind != inbox.Question && len(words) == 1 {
+	if it.Kind != inbox.Question && len(words) == 1 && words[0] != "" { // "" is not short for anything
 		var match []string
 		for _, c := range it.Choices {
 			if strings.HasPrefix(c, strings.ToLower(words[0])) {

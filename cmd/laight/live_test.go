@@ -39,6 +39,11 @@ func TestLiveAnswer(t *testing.T) {
 			t.Errorf("%q: %v %q %v, want %v %q", tt.line, it.Short(), got, err, tt.it.Short(), tt.want)
 		}
 	}
+	// An empty answer is not shortened into an item's only choice.
+	gate := &inbox.Item{ID: "01DDDDDDDDDDDDDDDDDDDDDDDD", Kind: inbox.Gate, Choices: []string{"yes"}}
+	if _, got, _ := liveAnswer([]*inbox.Item{gate}, `""`); !reflect.DeepEqual(got, []string{""}) {
+		t.Errorf(`"": %q, want [""]`, got)
+	}
 	if _, _, err := liveAnswer(open, `cccccc "open`); err == nil {
 		t.Error("an open quote is an error")
 	}
@@ -141,5 +146,64 @@ func waitFor(t *testing.T, out *syncBuffer, want string) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no %q in:\n%s", want, out.String())
 		}
+	}
+}
+
+// A line typed without an item id answers the item the prompt named. When that item goes
+// before the line arrives (answered in its pane, withdrawn, expired), the line is refused rather
+// than given to the next item, which the human never read (#69 review).
+func TestLiveInboxTargetGone(t *testing.T) {
+	home, id := doneEnv(t)
+	liveEngine(t, home, id)
+	pollEvery = 5 * time.Millisecond
+	a := inbox.Item{ID: state.NewID(time.Now()), Run: id, Workflow: "wf", Seat: "a", Kind: inbox.Permission,
+		Title: "a wants to use Bash", Detail: "ls", Choices: []string{inbox.Allow, inbox.Deny}}
+	b := inbox.Item{ID: state.NewID(time.Now().Add(time.Second)), Run: id, Workflow: "wf", Seat: "b", Kind: inbox.Permission,
+		Title: "b wants to use Bash", Detail: "rm -rf build", Choices: []string{inbox.Allow, inbox.Deny}}
+	inbox.Put(home, a)
+	inbox.Put(home, b)
+
+	in, typed := io.Pipe()
+	defer typed.Close()
+	var out syncBuffer
+	go liveInbox(home, []string{id}, in, &out, &out)
+	waitFor(t, &out, "answer "+(&a).Short()+"> ")
+	if _, err := answer(home, a.ID, []string{inbox.Allow}); err != nil { // Yes in a's pane
+		t.Fatal(err)
+	}
+	waitFor(t, &out, "answer "+(&b).Short()+"> ")
+	io.WriteString(typed, "a\n") // meant for a
+	waitFor(t, &out, "nothing sent")
+	if it, _ := inbox.Answered(home, b.ID); it != nil {
+		t.Fatalf("b was answered %q by a line meant for a:\n%s", it.Answer, out.String())
+	}
+	io.WriteString(typed, "d\n") // typed after reading b
+	waitFor(t, &out, (&b).Short()+": deny")
+}
+
+// The run's inbox pane says when its engine dies, and ends, instead of waiting for ever with
+// every item of the run reported as answered elsewhere (#69 review).
+func TestLiveInboxDeadEngine(t *testing.T) {
+	home, id := doneEnv(t)
+	liveEngine(t, home, id)
+	pollEvery = 5 * time.Millisecond
+	p := inbox.Item{ID: state.NewID(time.Now()), Run: id, Workflow: "wf", Seat: "a", Kind: inbox.Permission,
+		Title: "a wants to use Bash", Choices: []string{inbox.Allow, inbox.Deny}}
+	inbox.Put(home, p)
+
+	in, typed := io.Pipe()
+	defer typed.Close()
+	var out syncBuffer
+	done := make(chan int)
+	go func() { done <- liveInbox(home, []string{id}, in, &out, &out) }()
+	waitFor(t, &out, "answer "+(&p).Short()+"> ")
+	tmux.Server{Socket: state.Socket(home)}.KillServer()
+	select {
+	case code := <-done:
+		if code != 1 || !strings.Contains(out.String(), "its engine died") || strings.Contains(out.String(), "answered elsewhere") {
+			t.Errorf("end: %d\n%s", code, out.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("the pane outlived its engine:\n%s", out.String())
 	}
 }
