@@ -13,33 +13,30 @@ that.
 
 ## Last session — 2026-11-02
 
-- **Direction change: unattended by design** (umbrella #68). A run should need no human mid-run:
-  questions are settled before the run (`/laight:plan`), permissions are deny lists on auto mode,
-  credentials are a preflight, and a failed run ends with where and why, CircleCI-style. Filed
-  #60–#67 and berni23/laight-plugins#3–#4; rewrote #58 (`laight show`) for it. The inbox is
-  **parked, not deleted** (#67; #55, #59, #49, #26 labelled `parked`).
-- #55's last piece (question context and the run's inbox pane) is committed as finished work;
-  the rest of #55 is superseded by #64 and #61.
-- `CLAUDE.md` §11 points to the companion plugins repo, berni23/laight-plugins.
-- PR #69's review answered: a question's context is redacted before it is cut; the inbox pane
-  refuses a line typed for an item that has gone, and exits when its engine dies. Points for the
-  pane's future (items printed twice, `%id` targeting, tmux 3.1) are on #67.
+- **#60 done: the spec is unattended by design.** Requirement 4, §1, §2, §3 (rule 4: a failed run
+  ends; example with `human:`, `permissions.deny`, gate `default:`), §6 rewritten as before /
+  during / after the run with the inbox parked in §6.4, §7, §8 (nine commands,
+  `run --from-failed`), §10 (M3 unattended, M4 observability, M5 supervisor, inbox parked),
+  §12.2–12.3. README and CHANGELOG follow. The status line says where code still lags (#63).
+- #63's two open calls, confirmed by the user: running siblings finish before a run ends red;
+  stuck steps nudge once then fail, as their own kind `stuck` (quiet seats: `timeout`).
+- Stacked on PR #69 (both edit `CLAUDE.md`).
 
 ---
 
 ## Do this next
 
-### 1. #60 — rewrite the spec for "unattended by design"
-
-On branch `60-unattended-spec`. Requirement 4, §3 rule 4 (a failed run ends), §6 (parked inbox,
-`human:` policy), §8 (`inbox` hidden), §10 (new milestones). The six decisions are listed in #60;
-the user confirmed `assume` as the default and deny lists over allowlists. No code changes.
-
-### 2. #61 and #63 — deny lists on auto mode, and the failure report
+### 1. #61 and #63 — deny lists on auto mode, and the failure report
 
 The first code. #61 starts by checking three things against current Claude Code (listed in the
-issue). Then #62 (credentials), then #66 (rerun from failed) before anything that makes runs fail
-more often. Build order: #68.
+issue). #63's decisions are on the issue; **#57 (false stuck) first**, since a stuck step now
+fails the run. Then #62 (credentials),
+then #66 (rerun from failed) before anything that makes runs fail more often. Order: §10 M3.
+
+### 2. #67 — park the inbox in code
+
+Hide `laight inbox`, stop opening the inbox pane by default; the spec already says so (§6.4, §8).
+Small; can go alongside #61.
 
 ### 3. #50 — a real issue-cycle run in go-orchestrator, as evidence
 
@@ -50,6 +47,5 @@ Clean up `aaqt7j`'s worktrees with `laight abort aaqt7j`.
 
 ## Waiting on the user
 
-- `inbox_vs_supervisor.md` (untracked, repo root): the design comparison from this session; keep
-  it somewhere (e.g. `scratch.docs/`) or delete it. Not committed.
+- Merge PR #69, then this one (stacked on it).
 - #17 (shell step `cwd`) waits for a workflow that needs it.

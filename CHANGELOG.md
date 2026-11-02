@@ -6,6 +6,15 @@ All notable changes to laight are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The design is now unattended by design** (#60, #68): what a run needs from a human
+  (permissions, credentials, answers, decisions) is settled before it starts. Permissions become
+  deny lists on auto mode, credentials a preflight, questions a `human:` policy (`assume` by
+  default), and a failed run ends red with a report naming the step and why, to be rerun from the
+  failed step instead of held for retry. The inbox is parked: `laight inbox` will be hidden but
+  keeps working. The spec and README describe the new model; the code follows in #61–#67.
+
 ### Added
 
 - A question item shows what the agent said in its turn before asking: its messages and the
