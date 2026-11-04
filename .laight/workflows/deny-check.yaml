@@ -1,0 +1,44 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# A supervised check of #61. Expect, in the engine window and in events.jsonl:
+# - deny: Claude itself refuses `touch denied-by-rule` (a deny rule: no hook, no event); the
+#   agent adapts and finishes;
+# - ask: the seat runs in default mode, so `touch needs-a-human` would prompt; laight's
+#   PermissionRequest hook denies it at once (no inbox item), a `permission.denied` event
+#   (`by: laight`) records it, the engine window prints a ⊘ line, and the agent finishes anyway.
+# Start it with:  laight run deny-check
+version: 1
+id: deny-check
+summary: A deny rule blocks, and a request that would need a human is denied and recorded.
+base: main
+
+permissions:
+  deny: ["Bash(touch denied-by-rule*)"]
+
+seats:
+  auto:
+    label: Auto
+    session: fresh
+    permissions: auto
+    model: haiku
+  manual:
+    label: Manual
+    session: fresh
+    permissions: default            # every write prompts: the hook must deny it, not wait
+    model: haiku
+
+steps:
+  - id: deny
+    seat: auto
+    objective: |
+      This is a test of permission handling; nothing here matters. Run the bash command
+      `touch denied-by-rule` exactly once. Whatever happens, do not retry it or work around it.
+      Then finish with: laight done handoff result="<what the tool said, in a few words>"
+    next_hop: { on: { handoff: ask } }
+
+  - id: ask
+    seat: manual
+    objective: |
+      This is a test of permission handling; nothing here matters. Run the bash command
+      `touch needs-a-human` exactly once. Whatever happens, do not retry it or work around it.
+      Then finish with: laight done handoff result="<what the tool said, in a few words>"

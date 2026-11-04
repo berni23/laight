@@ -14,9 +14,20 @@ All notable changes to laight are documented here. The format follows
   default), and a failed run ends red with a report naming the step and why, to be rerun from the
   failed step instead of held for retry. The inbox is parked: `laight inbox` will be hidden but
   keeps working. The spec and README describe the new model; the code follows in #61–#67.
+- **A permission prompt is denied at once** (#61), never an inbox item: the agent is told no human
+  is available and decides what to do (carry on, or `laight done failed reason=…`). Every denial,
+  and every call auto mode refuses on its own, is recorded as a `permission.denied` event on the
+  step (tool and input, redacted) and printed in the engine window. Questions still go to the
+  inbox until the `human:` policy (#64).
 
 ### Added
 
+- **Deny lists** (#61): `permissions: { deny: [...] }` on the workflow, and per seat as
+  `permissions: { mode: auto, deny: [...] }` (a plain `permissions: auto` still works). Claude
+  blocks a matching call itself, in every permission mode, yolo included. `laight validate` checks
+  the rules and rejects the ones Claude would silently skip or never match (`Write(…)`,
+  `Glob(…)`…). `laight init` scaffolds a starter list: force pushes, pushes to the base branch,
+  `gh pr merge`, destructive infra commands.
 - A question item shows what the agent said in its turn before asking: its messages and the
   tools it ran, so you can answer without attaching to its window. (#55)
 - `laight run` opens the run's inbox in a pane under the engine: each question, permission, gate

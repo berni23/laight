@@ -198,7 +198,7 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	if seat.Guidance != "" {
 		l.Guidance = filepath.Join(r.SpecDir, filepath.FromSlash(seat.Guidance))
 	}
-	if b := rt.Settings(g.Laight); b != nil {
+	if b := rt.Settings(g.Laight, r.Spec.Deny(seat)); b != nil {
 		l.Settings = filepath.Join(runDir, "seats", name+".settings.json")
 		if err := os.WriteFile(l.Settings, b, 0o600); err != nil {
 			return err

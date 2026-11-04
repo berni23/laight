@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,28 @@ func TestLoadProblems(t *testing.T) {
 		{"field of another type", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    seat: impl\n", 1) }, "`seat` doesn't belong in a gate step", 0, false},
 		{"gate timeout warns", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    timeout: 1h\n", 1) }, "a gate is never timed", 0, true},
 		{"yolo warns", func(s string) string { return strings.Replace(s, "permissions: auto", "permissions: yolo", 1) }, "yolo", 13, true},
+		{"deny rules are fine", func(s string) string {
+			return strings.Replace(strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git push --force:*)\", \"Bash(aws * delete-*)\", \"Edit(//etc/**)\", \"WebFetch(domain:x.com)\", mcp__github, mcp__github__merge_pr, Agent(Explore)] }", 1),
+				"permissions: auto", "permissions: { mode: auto, deny: [\"Read(~/.ssh/**)\"] }", 1)
+		}, "", 0, false},
+		{"schema: seat deny is a list", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: { mode: auto, deny: \"Bash(rm:*)\" }", 1)
+		}, "permissions", 13, false},
+		{"schema: workflow permissions take no mode", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { mode: auto }", 1)
+		}, "permissions", 0, false},
+		{"malformed deny rule", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"git push --force\"] }", 1)
+		}, "is not a permission rule", 0, false},
+		{"deny rule that never matches", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: { mode: auto, deny: [\"Write(secrets/**)\"] }", 1)
+		}, "write Edit(secrets/**)", 0, false},
+		{"mcp deny rule with a specifier", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"mcp__github(merge)\"] }", 1)
+		}, "an MCP rule takes no", 0, false},
+		{"bash :* in the middle", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git:* push)\"] }", 1)
+		}, ":* only works at the end", 0, false},
 		{"cwd repo warns", func(s string) string { return strings.Replace(s, "cwd: worktree", "cwd: repo", 1) }, "share the main checkout", 0, true},
 		{"unrouted exit warns", func(s string) string { return strings.Replace(s, "yes: merge, no: end", "yes: merge", 1) }, `exit "no" has no route`, 0, true},
 		{"needs a gate warns", func(s string) string {
@@ -661,5 +684,49 @@ func TestOwnIssueCycle(t *testing.T) {
 		if got, err := Render("merge.env.PR", merge.Env["PR"], data); err != nil || got != "https://x/pull/1" {
 			t.Errorf("out %v: PR = %q, %v", c.out, got, err)
 		}
+	}
+}
+
+// A seat's deny rules are the workflow's, then its own, each once. A seat's `permissions`
+// replaces a shared seat's whole, deny list included, as env does. The run.json snapshot reads
+// back the same, and so does an older one, which wrote the mode as a plain string.
+func TestDeny(t *testing.T) {
+	src := strings.Replace(issueCycle, "base: dev", `base: dev
+permissions: { deny: ["Bash(git push --force:*)", "mcp__github"] }`, 1)
+	src = strings.Replace(src, "permissions: auto", `permissions: { mode: auto, deny: ["mcp__github", "Bash(terraform apply:*)"] }`, 1)
+	src = strings.Replace(src, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: yolo\n", 1)
+	dir, file := project(t, src)
+	if err := os.WriteFile(filepath.Join(dir, "seats/reviewer.yaml"), []byte(strings.Replace(reviewerSeat, "permissions: auto", "permissions: { mode: auto, deny: [Read(~/.ssh/**)] }", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w, probs := Load(dir, file)
+	if w == nil || HasErrors(probs) {
+		t.Fatalf("load: %v", probs)
+	}
+	impl, rev := w.Seats["impl"], w.Seats["reviewer"]
+	if got := w.Deny(impl); !slices.Equal(got, []string{"Bash(git push --force:*)", "mcp__github", "Bash(terraform apply:*)"}) {
+		t.Errorf("impl deny = %q", got)
+	}
+	if rev.Permissions.Mode != "yolo" || !slices.Equal(w.Deny(rev), w.Permissions.Deny) {
+		t.Errorf("reviewer permissions = %+v, deny %q: the shared seat's deny list should be replaced", rev.Permissions, w.Deny(rev))
+	}
+	if impl.Permissions.Mode != "auto" {
+		t.Errorf("impl mode %q", impl.Permissions.Mode)
+	}
+
+	b, err := json.Marshal(w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Workflow
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(back.Deny(back.Seats["impl"]), w.Deny(impl)) || back.Seats["impl"].Permissions.Mode != "auto" {
+		t.Errorf("snapshot: %s", b)
+	}
+	var old Seat
+	if err := json.Unmarshal([]byte(`{"permissions":"auto"}`), &old); err != nil || old.Permissions.Mode != "auto" || old.Permissions.Deny != nil {
+		t.Errorf("old snapshot: %+v %v", old.Permissions, err)
 	}
 }

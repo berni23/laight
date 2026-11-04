@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,6 +66,7 @@ func (c *checker) workflow() {
 		c.template([]string{"env", k}, c.w.Env[k], nil, true)
 	}
 	c.env([]string{"env"}, c.w.Env)
+	c.deny([]string{"permissions", "deny"}, c.w.Permissions.Deny)
 }
 
 func (c *checker) seats() {
@@ -90,7 +93,11 @@ func (c *checker) seats() {
 				c.add(Error, at("guidance"), "guidance file %s not found (paths are relative to .laight/)", s.Guidance)
 			}
 		}
-		if s.Permissions == "yolo" {
+		c.deny([]string{"seats", name, "permissions", "deny"}, s.Permissions.Deny)
+		if len(s.Permissions.Deny) > 0 && s.Runtime != "claude-code" {
+			c.add(Warning, at("permissions"), "a deny list only applies to claude-code seats; runtime %s ignores it", s.Runtime)
+		}
+		if s.Permissions.Mode == "yolo" {
 			c.add(Warning, at("permissions"), "yolo: this agent runs every command unasked, with your credentials")
 		}
 		if s.Cwd == "repo" {
@@ -490,4 +497,30 @@ func all(list []string, ok func(string) bool) bool {
 		}
 	}
 	return true
+}
+
+// denyRule is a Claude Code permission rule: Tool or Tool(specifier).
+var denyRule = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*)(?:\((.+)\))?$`)
+
+// noMatch are tools whose rules Claude accepts but never matches (checked against the Claude Code
+// permission docs, 2026-11): a deny rule on them would deny nothing.
+var noMatch = map[string]string{"Write": "Edit", "NotebookEdit": "Edit", "Glob": "Read"}
+
+// deny checks a deny list. Claude skips a malformed rule with a warning in a pane nobody reads,
+// so a typo here would quietly allow what the workflow meant to forbid.
+func (c *checker) deny(path []string, rules []string) {
+	for i, r := range rules {
+		at := append(slices.Clone(path), strconv.Itoa(i))
+		m := denyRule.FindStringSubmatch(r)
+		switch {
+		case m == nil:
+			c.add(Error, at, "%q is not a permission rule: write Tool or Tool(specifier), e.g. Bash(git push --force:*)", r)
+		case strings.HasPrefix(m[1], "mcp__") && m[2] != "":
+			c.add(Error, at, "%q: an MCP rule takes no (…): write mcp__server or mcp__server__tool", r)
+		case noMatch[m[1]] != "" && m[2] != "":
+			c.add(Error, at, "%q never matches: Claude checks paths only on Edit and Read rules; write %s(%s)", r, noMatch[m[1]], m[2])
+		case m[1] == "Bash" && strings.Contains(strings.TrimSuffix(m[2], ":*"), ":*"):
+			c.add(Error, at, "%q: :* only works at the end; use * for a wildcard elsewhere", r)
+		}
+	}
 }

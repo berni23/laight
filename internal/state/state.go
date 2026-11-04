@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -389,6 +391,32 @@ func Events(home, id string) ([]Event, error) {
 		}
 	}
 	return evs, nil
+}
+
+// EventsFrom reads the run's events after byte offset off, and returns the offset to read from
+// next. A line still being written is left for the next read.
+func EventsFrom(home, id string, off int64) ([]Event, int64, error) {
+	f, err := os.Open(filepath.Join(Dir(home, id), "events.jsonl"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, off, nil
+	}
+	if err != nil {
+		return nil, off, err
+	}
+	defer f.Close()
+	b, err := io.ReadAll(io.NewSectionReader(f, off, math.MaxInt64-off))
+	if err != nil {
+		return nil, off, err
+	}
+	end := bytes.LastIndexByte(b, '\n') + 1
+	var evs []Event
+	for _, line := range bytes.Split(b[:end], []byte("\n")) {
+		var e Event
+		if len(line) > 0 && json.Unmarshal(line, &e) == nil {
+			evs = append(evs, e)
+		}
+	}
+	return evs, off + int64(end), nil
 }
 
 // Done is what finished a hop: out/<step>-<hop>.json, written by `laight done`, or by the engine

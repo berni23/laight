@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/runtime"
@@ -21,7 +22,7 @@ import (
 	"github.com/berni23/laight/internal/tmux"
 )
 
-// permissionWait is how long a permission item waits for an answer before laight denies it. It
+// permissionWait is how long a question waits for an answer before laight gives up on it. It
 // is under the hook's own timeout (runtime.PermissionTimeout), so the answer is always laight's:
 // a hook Claude gives up on shows Claude's dialog in a pane nobody watches.
 var (
@@ -29,11 +30,18 @@ var (
 	pollEvery      = 500 * time.Millisecond
 )
 
-// permissionHook puts a permission prompt in the inbox and blocks until someone answers it, then
-// gives Claude the answer. Whatever goes wrong, it denies: an agent is never left waiting on a
-// dialog without an inbox item, and nothing is allowed that nobody allowed. A question the agent
-// asks (AskUserQuestion) reaches this hook too: it becomes a question item, and its answers go
-// back as the user's (checked on Claude Code 2.1.310: allow with the tool's input plus `answers`).
+// NoHuman is what an agent hears when it asks for a permission: nobody watches a run, so
+// whatever would need a human is denied at once, and the agent decides what to do (§6.1).
+const NoHuman = "Denied: no human is available during this laight run, and nothing that needs one is granted. " +
+	"Carry on without it. If the step can't be done without it, finish with: " +
+	`laight done failed reason="<what you needed and why>"`
+
+// permissionHook answers Claude when it would ask a human. A permission (auto mode escalating,
+// or any prompt of a seat in default mode) is denied at once and recorded on the step: no
+// inbox item, nobody waits (#61). A question the agent asks (AskUserQuestion) still goes to the
+// inbox until the human policy replaces it (#64): it becomes a question item, and its answers
+// go back as the user's (checked on Claude Code 2.1.310: allow with the tool's input plus
+// `answers`). Whatever goes wrong, it denies.
 func permissionHook(home, runID, seat string, in hookInput, unread error, stdout, stderr io.Writer) {
 	// Claude cancels a hook it stops waiting for (No or Esc in the pane): the item goes with it,
 	// since nobody would read the answer. Caught from before the item exists, so it can't be
@@ -57,7 +65,14 @@ func permissionHook(home, runID, seat string, in hookInput, unread error, stdout
 		decide(inbox.Deny, "laight couldn't read the permission request", nil)
 		return
 	}
-	behavior, message, input, err := askPermission(ctx, home, runID, seat, in)
+	if in.ToolName != askQuestion {
+		if err := recordDenial(home, runID, seat, in, "laight", ""); err != nil {
+			fmt.Fprintf(stderr, "laight hook: %v\n", err)
+		}
+		decide(inbox.Deny, NoHuman, nil)
+		return
+	}
+	behavior, message, input, err := askQuestionItem(ctx, home, runID, seat, in)
 	if err != nil {
 		fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		behavior, message, input = inbox.Deny, "laight couldn't ask a human: "+err.Error(), nil
@@ -65,34 +80,65 @@ func permissionHook(home, runID, seat string, in hookInput, unread error, stdout
 	decide(behavior, message, input)
 }
 
+// deniedInputMax caps a denial's input in events.jsonl: enough to see the command.
+const deniedInputMax = 1000
+
+// recordDenial appends a permission.denied event on the seat's current step: the tool and its
+// input, redacted, then cut (a cut secret would no longer match). by is who denied it: laight
+// (it would have asked a human) or auto mode, with its reason. Every denial goes into the run's
+// report, green runs too (§6.1). A deny rule's own refusals reach no hook, so they aren't here.
+func recordDenial(home, runID, seat string, in hookInput, by, reason string) error {
+	r, err := state.Load(home, runID)
+	if err != nil {
+		return err
+	}
+	ev := state.Event{Run: r.ID, Type: "permission.denied", Seat: seat,
+		Data: map[string]any{"tool": in.ToolName, "input": cutBytes(inbox.Scrub(permissionDetail(in), inbox.SeatSecrets()...), deniedInputMax), "by": by}}
+	if reason != "" {
+		ev.Data["reason"] = cutBytes(inbox.Scrub(reason, inbox.SeatSecrets()...), deniedInputMax)
+	}
+	if h := r.ActiveOn(seat); h != nil {
+		ev.Step, ev.Hop = h.Step, h.N
+	}
+	return state.Append(home, ev)
+}
+
+// cutBytes keeps at most n bytes of s, on a rune boundary, and says it cut.
+func cutBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n] + "…"
+}
+
 // askQuestion is the tool Claude asks the user questions with.
 const askQuestion = "AskUserQuestion"
 
-// askPermission raises the item and waits for its answer: allow or deny, and for a question the
-// tool's input with the answers added.
-func askPermission(ctx context.Context, home, runID, seat string, in hookInput) (behavior, message string, input map[string]any, err error) {
+// askQuestionItem raises a question item and waits for its answer: the tool's input with the
+// answers added, or deny.
+func askQuestionItem(ctx context.Context, home, runID, seat string, in hookInput) (behavior, message string, input map[string]any, err error) {
 	r, err := state.Load(home, runID)
 	if err != nil {
 		return "", "", nil, err
 	}
+	qs := questions(in)
+	if len(qs) == 0 {
+		// Allowed, Claude would show its own dialog in a pane, with nothing in the inbox to
+		// answer: deny, and say why, so the agent asks again.
+		return inbox.Deny, "laight couldn't read this AskUserQuestion call: give each question its text, and ask again", nil, nil
+	}
 	now := time.Now().UTC()
 	expires := now.Add(permissionWait)
+	// Its detail is what the agent said before asking, which the question alone may not make
+	// clear: like any detail, it stays on this machine (§6).
 	it := inbox.Item{
 		ID: state.NewID(now), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Seat: seat,
-		Kind: inbox.Permission, Title: fmt.Sprintf("%s wants to use %s", seat, in.ToolName),
-		Detail: permissionDetail(in), Choices: []string{inbox.Allow, inbox.Deny},
+		Kind: inbox.Question, Title: questionTitle(seat, qs), Questions: qs,
+		Detail:  turnContext(in.TranscriptPath, seatSaid(home, r, seat)),
 		Created: now, Expires: &expires, Match: toolMatch(in),
-	}
-	if in.ToolName == askQuestion {
-		qs := questions(in)
-		if len(qs) == 0 {
-			// Allowed, Claude would show its own dialog in a pane, with nothing in the inbox to
-			// answer: deny, and say why, so the agent asks again.
-			return inbox.Deny, "laight couldn't read this AskUserQuestion call: give each question its text, and ask again", nil, nil
-		}
-		// Its detail is what the agent said before asking, which the question alone may not make
-		// clear: like any detail, it stays on this machine (§6).
-		it.Kind, it.Title, it.Detail, it.Choices, it.Questions = inbox.Question, questionTitle(seat, qs), turnContext(in.TranscriptPath, seatSaid(home, r, seat)), nil, qs
 	}
 	if h := r.ActiveOn(seat); h != nil {
 		it.Step, it.Hop = h.Step, h.N
@@ -117,11 +163,11 @@ func askPermission(ctx context.Context, home, runID, seat string, in hookInput) 
 		case err != nil:
 			return inbox.Deny, "laight couldn't read the answer", nil, nil
 		case done != nil:
-			return answered(done, in)
+			return replied(done, in)
 		}
 		if _, err := inbox.Get(home, it.ID); errors.Is(err, os.ErrNotExist) {
 			if done, _ := inbox.Answered(home, it.ID); done != nil {
-				return answered(done, in) // answered between the two reads
+				return replied(done, in) // answered between the two reads
 			}
 			return inbox.Deny, "withdrawn: answered in the pane, or the run ended", nil, nil
 		}
@@ -137,7 +183,7 @@ func askPermission(ctx context.Context, home, runID, seat string, in hookInput) 
 					Data: map[string]any{"item": it.ID, "kind": it.Kind, "answer": inbox.Deny, "expired": true}})
 				return inbox.Deny, fmt.Sprintf("nobody answered within %s", permissionWait), nil, nil
 			}
-			return answered(done, in)
+			return replied(done, in)
 		}
 		select {
 		case <-ctx.Done():
@@ -148,11 +194,8 @@ func askPermission(ctx context.Context, home, runID, seat string, in hookInput) 
 	}
 }
 
-// expire records that nobody answered it in time: deny, or for a question, that nobody answered.
+// expire records that nobody answered the question in time.
 func expire(home string, it inbox.Item) (*inbox.Item, error) {
-	if it.Kind != inbox.Question {
-		return inbox.Answer(home, it.ID, inbox.Deny)
-	}
 	none := make([]string, len(it.Questions))
 	for i := range none {
 		none[i] = "(" + inbox.Deny + ": nobody answered)"
@@ -202,7 +245,7 @@ func questionTitle(seat string, qs []inbox.Ask) string {
 }
 
 // answeredInPane runs after every tool call of the seat. Claude shows its own dialog while the
-// PermissionRequest hook waits, and when someone allows the tool there it no longer waits for
+// PermissionRequest hook waits on a question, and when someone answers it there it no longer waits for
 // the hook, nor stops it: the item is withdrawn here, so nobody answers a prompt that is gone
 // (the hook sees it withdrawn and returns). A dialog denied or cancelled in the pane interrupts
 // the turn, and Claude stops the hook itself.
@@ -210,7 +253,7 @@ func answeredInPane(home, runID, seat string, in hookInput) {
 	m := toolMatch(in)
 	items, _ := inbox.Pending(home)
 	for _, it := range items { // oldest first: the same command asked twice is answered in order
-		if it.Run == runID && it.Seat == seat && (it.Kind == inbox.Permission || it.Kind == inbox.Question) && it.Match == m {
+		if it.Run == runID && it.Seat == seat && it.Kind == inbox.Question && it.Match == m {
 			inbox.Drop(home, it.ID)
 			state.Append(home, state.Event{Run: runID, Type: "inbox.answered", Step: it.Step, Seat: seat, Hop: it.Hop,
 				Data: map[string]any{"item": it.ID, "kind": it.Kind, "answer": "in the pane"}})
@@ -234,16 +277,6 @@ func toolMatch(in hookInput) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(append([]byte(in.ToolName+"\x00"), b...))
 	return hex.EncodeToString(sum[:16])
-}
-
-func answered(it *inbox.Item, in hookInput) (string, string, map[string]any, error) {
-	if it.Kind == inbox.Question {
-		return replied(it, in)
-	}
-	if it.Answer == inbox.Allow {
-		return inbox.Allow, "", nil, nil
-	}
-	return inbox.Deny, "denied from the laight inbox", nil, nil
 }
 
 // replied gives Claude a question's answers as the user's: the tool's own input, plus `answers`

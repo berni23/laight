@@ -11,11 +11,28 @@ base: {{BASE}}
 inputs:
   issue: { required: true, description: The issue number to work on }
 
+# What no agent may ever do. Claude blocks a matching call itself, in every permission mode;
+# auto mode judges everything else, and nothing is ever asked of a human mid-run.
+# Rules: Tool or Tool(specifier), * matches anything (https://code.claude.com/docs/en/permissions).
+permissions:
+  deny:
+    - "Bash(git push *--force*)"          # --force, --force-with-lease, before or after the refspec
+    - "Bash(git push -f *)"
+    - "Bash(git push * -f)"
+    - "Bash(git push * -f *)"
+    - "Bash(git push * {{BASE}})"         # agents push their own branch; {{BASE}} moves by merge only
+    - "Bash(git push *:{{BASE}})"
+    - "Bash(gh pr merge *)"               # merging is the merge step's, after you say yes
+    - "Bash(terraform apply *)"
+    - "Bash(terraform destroy *)"
+    - "Bash(kubectl delete *)"
+    - "Bash(aws * delete-*)"
+
 seats:
   impl:
     label: Implementer
     session: resume               # keeps its context from implement to fix
-    permissions: auto             # prompts it can't decide go to `laight inbox`
+    permissions: auto             # auto mode decides; what it would ask you is denied, and recorded
     guidance: guidance/implementer.md
   reviewer:
     label: Reviewer

@@ -248,6 +248,12 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 	case "permission-request":
 		permissionHook(home, runID, seat, in, unread, stdout, stderr)
+	case "permission-denied": // auto mode refused a call (it never fires for a deny rule)
+		if unread == nil && in.ToolName != "" {
+			if err := recordDenial(home, runID, seat, in, "auto mode", in.Reason); err != nil {
+				fmt.Fprintf(stderr, "laight hook: %v\n", err)
+			}
+		}
 	case "post-tool-use":
 		if unread == nil && in.ToolName != "" { // can't tell which call it was: withdraw nothing
 			answeredInPane(home, runID, seat, in)
@@ -275,6 +281,7 @@ type hookInput struct {
 	ToolName       string          `json:"tool_name"`
 	ToolInput      json.RawMessage `json:"tool_input"`
 	TranscriptPath string          `json:"transcript_path"`
+	Reason         string          `json:"reason"` // PermissionDenied: why auto mode refused
 	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background tasks:
 	// `subagent` and `shell` entries, `running` while they run, dropped once they finish.
 	BackgroundTasks []struct {

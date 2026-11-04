@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -33,17 +34,18 @@ const (
 
 // Workflow is one workflow file after `uses:` and defaults are applied.
 type Workflow struct {
-	Version    int              `json:"version"`
-	ID         string           `json:"id"`
-	Summary    string           `json:"summary"`
-	Base       string           `json:"base"`
-	Inputs     map[string]Input `json:"inputs"`
-	Env        StringMap        `json:"env"`
-	Seats      map[string]*Seat `json:"seats"`
-	Steps      []*Step          `json:"steps"`
-	LoopGuards LoopGuards       `json:"loop_guards"`
-	Timeouts   Timeouts         `json:"timeouts"`
-	OnFinish   OnFinish         `json:"on_finish"`
+	Version     int              `json:"version"`
+	ID          string           `json:"id"`
+	Summary     string           `json:"summary"`
+	Base        string           `json:"base"`
+	Inputs      map[string]Input `json:"inputs"`
+	Env         StringMap        `json:"env"`
+	Permissions Policy           `json:"permissions"`
+	Seats       map[string]*Seat `json:"seats"`
+	Steps       []*Step          `json:"steps"`
+	LoopGuards  LoopGuards       `json:"loop_guards"`
+	Timeouts    Timeouts         `json:"timeouts"`
+	OnFinish    OnFinish         `json:"on_finish"`
 
 	// File is the path the workflow was loaded from.
 	File string `json:"-"`
@@ -58,17 +60,58 @@ type Input struct {
 
 // Seat is one agent CLI session.
 type Seat struct {
-	Uses        string    `json:"uses"`
-	Label       string    `json:"label"`
-	Runtime     string    `json:"runtime"`
-	Command     string    `json:"command"`
-	Cwd         string    `json:"cwd"`
-	Session     string    `json:"session"`
-	Permissions string    `json:"permissions"`
-	Guidance    string    `json:"guidance"`
-	Model       string    `json:"model"`
-	Env         StringMap `json:"env"`
-	Setup       string    `json:"setup"`
+	Uses        string      `json:"uses"`
+	Label       string      `json:"label"`
+	Runtime     string      `json:"runtime"`
+	Command     string      `json:"command"`
+	Cwd         string      `json:"cwd"`
+	Session     string      `json:"session"`
+	Permissions Permissions `json:"permissions"`
+	Guidance    string      `json:"guidance"`
+	Model       string      `json:"model"`
+	Env         StringMap   `json:"env"`
+	Setup       string      `json:"setup"`
+}
+
+// Policy is the workflow's `permissions`: what no seat may ever do.
+type Policy struct {
+	Deny []string `json:"deny,omitempty"`
+}
+
+// Permissions is a seat's `permissions`: a mode alone (`auto`), or a mode and a deny list that
+// adds to the workflow's.
+type Permissions struct {
+	Mode string   `json:"mode"`
+	Deny []string `json:"deny,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler: a plain string is the mode.
+func (p *Permissions) UnmarshalJSON(b []byte) error {
+	var mode string
+	if json.Unmarshal(b, &mode) == nil {
+		*p = Permissions{Mode: mode}
+		return nil
+	}
+	type plain Permissions
+	var v plain
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*p = Permissions(v)
+	return nil
+}
+
+// Deny is every deny rule of a seat: the workflow's, then the seat's own, each once.
+func (w *Workflow) Deny(s *Seat) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, r := range append(slices.Clone(w.Permissions.Deny), s.Permissions.Deny...) {
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // Step is one unit of work: an agent step, a shell command or a human gate.

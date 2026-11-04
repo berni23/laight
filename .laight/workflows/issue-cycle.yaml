@@ -15,11 +15,23 @@ id: issue-cycle
 summary: The next baton.md item, implemented, cross-reviewed and merged into {{ .base }}.
 base: dev                         # for now: work branches from dev, PRs go back into dev
 
+permissions:                      # what no agent may ever do; auto mode judges the rest (#61)
+  deny:
+    - "Bash(git push *--force*)"
+    - "Bash(git push -f *)"
+    - "Bash(git push * -f)"
+    - "Bash(git push * -f *)"
+    - "Bash(git push * dev)"      # agents push their own branch; dev and main move by merge only
+    - "Bash(git push *:dev)"
+    - "Bash(git push * main)"
+    - "Bash(git push *:main)"
+    - "Bash(gh pr merge *)"       # merging is the merge step's, after a human says yes
+
 seats:
   impl:
     label: Implementer
     session: resume               # the session that picked the item up also fixes the review
-    permissions: auto             # prompts it can't decide go to `laight inbox`
+    permissions: auto             # auto mode decides; what it would ask a human is denied, and recorded
   reviewer:
     label: Reviewer
     session: resume               # verify asks the same session that wrote the review
