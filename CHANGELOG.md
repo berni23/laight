@@ -15,7 +15,8 @@ All notable changes to laight are documented here. The format follows
   / `laight attach` print it when the terminal comes back (the step, why, the end of its pane or
   log, and every request a seat was denied, on green runs too) and exit non-zero. Kinds: `exit`
   (`laight done failed reason="…"`), `permission` (the same after a denied request), `shell`,
-  `timeout`, `stuck`, `crash` (a dead engine too), `config` (a template that didn't render),
+  `timeout`, `stuck`, `crash` (a dead engine too), `config` (a template that didn't render, a shell step's `env` included; a missing secret
+  stays `crash`),
   `max_hops`, `aborted`. The reason and detail
   are redacted and stripped of control characters. An open gate doesn't keep a failed run alive.
 - **A stuck step no longer asks anyone** (#63). An agent that stops twice without `laight done`

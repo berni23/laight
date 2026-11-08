@@ -676,3 +676,41 @@ func TestDeliverCompactFirst(t *testing.T) {
 		})
 	}
 }
+
+// A shell step's env that doesn't render is the workflow's fault (config), the step's or the
+// workflow's env alike; a secret that can't be found is not (crash, until #62's credential).
+func TestShellEnvRenderKind(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		wfEnv    spec.StringMap
+		stepEnv  spec.StringMap
+		wantKind string
+	}{
+		{"step env", nil, spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, state.KindConfig},
+		{"workflow env", spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, nil, state.KindConfig},
+		{"missing secret", nil, spec.StringMap{"TOK": `{{ secret "laight-test-no-such-secret" }}`}, state.KindCrash},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, id := hooked(t, []*spec.Step{{ID: "s", Type: spec.TypeShell, Run: "true", Env: c.stepEnv}})
+			r := load(t, e, id)
+			r.Spec.Env = c.wfEnv
+			err := e.shell(context.Background(), r, state.Hop{Step: "s", N: 1})
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if k := kindOf(err); k != c.wantKind {
+				t.Errorf("kind %q, want %q (%v)", k, c.wantKind, err)
+			}
+		})
+	}
+}
+
+// kindOf: only a configError is config; anything else that kept a step from starting is crash.
+func TestKindOf(t *testing.T) {
+	if k := kindOf(fmt.Errorf("tmux: no server")); k != state.KindCrash {
+		t.Errorf("plain error: %q", k)
+	}
+	if k := kindOf(fmt.Errorf("deliver: %w", configError{fmt.Errorf("objective: x")})); k != state.KindConfig {
+		t.Errorf("wrapped configError: %q", k)
+	}
+}

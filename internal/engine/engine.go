@@ -485,9 +485,14 @@ type configError struct{ error }
 
 func (e configError) Unwrap() error { return e.error }
 
-// kindOf is the failure kind of an error that kept a step from starting.
+// kindOf is the failure kind of an error that kept a step from starting. A secret that can't be
+// found is not config, even inside a template: the workflow is right, the access is missing
+// (CircleCI's model; crash until #62 gives it kind credential).
 func kindOf(err error) string {
 	var ce configError
+	if errors.Is(err, spec.ErrNoSecret) {
+		return state.KindCrash
+	}
 	if errors.As(err, &ce) {
 		return state.KindConfig
 	}
@@ -672,7 +677,8 @@ func reasonOf(out map[string]any) string {
 
 // failure is the run's failure report for a hop that failed with no route. Its kind is what the
 // engine recorded, else an agent's exit or a shell step's. Its detail is the end of the pane or
-// the shell log, redacted, unless the engine already captured it.
+// the shell log, redacted, unless the engine already captured it; none for config, since a step
+// whose template didn't render never reached its pane, which still shows the previous step.
 func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Done) state.Failure {
 	f := state.Failure{Step: h.Step, Hop: h.N, Seat: h.Seat, Copy: h.Copy, Kind: d.Kind, Detail: d.Detail}
 	if f.Kind == "" {
@@ -690,7 +696,7 @@ func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Don
 		if st.Type == spec.TypeShell {
 			b, _ := os.ReadFile(filepath.Join(state.Dir(e.Home, r.ID), ShellLog(h.Step, h.N)))
 			f.Detail = inbox.Scrub(lastLines(string(b), 15))
-		} else if h.Seat != "" {
+		} else if h.Seat != "" && f.Kind != state.KindConfig { // config: nothing reached the pane
 			f.Detail = e.paneTail(r, h.Seat)
 		}
 	}

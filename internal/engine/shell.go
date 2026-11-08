@@ -45,7 +45,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		for k, v := range m {
 			out, used, err := spec.RenderWithSecrets("env "+k, v, data)
 			if err != nil {
-				return fmt.Errorf("env %s: %w", k, err)
+				return configError{fmt.Errorf("env %s: %w", k, err)} // a missing secret: see kindOf
 			}
 			env[k], secrets = out, append(secrets, used...)
 		}

@@ -3,6 +3,7 @@ package spec
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,6 +50,10 @@ func render(name, text string, data map[string]any, funcs template.FuncMap) (str
 	return b.String(), nil
 }
 
+// ErrNoSecret is what Secret wraps when it can't find a secret: an access problem, not a
+// template that is wrong. text/template keeps it reachable with errors.Is.
+var ErrNoSecret = errors.New("secret not found")
+
 // Secret returns the named secret. The error never contains the value.
 func Secret(name string) (string, error) {
 	env := "LAIGHT_SECRET_" + strings.ToUpper(strings.NewReplacer("-", "_", ".", "_").Replace(name))
@@ -69,5 +74,5 @@ func Secret(name string) (string, error) {
 			return strings.TrimRight(string(out), "\r\n"), nil
 		}
 	}
-	return "", fmt.Errorf("secret %q not found: set %s or add it to the OS keychain (service laight, account %s)", name, env, name)
+	return "", fmt.Errorf("secret %q not found: set %s or add it to the OS keychain (service laight, account %s): %w", name, env, name, ErrNoSecret)
 }

@@ -30,6 +30,10 @@ that.
 - **Template errors are kind `config`** (decided with the user, CircleCI's model): an objective,
   `run:`, gate `ask` or matrix value that doesn't render. Filed #82, declared step outputs
   (required exactly for steps whose outputs another step reads), to catch them before the run.
+- **#83's review answered**: a shell step's or the workflow's `env` that doesn't render is
+  `config` too; a missing secret stays `crash` (`spec.ErrNoSecret`, checked in `kindOf`; #62
+  turns it into `credential` there). A `config` failure no longer quotes the seat's previous
+  pane. A routed `config` failure keeps routing (a loop of them ends `max_hops`, now in §6.3).
 
 ---
 
