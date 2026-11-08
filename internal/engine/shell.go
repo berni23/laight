@@ -37,7 +37,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	data := r.TemplateData(&h)
 	command, err := spec.Render(st.ID+".run", st.Run, data)
 	if err != nil {
-		return fmt.Errorf("run: %w", err)
+		return configError{fmt.Errorf("run: %w", err)}
 	}
 	env := map[string]string{}
 	var secrets []string

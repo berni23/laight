@@ -390,7 +390,9 @@ A run is green or red. A red run's `run.json` holds `failure: {step, hop, seat, 
 detail, at}`, `kind` one of `exit` (`laight done failed reason=…`), `permission` (the same,
 after a request of that hop was denied), `timeout` (quiet past its timeout), `stuck` (stopped
 twice without `laight done`, and again after the engine's reminder), `crash` (a seat or the
-engine died, or the step couldn't be delivered), `max_hops`, `shell`, `aborted`; later
+engine died, or the step couldn't be delivered), `config` (a template in the workflow didn't
+render: an objective, `run:`, a gate's `ask`, matrix values; CircleCI's "errored, type config";
+declared outputs, #82, catch most before the run), `max_hops`, `shell`, `aborted`; later
 `question` (#64) and `credential` (#62). The first failure is the report: later ones, and an
 abort that follows, don't replace it. `reason` and `detail` (the last lines of the pane or the
 shell step's log) are redacted and stripped of control characters (§12.4). A `run.failed` event

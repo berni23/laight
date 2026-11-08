@@ -26,8 +26,10 @@ that.
 - **#79's and #80's reviews answered**: the deny guard catches rules aimed at a `laight done`
   exit; the failure report is redacted where it is built, a denial makes it `permission`, a dead
   engine is `crash`, an open gate no longer holds a failed run, a reminder that can't be pasted
-  fails the hop `stuck`. Template errors are `crash` in two places and `exit` in two: which kind
-  they should share is the user's call.
+  fails the hop `stuck`.
+- **Template errors are kind `config`** (decided with the user, CircleCI's model): an objective,
+  `run:`, gate `ask` or matrix value that doesn't render. Filed #82, declared step outputs
+  (required exactly for steps whose outputs another step reads), to catch them before the run.
 
 ---
 
@@ -50,12 +52,15 @@ Hide `laight inbox` and stop opening the inbox pane by default. Only questions s
 
 §10 M3 order. #66 matters more now that runs fail instead of waiting.
 
+### 4. #82, declared step outputs
+
+Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
+a dry render at `laight run`. Required exactly for steps whose outputs another step reads.
+
 ---
 
 ## Waiting on the user
 
-- Template errors (objective, `run:`, gate `ask`, matrix values): which failure kind should they
-  share? Today `crash` for the first two, `exit` for the others (#80 review).
 - #74: should a seat's `permissions` default to `auto`? In `default` mode every prompt is now
   denied.
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its

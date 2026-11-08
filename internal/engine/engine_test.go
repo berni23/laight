@@ -311,6 +311,18 @@ func TestFailureAfterDenialIsPermission(t *testing.T) {
 	}
 }
 
+// A gate whose question doesn't render fails as config: the workflow is wrong, not an agent.
+func TestGateAskConfigError(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{{ID: "g", Type: spec.TypeGate, Ask: "Merge {{ .steps.g.out.pr }}?", AllowedExits: []string{"yes"}}})
+	e.step(t, id)
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q", status)
+	}
+	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindConfig || !strings.Contains(f.Reason, "ask:") {
+		t.Fatalf("failure %+v", f)
+	}
+}
+
 // A step max_hops refuses fails the run, saying which step it refused.
 func TestMaxHopsFailsRun(t *testing.T) {
 	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")
@@ -604,7 +616,8 @@ func TestMatrixBadList(t *testing.T) {
 	if status, s := e.step(t, id); status != state.Failed || len(s) != 0 {
 		t.Fatalf("status %q, started %+v", status, s)
 	}
-	if r := load(t, e, id); r.Failure == nil || r.Failure.Step != "build" || !strings.Contains(r.Failure.Reason, "step build: matrix task:") || r.Hops != 0 {
+	if r := load(t, e, id); r.Failure == nil || r.Failure.Step != "build" || r.Failure.Kind != state.KindConfig ||
+		!strings.Contains(r.Failure.Reason, "step build: matrix task:") || r.Hops != 0 {
 		t.Fatalf("failure %+v, hops %d", r.Failure, r.Hops)
 	}
 }

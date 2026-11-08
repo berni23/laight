@@ -65,6 +65,7 @@ const (
 	KindTimeout    = "timeout"    // quiet past its timeout
 	KindStuck      = "stuck"      // stopped without `laight done`, nudged, and stopped again
 	KindCrash      = "crash"      // the seat's agent exited, or the step couldn't be delivered
+	KindConfig     = "config"     // a template in the workflow didn't render: fix the YAML (#82)
 	KindMaxHops    = "max_hops"   // loop_guards.max_hops refused a step
 	KindAborted    = "aborted"    // `laight abort`, or the engine interrupted
 )

@@ -358,7 +358,7 @@ steps:
   - { id: two, seat: a, objective: 'echo {{ .steps.one.out.missing }}' }
 `))
 	e.mustLaight("run", "demo")
-	r := e.waitFailed(e.onlyRun().ID, state.KindCrash)
+	r := e.waitFailed(e.onlyRun().ID, state.KindConfig)
 	if r.Failure.Step != "two" || !strings.Contains(r.Error, "step two failed: objective:") {
 		t.Errorf("failure %+v, error %q", r.Failure, r.Error)
 	}
@@ -590,6 +590,9 @@ steps:
 	}
 	if msg, _ := r.Steps["one"].Out["error"].(string); !strings.HasPrefix(msg, "run:") {
 		t.Errorf("one: %+v", r.Steps["one"])
+	}
+	if d, _ := state.ReadDone(e.home, r.ID, "one", 1); d == nil || d.Kind != state.KindConfig {
+		t.Errorf("one ended %+v; want kind config", d)
 	}
 }
 
