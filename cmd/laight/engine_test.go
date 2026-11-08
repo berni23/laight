@@ -140,14 +140,18 @@ func (e *rigEnv) waitItem(id string) *inbox.Item {
 	}
 }
 
-// abortItem answers the run's failed item with abort, which fails the run.
-func (e *rigEnv) abortItem(id string) {
+// waitFailed waits for the run to end and checks it ended red, with a failure report of kind.
+func (e *rigEnv) waitFailed(id, kind string) *state.Run {
 	e.t.Helper()
-	it := e.waitItem(id)
-	if it.Kind != inbox.Failed {
-		e.t.Fatalf("item %+v", it)
+	r := e.waitEnded(id)
+	if r.Status != state.Failed || r.Failure == nil || r.Failure.Kind != kind || r.Failure.Reason == "" || r.Failure.At.IsZero() {
+		e.t.Fatalf("status %s %q, failure %+v; want a %s failure", r.Status, r.Error, r.Failure, kind)
 	}
-	e.mustLaight("inbox", it.Short(), "abort")
+	evs, _ := state.Events(e.home, id)
+	if countEvents(evs, "run.failed", "") != 1 {
+		e.t.Errorf("no run.failed event: %+v", evs)
+	}
+	return r
 }
 
 // Agents learn `laight done` by name: the seat finds the binary running its rig on PATH, even
@@ -179,7 +183,7 @@ steps:
 	}
 }
 
-// max_hops holds the run on a failed item: retry grants one more hop, abort fails the run.
+// A step max_hops refuses fails the run, naming the step.
 func TestEngineMaxHops(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -190,78 +194,38 @@ steps:
 loop_guards: { max_hops: 3 }
 `))
 	e.mustLaight("run", "demo")
-	r := e.onlyRun()
-	it := e.waitItem(r.ID)
-	if it.Kind != inbox.Failed || it.Step != "pong" || !strings.Contains(it.Title, "max_hops (3) reached before step pong") {
-		t.Errorf("item %+v", it)
+	r := e.waitFailed(e.onlyRun().ID, state.KindMaxHops)
+	if r.Failure.Step != "pong" || !strings.Contains(r.Error, "max_hops (3) reached before step pong") {
+		t.Errorf("failure %+v, error %q", r.Failure, r.Error)
 	}
-	e.mustLaight("inbox", it.Short(), "retry")
-	it = e.waitItem(r.ID) // pong ran, ping is refused next
-	if it.Step != "ping" {
-		t.Errorf("item %+v", it)
-	}
-	e.mustLaight("inbox", it.Short(), "abort")
-	r = e.waitEnded(r.ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "max_hops (3) reached before step ping") {
-		t.Errorf("status %s, error %q", r.Status, r.Error)
-	}
-	if got := len(e.stepsDone(r.ID)); got != 4 || r.Hops != 4 {
-		t.Errorf("%d steps done, %d hops; want 4", got, r.Hops)
+	if got := len(e.stepsDone(r.ID)); got != 3 || r.Hops != 3 {
+		t.Errorf("%d steps done, %d hops; want 3", got, r.Hops)
 	}
 }
 
+// An agent that fails its step with a reason ends the run red: the report names the step, hop
+// and seat, the agent's reason and the end of its pane. Nobody is asked.
 func TestEngineUnroutedFailed(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
   a: { runtime: shell, command: sh, cwd: repo }
 steps:
-  - { id: one, seat: a, objective: '"$L" done failed error=boom', next_hop: { on: { handoff: two } } }
+  - { id: one, seat: a, objective: 'echo looked-at-the-tests; "$L" done failed reason="no tests to run"', next_hop: { on: { handoff: two } } }
   - { id: two, seat: a, objective: '"$L" done handoff' }
 `))
 	e.mustLaight("run", "demo")
-	r := e.onlyRun()
-	it := e.waitItem(r.ID)
-	if it.Kind != inbox.Failed || it.Title != "step one failed: boom" || strings.Join(it.Choices, ",") != "retry,abort" {
-		t.Errorf("item %+v", it)
-	}
-	if out, err := e.laight("inbox"); err != nil || !strings.Contains(out, it.Short()+"  failed") || !strings.Contains(out, "step one failed: boom  [retry|abort]") {
-		t.Errorf("inbox: %v\n%s", err, out)
-	}
-	e.mustLaight("inbox", it.Short(), "abort")
-	r = e.waitEnded(r.ID)
-	if r.Status != state.Failed || r.Error != "step one failed: boom; aborted from the inbox" {
-		t.Errorf("status %s, error %q", r.Status, r.Error)
+	r := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	f := r.Failure
+	if f.Step != "one" || f.Hop != 1 || f.Seat != "a" || f.Reason != "step one failed: no tests to run" ||
+		r.Error != f.Reason || !strings.Contains(f.Detail, "looked-at-the-tests") {
+		t.Errorf("failure %+v, error %q", f, r.Error)
 	}
 	if got := strings.Join(e.stepsDone(r.ID), " "); got != "one:failed" {
 		t.Errorf("steps %s", got)
 	}
-	if out := e.mustLaight("inbox"); !strings.Contains(out, "inbox empty") {
-		t.Errorf("inbox after the run:\n%s", out)
-	}
-}
-
-// A failed step retried from the inbox starts again and the run goes on.
-func TestEngineRetry(t *testing.T) {
-	e := newRigEnv(t, "")
-	writeWorkflow(t, e, `version: 1
-id: demo
-steps:
-  - { id: flaky, run: 'if [ -e tried ]; then exit 0; fi; touch tried; exit 1', next_hop: { on: { ok: last } } }
-  - { id: last, run: 'rm tried' }
-loop_guards: { max_hops: 2 }
-`)
-	// The retry is the third hop of two: it grants one more, so it isn't held again on the last step.
-	e.mustLaight("run", "demo")
-	r := e.onlyRun()
-	it := e.waitItem(r.ID)
-	e.mustLaight("inbox", it.Short(), "retry")
-	r = e.waitEnded(r.ID)
-	if got := strings.Join(e.stepsDone(r.ID), " "); r.Status != state.Succeeded || got != "flaky:failed flaky:ok last:ok" {
-		t.Errorf("status %s (%s), steps %s", r.Status, r.Error, got)
-	}
 	evs, _ := state.Events(e.home, r.ID)
-	if countEvents(evs, "inbox.raised", "") != 1 || countEvents(evs, "inbox.answered", "") != 1 {
-		t.Errorf("events %+v", evs)
+	if countEvents(evs, "inbox.raised", "") != 0 {
+		t.Errorf("a human was asked: %+v", evs)
 	}
 }
 
@@ -394,10 +358,9 @@ steps:
   - { id: two, seat: a, objective: 'echo {{ .steps.one.out.missing }}' }
 `))
 	e.mustLaight("run", "demo")
-	e.abortItem(e.onlyRun().ID)
-	r := e.waitEnded(e.onlyRun().ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "step two failed: objective:") {
-		t.Errorf("status %s, error %q", r.Status, r.Error)
+	r := e.waitFailed(e.onlyRun().ID, state.KindCrash)
+	if r.Failure.Step != "two" || !strings.Contains(r.Error, "step two failed: objective:") {
+		t.Errorf("failure %+v, error %q", r.Failure, r.Error)
 	}
 }
 
@@ -517,8 +480,8 @@ func readPid(t *testing.T, file string) int {
 	}
 }
 
-// A step that fails while a shell step still runs holds the run on an item; the command keeps
-// running, and aborting from the inbox ends the run at once and stops it.
+// A step that fails while a shell step still runs doesn't stop it: the run waits for it (§12.3),
+// and `laight abort` ends the run at once and stops it.
 func TestEngineShellStoppedWhenRunFails(t *testing.T) {
 	e := newRigEnv(t, "")
 	pids := filepath.Join(t.TempDir(), "pids")
@@ -533,14 +496,18 @@ steps:
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
 	pid := readPid(t, pids)
-	e.waitItem(r.ID)
+	e.waitFor(r.ID, "step.done", 1)
+	time.Sleep(3 * engine.Poll)
+	if r, _ := state.Load(e.home, r.ID); !r.Live() || r.Failure == nil || r.Failure.Step != "bad" {
+		t.Fatalf("status %s, failure %+v", r.Status, r.Failure)
+	}
 	if syscall.Kill(pid, 0) != nil {
 		t.Error("the sibling command was stopped by the failure")
 	}
 	start := time.Now()
-	e.abortItem(r.ID)
-	if r := e.waitEnded(r.ID); r.Status != state.Failed {
-		t.Errorf("status %s: %s", r.Status, r.Error)
+	e.mustLaight("abort", r.Short(), "--yes")
+	if r := e.waitEnded(r.ID); r.Status != state.Aborted || r.Failure == nil || r.Failure.Kind != state.KindShell {
+		t.Errorf("status %s, failure %+v: the first failure stays the report", r.Status, r.Failure)
 	}
 	if d := time.Since(start); d > 15*time.Second {
 		t.Errorf("the run took %s to end", d)
@@ -599,9 +566,8 @@ steps:
     run: 'read x < /dev/tty'
 `)
 	e.mustLaight("run", "demo")
-	e.abortItem(e.onlyRun().ID)
-	if r := e.waitEnded(e.onlyRun().ID); r.Status != state.Failed {
-		t.Errorf("status %s: %s", r.Status, r.Error)
+	if r := e.waitFailed(e.onlyRun().ID, state.KindShell); r.Failure.Step != "ask" || !strings.Contains(r.Failure.Reason, "exit code 1") {
+		t.Errorf("failure %+v", r.Failure)
 	}
 }
 
@@ -687,52 +653,23 @@ func TestEngineNeeds(t *testing.T) {
 	}
 }
 
-// A needed step that fails is held: its sibling finishes, the join waits, and a retry lets it run.
-func TestEngineNeedsHeldThenRetry(t *testing.T) {
+// A needed step that fails ends the run red once its sibling finishes; the join never starts.
+func TestEngineNeedsFailed(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, needsWorkflow))
 	e.mustLaight("run", "demo", "fail=1")
-	r := e.onlyRun()
-	it := e.waitItem(r.ID)
-	if it.Kind != inbox.Failed || it.Step != "security" {
-		t.Fatalf("item %+v", it)
+	r := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	if r.Failure.Step != "security" || r.Error != "step security failed: boom" {
+		t.Errorf("failure %+v, error %q", r.Failure, r.Error)
 	}
-	e.waitFor(r.ID, "step.done", 3) // plan, security, then build finishes too
-	time.Sleep(3 * engine.Poll)     // a few ticks: integrate must still not start
-	if got := e.stepEvents(r.ID); slices.Index(got, "done:build") < 0 || slices.Index(got, "started:integrate") >= 0 {
-		t.Fatalf("while held: %v", got)
-	}
-	e.mustLaight("inbox", it.Short(), "retry")
-	r = e.waitEnded(r.ID)
-	// build and security:failed finish in either order.
-	got := e.stepsDone(r.ID)
-	if len(got) == 5 && got[1] == "build:handoff" {
-		got[1], got[2] = got[2], got[1]
-	}
-	want := "plan:handoff security:failed build:handoff security:handoff integrate:handoff"
-	if r.Status != state.Succeeded || strings.Join(got, " ") != want {
-		t.Errorf("status %s (%s), steps:\n got %s\nwant %s", r.Status, r.Error, strings.Join(got, " "), want)
-	}
-}
-
-// Aborting the held step fails the run, and the join never starts.
-func TestEngineNeedsHeldThenAbort(t *testing.T) {
-	e := newRigEnv(t, "")
-	writeWorkflow(t, e, fakeWorkflow(e.bin, needsWorkflow))
-	e.mustLaight("run", "demo", "fail=1")
-	r := e.onlyRun()
-	e.abortItem(r.ID)
-	r = e.waitEnded(r.ID)
-	if r.Status != state.Failed || r.Error != "step security failed: boom; aborted from the inbox" {
-		t.Errorf("status %s, error %q", r.Status, r.Error)
-	}
-	if got := e.stepEvents(r.ID); slices.Index(got, "started:integrate") >= 0 {
-		t.Errorf("integrate started: %v", got)
+	got := e.stepEvents(r.ID)
+	if slices.Index(got, "done:build") < 0 || slices.Index(got, "started:integrate") >= 0 {
+		t.Errorf("steps %v: build finishes, integrate never starts", got)
 	}
 }
 
 // The §3 example: plan lists the tasks, build runs one copy per task (two at a time) while
-// security runs, and integrate sees every copy's output. Copy b fails once and is retried alone.
+// security runs, and integrate sees every copy's output.
 func TestEngineMatrix(t *testing.T) {
 	e := newRigEnv(t, "")
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
@@ -749,7 +686,7 @@ steps:
     matrix: { task: "{{ .steps.plan.out.tasks }}" }
     max_parallel: 2
     seat: dev
-    objective: 'sleep 0.3; if [ "{{ .matrix.task }}" = b ] && [ ! -e failed-b ]; then touch failed-b; "$L" done failed error=boom; else "$L" done handoff pr={{ .matrix.task }}; fi'
+    objective: 'sleep 0.3; "$L" done handoff pr={{ .matrix.task }}'
   - { id: security, needs: [plan], seat: sec, objective: '"$L" done handoff' }
   - id: integrate
     needs: [build, security]
@@ -757,18 +694,7 @@ steps:
     objective: '[ "{{ range .steps.build.out }}{{ .pr }}{{ end }}" = abc ] && "$L" done handoff || "$L" done failed'
 `))
 	e.mustLaight("run", "demo")
-	r := e.onlyRun()
-	it := e.waitItem(r.ID)
-	if it.Kind != inbox.Failed || it.Step != "build" || it.Seat != "dev#2" || it.Title != "step build#2 failed: boom" {
-		t.Fatalf("item %+v", it)
-	}
-	e.waitFor(r.ID, "step.done", 5) // plan, security and the three copies
-	time.Sleep(3 * engine.Poll)
-	if got := e.stepEvents(r.ID); slices.Index(got, "started:integrate") >= 0 {
-		t.Fatalf("integrate started with build#2 held: %v", got)
-	}
-	e.mustLaight("inbox", it.Short(), "retry")
-	r = e.waitEnded(r.ID)
+	r := e.waitEnded(e.onlyRun().ID)
 	if r.Status != state.Succeeded {
 		t.Fatalf("status %s: %s; steps %v", r.Status, r.Error, e.stepsDone(r.ID))
 	}
@@ -787,16 +713,13 @@ steps:
 			live--
 		}
 	}
-	if most != 2 || hops["dev#1"] != 1 || hops["dev#2"] != 2 || hops["dev#3"] != 1 {
+	if most != 2 || hops["dev#1"] != 1 || hops["dev#2"] != 1 || hops["dev#3"] != 1 {
 		t.Errorf("at most %d copies live (want 2), hops per instance %v", most, hops)
 	}
-	for k := 1; k <= 3; k++ { // each instance after its copy; dev#2 stays up while held, and takes the retry
+	for k := 1; k <= 3; k++ { // each instance closes after its copy
 		if n := countEvents(evs, "seat.down", spec.Instance("dev", k)); n != 1 {
 			t.Errorf("dev#%d: %d seat.down events, want 1", k, n)
 		}
-	}
-	if n := countEvents(evs, "seat.up", "dev#2"); n != 1 {
-		t.Errorf("dev#2 started %d times, want once: the retry goes to its open window", n)
 	}
 	if countEvents(evs, "seat.up", "dev") != 0 {
 		t.Errorf("seat dev started on its own")
@@ -906,7 +829,7 @@ func TestStopHook(t *testing.T) {
 	// "Waiting for N background agents" counts agents only (checked on 2.1.316).
 	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"}]}`
 	if err := json.Unmarshal([]byte(hook(shell)), &got); err != nil || got["decision"] != "block" ||
-		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail, failed)") {
+		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail)") || !strings.Contains(got["reason"], ` done failed reason="<why>"`) {
 		t.Errorf("first stop: %v %v", got, err)
 	}
 	if out := hook(`{"stop_hook_active": true}`); out != "" {

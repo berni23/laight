@@ -16,10 +16,10 @@ gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight i
 passed (#11: two real issues to merged PRs, one review/fix round each); `question` items followed
 (#55). **Direction change (#68, 2026-11-02): unattended by design.** The inbox is parked, not
 deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists are in (#61: a
-permission is denied at once and recorded, never an inbox item); failure reports (#63) are next.
-Where this spec describes that model, the code catches up issue by issue: until #63 lands, a
-failed step still holds on a `failed` inbox item instead of ending the run, and until #64 a
-question still goes to the inbox.
+permission is denied at once and recorded, never an inbox item), and so is the failure report
+(#63: a failed run ends red, nobody is asked about a stuck step); the credentials preflight (#62)
+is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -487,7 +487,7 @@ it, and an expired item fell back to *deny*, never allow.
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
   `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
-  `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
+  `step.started|done|skipped|timeout|nudged`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
   `input` redacted and cut, `by` laight or auto mode, auto mode's `reason`; the engine window
   prints each) and `assumption` (#64), `inbox.raised|answered` (parked; `answered` also covers an item that
   expired or was withdrawn, not only a human's answer), `hook.<name>` (session start and stop; a
@@ -641,8 +641,11 @@ could answer a dialog nobody has read, and the report's pane lines show what it 
 Two kinds, because the fixes differ: the objective or guidance for `stuck`, a hang or a dialog
 for `timeout`. Failing on a false stop would kill a healthy run, so #57 (a turn that ends while
 background agents run looks like a stop) is fixed before or with #63.
-Under `human.mode: wait` the `stuck` item is still raised as above, with `human.timeout` as its
-clock. Until #63 lands the code raises the item in every mode.
+Under `human.mode: wait` the `stuck` item is to be raised as above, with `human.timeout` as its
+clock (#64 builds it). A seat whose step is done but whose turn never ends (quiet past its
+timeout after `laight done`) is not freed with a turn still running, which would finish in its
+next step: the engine closes its window, and its next step relaunches it (`--resume`). While a
+spinner runs, the quiet clock can't see a hung turn yet (#72).
 
 ### 12.3 One parallel branch fails while others run (#12)
 

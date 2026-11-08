@@ -254,9 +254,9 @@ on_finish: { failure: destroy }
 `)
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
-	e.waitFor(r.ID, "run.finished", 1)
+	e.waitFor(r.ID, "run.failed", 1)
 	r, _ = state.Load(e.home, r.ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "setup") {
+	if r.Status != state.Failed || !strings.Contains(r.Error, "setup") || r.Failure == nil || r.Failure.Kind != state.KindCrash {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
 	}
 	deadline := time.Now().Add(5 * time.Second)

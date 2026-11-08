@@ -6,12 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -179,41 +177,91 @@ func TestTmuxErrorIsNotACrash(t *testing.T) {
 	}
 }
 
-// The verdict is saved with the state that implies it: an engine that dies before tearing the
-// rig down must not find an empty queue later and call a failed run a success.
-func TestVerdictSavedWithState(t *testing.T) {
+// An unrouted failure ends the run red, with its failure report saved with the state: an engine
+// that runs on the same files later gets the same verdict, never an empty queue and a success.
+func TestFailedRunEndsRed(t *testing.T) {
 	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")
 	ctx := context.Background()
 	if status, _, err := e.tick(ctx, id); status != "" || err != nil {
 		t.Fatalf("tick: %s %v", status, err)
 	}
-	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Out: map[string]any{"error": "boom"}}); err != nil {
-		t.Fatal(err)
-	}
-	// Held on a failed item, which is saved with the state: an engine that runs on the same
-	// files later still holds the run, never finds it empty and calls it a success.
-	for range 2 {
-		if status, reason, err := e.tick(ctx, id); status != "" || err != nil {
-			t.Fatalf("tick: %s %q %v", status, reason, err)
-		}
-	}
-	r := load(t, e, id)
-	if len(r.Blocked) != 1 || r.Blocked[0].Error != "step one failed: boom" {
-		t.Fatalf("blocked %+v", r.Blocked)
-	}
-	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Abort); err != nil {
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Out: map[string]any{"reason": "no tests to run"}}); err != nil {
 		t.Fatal(err)
 	}
 	status, reason, err := e.tick(ctx, id)
-	if status != state.Failed || err != nil {
+	if status != state.Failed || reason != "step one failed: no tests to run" || err != nil {
 		t.Fatalf("tick: %s %q %v", status, reason, err)
 	}
-	if r := load(t, e, id); r.Status != state.Failed || r.Error != "step one failed: boom; aborted from the inbox" {
-		t.Errorf("run.json: %s %q", r.Status, r.Error)
+	r := load(t, e, id)
+	f := r.Failure
+	if r.Status != state.Failed || f == nil || f.Step != "one" || f.Hop != 1 || f.Seat != "a" || f.Kind != state.KindExit ||
+		f.Reason != reason || f.At.IsZero() {
+		t.Fatalf("run.json: %s %+v", r.Status, f)
 	}
-	// A second engine on the same run gets the same verdict, not a success.
-	if status, reason, _ := e.tick(ctx, id); status != state.Failed || reason != "step one failed: boom; aborted from the inbox" {
-		t.Errorf("second engine: %s %q", status, reason)
+	if status, again, _ := e.tick(ctx, id); status != state.Failed || again != reason {
+		t.Errorf("second engine: %s %q", status, again)
+	}
+}
+
+// Once a step fails, nothing new starts: running siblings finish and are recorded, their routes
+// and the steps that need them never start, and the run ends red once nothing runs (§12.3).
+func TestSiblingsFinishAfterFailure(t *testing.T) {
+	steps := []*spec.Step{agent("one", "a", nil), agent("two", "b", map[string]string{"handoff": "after"}),
+		agent("after", "b", nil), agent("join", "c", nil, "one", "two")}
+	e, id := hooked(t, steps, "a", "b", "c")
+	_, starts := e.step(t, id)
+	if strings.Join(started(starts), ",") != "one,two" {
+		t.Fatalf("started %v", started(starts))
+	}
+	finish(t, e, id, starts[0].hop, spec.ExitFailed)
+	if status, s := e.step(t, id); status != "" || len(s) != 0 {
+		t.Fatalf("status %q, started %v while two runs", status, started(s))
+	}
+	finish(t, e, id, starts[1].hop, "handoff")
+	status, s := e.step(t, id)
+	if status != state.Failed || len(s) != 0 {
+		t.Fatalf("status %q, started %v", status, started(s))
+	}
+	r := load(t, e, id)
+	if r.Steps["two"] == nil || r.Steps["two"].Exit != "handoff" || r.Failure == nil || r.Failure.Step != "one" {
+		t.Fatalf("steps %+v, failure %+v", r.Steps, r.Failure)
+	}
+}
+
+// A failing run starts no step whose needs are met by another branch, and a sibling that fails
+// too doesn't replace the first failure in the report.
+func TestFailingRunStartsNothing(t *testing.T) {
+	steps := []*spec.Step{agent("one", "a", nil), agent("two", "b", nil), agent("three", "c", nil), agent("after", "d", nil, "two")}
+	e, id := hooked(t, steps, "a", "b", "c", "d")
+	_, starts := e.step(t, id)
+	if strings.Join(started(starts), ",") != "one,two,three" {
+		t.Fatalf("started %v", started(starts))
+	}
+	finish(t, e, id, starts[0].hop, spec.ExitFailed)
+	finish(t, e, id, starts[1].hop, "handoff")
+	if status, s := e.step(t, id); status != "" || len(s) != 0 {
+		t.Fatalf("status %q, started %v: after's needs are met, but the run is failing", status, started(s))
+	}
+	finish(t, e, id, starts[2].hop, spec.ExitFailed)
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q", status)
+	}
+	if f := load(t, e, id).Failure; f == nil || f.Step != "one" {
+		t.Fatalf("failure %+v: the first failure is the report", f)
+	}
+}
+
+// A step max_hops refuses fails the run, saying which step it refused.
+func TestMaxHopsFailsRun(t *testing.T) {
+	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")
+	state.Update(e.Home, id, func(r *state.Run) error { r.Spec.LoopGuards.MaxHops = 1; return nil })
+	_, starts := e.step(t, id)
+	finish(t, e, id, starts[0].hop, "handoff")
+	if status, s := e.step(t, id); status != state.Failed || len(s) != 0 {
+		t.Fatalf("status %q, started %v", status, started(s))
+	}
+	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindMaxHops || f.Step != "two" || !strings.Contains(f.Reason, "max_hops (1)") {
+		t.Fatalf("failure %+v", f)
 	}
 }
 
@@ -229,33 +277,6 @@ func breakAnswer(t *testing.T, home, item string) {
 	os.Remove(filepath.Join(home, "inbox", item+".json"))
 }
 
-// A held step whose answer can't be read is asked again, under a new item: never held for ever
-// on an item nobody can see.
-func TestUnreadableRetryAnswer(t *testing.T) {
-	e, id := hooked(t, two(nil), "a")
-	e.step(t, id)
-	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Out: map[string]any{"error": "boom"}}); err != nil {
-		t.Fatal(err)
-	}
-	e.step(t, id)
-	r := load(t, e, id)
-	if len(r.Blocked) != 1 {
-		t.Fatalf("blocked %+v", r.Blocked)
-	}
-	old := r.Blocked[0].Item
-	breakAnswer(t, e.Home, old)
-	if status, _ := e.step(t, id); status != "" {
-		t.Fatalf("status %s", status)
-	}
-	r = load(t, e, id)
-	if len(r.Blocked) != 1 || r.Blocked[0].Item == old || r.Blocked[0].Error != "step one failed: boom" {
-		t.Fatalf("blocked %+v", r.Blocked)
-	}
-	if _, err := inbox.Get(e.Home, r.Blocked[0].Item); err != nil {
-		t.Errorf("no new item: %v", err)
-	}
-}
-
 // A gate whose answer can't be read fails, through routing like any other ending.
 func TestUnreadableGateAnswer(t *testing.T) {
 	e, id := hooked(t, []*spec.Step{{ID: "g", Type: spec.TypeGate, Ask: "Go?", AllowedExits: []string{"yes", "no"}}})
@@ -265,11 +286,13 @@ func TestUnreadableGateAnswer(t *testing.T) {
 		t.Fatalf("active %+v", r.Active)
 	}
 	breakAnswer(t, e.Home, r.Active[0].Item)
-	e.step(t, id)
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q", status)
+	}
 	r = load(t, e, id)
-	if res := r.Steps["g"]; res == nil || res.Exit != spec.ExitFailed || len(r.Active) != 0 || len(r.Blocked) != 1 ||
-		!strings.Contains(r.Blocked[0].Error, "can't read the answer") {
-		t.Fatalf("steps %+v active %+v blocked %+v", r.Steps["g"], r.Active, r.Blocked)
+	if res := r.Steps["g"]; res == nil || res.Exit != spec.ExitFailed || r.Failure == nil || r.Failure.Kind != state.KindCrash ||
+		!strings.Contains(r.Failure.Reason, "can't read the answer") {
+		t.Fatalf("steps %+v failure %+v", r.Steps["g"], r.Failure)
 	}
 }
 
@@ -311,33 +334,6 @@ func TestNeedsWaitForEvery(t *testing.T) {
 		t.Fatalf("join started with two still running: %v", started(s))
 	}
 	finish(t, e, id, starts[1].hop, "handoff")
-	if _, s := e.step(t, id); strings.Join(started(s), ",") != "join" {
-		t.Fatalf("started %v", started(s))
-	}
-}
-
-// A needed step held on a failed item hasn't finished: its dependents wait, and run once a retry
-// of it succeeds (§12.3).
-func TestNeedsWaitOnHeldStep(t *testing.T) {
-	e, id := hooked(t, []*spec.Step{agent("one", "a", nil), agent("two", "b", nil), agent("join", "c", nil, "one", "two")}, "a", "b", "c")
-	_, starts := e.step(t, id)
-	finish(t, e, id, starts[0].hop, spec.ExitFailed)
-	finish(t, e, id, starts[1].hop, "handoff")
-	if _, s := e.step(t, id); len(s) != 0 {
-		t.Fatalf("started %v", started(s))
-	}
-	r := load(t, e, id)
-	if len(r.Blocked) != 1 || r.Blocked[0].Step != "one" || len(r.Queue) != 0 {
-		t.Fatalf("blocked %+v queue %v", r.Blocked, r.Queue)
-	}
-	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Retry); err != nil {
-		t.Fatal(err)
-	}
-	_, s := e.step(t, id)
-	if strings.Join(started(s), ",") != "one" {
-		t.Fatalf("retry started %v", started(s))
-	}
-	finish(t, e, id, s[0].hop, "handoff")
 	if _, s := e.step(t, id); strings.Join(started(s), ",") != "join" {
 		t.Fatalf("started %v", started(s))
 	}
@@ -513,94 +509,43 @@ func TestMatrixMaxParallel(t *testing.T) {
 	}
 }
 
-// A failed copy is held on its own: its siblings finish, the step that needs the matrix waits,
-// and a retry reruns that copy only. Later steps see .out as a list, in copy order.
-func TestMatrixHeldCopy(t *testing.T) {
+// A failed copy fails the run once its running siblings finish: the step never completes, and
+// what needs it never starts. The report names the copy.
+func TestMatrixFailedCopy(t *testing.T) {
 	join := agent("join", "lead", nil, "build")
 	e, id := hooked(t, []*spec.Step{matrixStep("build", "dev", 4, []any{"a", "b", "c"}), join}, "lead")
 	matrixSeat(t, e, id, "dev", 3)
 	_, starts := e.step(t, id)
-	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 1).N, Exit: "handoff", Out: map[string]any{"pr": "1"}}); err != nil {
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 1).N, Exit: "handoff"}); err != nil {
 		t.Fatal(err)
 	}
-	state.Update(e.Home, id, func(r *state.Run) error { r.Seats["dev#2"].Up = true; return nil }) // launched
 	finish(t, e, id, hopOf(t, starts, "build", 2), spec.ExitFailed)
-	var evs []state.Event
-	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
-		var s []start
-		var stops []string
-		_, _, s, stops, evs = e.advance(r)
-		if len(s) != 0 {
-			t.Fatalf("started %+v", s)
-		}
-		if slices.Contains(stops, "dev#2") { // requirement 2: a held copy's pane stays to look at
-			t.Errorf("held copy's instance closed: stops %v", stops)
-		}
-		return nil
-	}); err != nil {
+	if status, s := e.step(t, id); status != "" || len(s) != 0 {
+		t.Fatalf("status %q, started %+v while copy 3 runs", status, s)
+	}
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 3).N, Exit: "handoff"}); err != nil {
 		t.Fatal(err)
 	}
-	raised := 0
-	for _, x := range evs {
-		if x.Type == "inbox.raised" {
-			raised++
-			if x.Seat != "dev#2" || x.Hop != hopOf(t, starts, "build", 2).N || fmt.Sprint(x.Data["copy"]) != "2" {
-				t.Errorf("inbox.raised doesn't say which copy: %+v", x)
-			}
-		}
-	}
-	if raised != 1 {
-		t.Errorf("%d inbox.raised events, want 1: %+v", raised, evs)
+	if status, s := e.step(t, id); status != state.Failed || len(s) != 0 {
+		t.Fatalf("status %q, started %+v", status, s)
 	}
 	r := load(t, e, id)
-	if len(r.Blocked) != 1 || r.Blocked[0].Copy != 2 || r.Blocked[0].Error != "step build#2 failed" {
-		t.Fatalf("blocked %+v", r.Blocked)
+	if f := r.Failure; f == nil || f.Step != "build" || f.Copy != 2 || f.Seat != "dev#2" || f.Reason != "step build#2 failed" {
+		t.Fatalf("failure %+v", r.Failure)
 	}
-	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: hopOf(t, starts, "build", 3).N, Exit: "handoff", Out: map[string]any{"pr": "3"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, s := e.step(t, id); len(s) != 0 || load(t, e, id).Steps["build"] != nil {
-		t.Fatalf("join started, or build done, with copy 2 held: %+v", s)
-	}
-	if _, err := inbox.Answer(e.Home, r.Blocked[0].Item, inbox.Retry); err != nil {
-		t.Fatal(err)
-	}
-	_, s := e.step(t, id)
-	if len(s) != 1 || s[0].hop.Copy != 2 || s[0].hop.Seat != "dev#2" {
-		t.Fatalf("retry started %+v", s)
-	}
-	if err := state.WriteDone(e.Home, id, state.Done{Step: "build", Hop: s[0].hop.N, Exit: "handoff", Out: map[string]any{"pr": "2"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(state.Dir(e.Home, id), "seats", "dev#2.idle"), []byte(IdleMark("build", s[0].hop.N)+"\n"), 0o600); err != nil {
-		t.Fatal(err) // its turn ended too, so dev#2 can close
-	}
-	if _, s = e.step(t, id); strings.Join(started(s), ",") != "join" {
-		t.Fatalf("started %v", started(s))
-	}
-	r = load(t, e, id)
-	if r.Seats["dev#2"].Up {
-		t.Error("dev#2 still up after its retried copy finished")
-	}
-	got, err := spec.Render("t", "{{ range .steps.build.out }}{{ .pr }},{{ end }} {{ .steps.build.exit }}", r.TemplateData(nil))
-	if err != nil || got != "1,2,3, [handoff handoff handoff]" {
-		t.Errorf("rendered %q, %v", got, err)
-	}
-	if r.Hops != 5 { // three copies, the retried one, join
-		t.Errorf("hops %d", r.Hops)
+	if r.Steps["build"] != nil || r.Steps["join"] != nil {
+		t.Errorf("steps %+v", r.Steps)
 	}
 }
 
-// A matrix that doesn't expand holds the step, before any copy starts.
+// A matrix that doesn't expand fails the run before any copy starts.
 func TestMatrixBadList(t *testing.T) {
 	e, id := hooked(t, []*spec.Step{matrixStep("build", "dev", 4, "{{ .base }}")})
-	for range 3 { // held once, not once per tick: it is an entry step, and no hop has started
-		if _, s := e.step(t, id); len(s) != 0 {
-			t.Fatalf("started %+v", s)
-		}
+	if status, s := e.step(t, id); status != state.Failed || len(s) != 0 {
+		t.Fatalf("status %q, started %+v", status, s)
 	}
-	if r := load(t, e, id); len(r.Blocked) != 1 || r.Blocked[0].Copy != 0 || !strings.Contains(r.Blocked[0].Error, "step build: matrix task:") || r.Hops != 0 {
-		t.Fatalf("blocked %+v, hops %d", r.Blocked, r.Hops)
+	if r := load(t, e, id); r.Failure == nil || r.Failure.Step != "build" || !strings.Contains(r.Failure.Reason, "step build: matrix task:") || r.Hops != 0 {
+		t.Fatalf("failure %+v, hops %d", r.Failure, r.Hops)
 	}
 }
 

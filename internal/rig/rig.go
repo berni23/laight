@@ -395,8 +395,13 @@ func (g *Rig) Down(id, status, reason string) error {
 		removed, errs = g.RemoveWorktrees(id)
 	}
 	now := time.Now().UTC()
+	var failure *state.Failure
 	if _, err := state.Update(g.Home, id, func(r *state.Run) error {
 		r.Status, r.Error, r.Finished = status, reason, &now
+		if status != state.Succeeded && r.Failure == nil {
+			r.Failure = endFailure(r, status, reason, now)
+		}
+		failure = r.Failure
 		return nil
 	}); err != nil {
 		errs = append(errs, err)
@@ -405,18 +410,41 @@ func (g *Rig) Down(id, status, reason string) error {
 	// the run's lock, and once the status above is recorded, no tick acts.
 	inbox.Withdraw(g.Home, id)
 	typ := "run.finished"
-	if status == state.Aborted {
+	switch status {
+	case state.Failed:
+		typ = "run.failed"
+	case state.Aborted:
 		typ = "run.aborted"
 	}
 	data := map[string]any{"status": status, "worktrees": policy, "removed": len(removed)}
 	if reason != "" {
 		data["error"] = reason
 	}
+	if failure != nil {
+		data["failure"] = failure
+	}
 	g.event(id, typ, "", data)
 	if err := g.Tmux.KillSession(r.Session); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+// endFailure is the failure report of a run that ends red without a step failing: an abort, or
+// the rig or engine failing. It names the steps that were running.
+func endFailure(r *state.Run, status, reason string, at time.Time) *state.Failure {
+	f := &state.Failure{Kind: state.KindCrash, Reason: reason, At: at}
+	if status == state.Aborted {
+		f.Kind = state.KindAborted
+		if f.Reason == "" {
+			f.Reason = "aborted with laight abort"
+		}
+	}
+	if len(r.Active) > 0 {
+		h := r.Active[0]
+		f.Step, f.Hop, f.Seat, f.Copy = h.Step, h.N, h.Seat, h.Copy
+	}
+	return f
 }
 
 // Worktrees returns the run's worktrees that still exist.

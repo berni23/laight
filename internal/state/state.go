@@ -44,34 +44,47 @@ type Run struct {
 	Base     string            `json:"base_ref"` // the ref worktrees start from, resolved once
 	Status   string            `json:"status"`
 	Error    string            `json:"error,omitempty"`
+	Failure  *Failure          `json:"failure,omitempty"` // why a red run is red (CLAUDE.md §6.3)
 	Seats    map[string]*Seat  `json:"seats"`
 	Created  time.Time         `json:"created"`
 	Finished *time.Time        `json:"finished,omitempty"`
 
 	// The engine's progress.
-	Hops      int                    `json:"hops"`                 // step starts so far (loop_guards.max_hops)
-	ExtraHops int                    `json:"extra_hops,omitempty"` // hops granted past max_hops from the inbox
-	Queue     []string               `json:"queue,omitempty"`      // steps routed to, waiting for their seat
-	Active    []*Hop                 `json:"active,omitempty"`     // steps running now
-	Blocked   []*Blocked             `json:"blocked,omitempty"`    // steps waiting on a failed item
-	Steps     map[string]*StepResult `json:"steps,omitempty"`      // the latest finished hop of each step
-	Matrix    map[string]*MatrixRun  `json:"matrix,omitempty"`     // matrix steps whose copies are under way
+	Hops   int                    `json:"hops"`             // step starts so far (loop_guards.max_hops)
+	Queue  []string               `json:"queue,omitempty"`  // steps routed to, waiting for their seat
+	Active []*Hop                 `json:"active,omitempty"` // steps running now
+	Steps  map[string]*StepResult `json:"steps,omitempty"`  // the latest finished hop of each step
+	Matrix map[string]*MatrixRun  `json:"matrix,omitempty"` // matrix steps whose copies are under way
+}
+
+// Failure kinds (CLAUDE.md §6.3): why a red run is red.
+const (
+	KindExit    = "exit"     // an agent's `laight done failed`
+	KindShell   = "shell"    // a shell step's non-zero exit
+	KindTimeout = "timeout"  // quiet past its timeout
+	KindStuck   = "stuck"    // stopped without `laight done`, nudged, and stopped again
+	KindCrash   = "crash"    // the seat's agent exited, or the step couldn't be delivered
+	KindMaxHops = "max_hops" // loop_guards.max_hops refused a step
+	KindAborted = "aborted"  // `laight abort`, or the engine interrupted
+)
+
+// Failure is why a run failed: the first step that failed with no route, or what else ended it.
+type Failure struct {
+	Step   string    `json:"step,omitempty"`
+	Hop    int       `json:"hop,omitempty"`
+	Seat   string    `json:"seat,omitempty"`
+	Copy   int       `json:"copy,omitempty"` // a matrix copy (1-based)
+	Kind   string    `json:"kind"`
+	Reason string    `json:"reason"`
+	Detail string    `json:"detail,omitempty"` // the last lines of the pane or the shell log, redacted
+	At     time.Time `json:"at"`
 }
 
 // MatrixRun is a matrix step between its expansion and its last copy finishing.
 type MatrixRun struct {
 	Copies  []map[string]any `json:"copies"`  // each copy's .matrix values
-	Pending []int            `json:"pending"` // copies (1-based) still to start; a retry puts one back
+	Pending []int            `json:"pending"` // copies (1-based) still to start
 	Results []*StepResult    `json:"results"` // each copy's latest finished hop, nil until it finishes
-}
-
-// Blocked is a step that failed with no route, or that max_hops refused. The run waits on a
-// failed inbox item until a human answers retry (the step starts again) or abort (the run fails).
-type Blocked struct {
-	Step  string `json:"step"`
-	Copy  int    `json:"copy,omitempty"` // the matrix copy held; 0 for the whole step
-	Item  string `json:"item"`
-	Error string `json:"error"` // why the run fails if aborted
 }
 
 // Hop is one start of a step.
@@ -84,8 +97,7 @@ type Hop struct {
 	Item    string         `json:"item,omitempty"`   // a gate's inbox item
 	Copy    int            `json:"copy,omitempty"`   // a matrix copy (1-based); 0 for other steps
 	Matrix  map[string]any `json:"matrix,omitempty"` // that copy's .matrix values
-	Stuck   string         `json:"stuck,omitempty"`  // a shell step's open stuck item
-	Clock   time.Time      `json:"clock,omitzero"`   // when its stuck clock last restarted (a wait)
+	Nudged  time.Time      `json:"nudged,omitzero"`  // when the engine reminded its stopped agent
 }
 
 // StepResult is how a step's latest hop finished: what templates see as .steps.<id>. A matrix
@@ -110,9 +122,6 @@ type Seat struct {
 	Hop   int    `json:"hop,omitempty"`   // …and its hop
 	Turn  bool   `json:"turn,omitempty"`  // the agent's turn on it hasn't ended yet
 	Given int    `json:"given,omitempty"` // steps given to the seat in this run
-
-	Stuck string    `json:"stuck,omitempty"` // the open stuck item about its turn
-	Clock time.Time `json:"clock,omitzero"`  // when its stuck clock last restarted (a nudge or a wait)
 }
 
 // ActiveOn returns the hop running on seat, or nil. Shell steps have no seat.
@@ -429,9 +438,13 @@ type Done struct {
 	TS   time.Time      `json:"ts"`
 	// Engine marks an ending the engine wrote: no agent turn is running that a Stop hook will end…
 	Engine bool `json:"engine,omitempty"`
-	// …unless Turn says one may be (a quiet step failed from the inbox): the seat stays busy
-	// until its Stop hook says the turn ended.
+	// …unless Turn says one may be (a quiet step timed out): the seat stays busy until its Stop
+	// hook says the turn ended.
 	Turn bool `json:"turn,omitempty"`
+	// Kind and Detail, on a failed ending the engine wrote, are its failure kind and the last
+	// lines of the pane or log, redacted, for the run's failure report.
+	Kind   string `json:"kind,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // ErrAlreadyDone is returned by WriteDone for a hop that has already finished.

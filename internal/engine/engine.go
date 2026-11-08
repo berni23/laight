@@ -87,8 +87,9 @@ type start struct {
 	restart bool // relaunch the seat first (session: fresh, or its pane died)
 }
 
-// tick does one round: act on inbox answers, finish the hops that are done, route them, close
-// the seat instances that are done, start what can start.
+// tick does one round: finish the hops that are done, route them, close the seat instances that
+// are done, start what can start. Once the run fails, nothing new starts: it ends when the hops
+// already running have finished (CLAUDE.md §3 rule 4).
 func (e *Engine) tick(ctx context.Context, id string) (status, reason string, err error) {
 	var starts []start
 	var stops []string
@@ -135,7 +136,9 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 	}
 	for _, n := range nudges {
 		var err error
-		if len(n.keys) > 0 {
+		if n.kill {
+			err = e.Rig.Tmux.KillWindow(r.Session, n.window)
+		} else if len(n.keys) > 0 {
 			err = e.Rig.Tmux.SendKeys(r.Session, n.window, n.keys...)
 		} else {
 			err = e.Rig.Tmux.Paste(r.Session, n.window, n.text)
@@ -149,7 +152,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			if ctx.Err() != nil {
 				return "", "", ctx.Err()
 			}
-			if err := e.fail(id, &s.hop, err); err != nil {
+			if err := e.fail(id, &s.hop, state.KindCrash, err); err != nil {
 				return "", "", err
 			}
 		}
@@ -171,63 +174,20 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 	if r.Steps == nil {
 		r.Steps = map[string]*state.StepResult{}
 	}
-	// Rule 1, once: before any hop, unless an entry step is already held or expanded (a matrix
-	// that didn't expand holds the run at hop 0).
-	if r.Hops == 0 && len(r.Queue) == 0 && len(r.Active) == 0 && len(r.Blocked) == 0 && len(r.Matrix) == 0 {
+	// Rule 1, once: before any hop, unless an entry step is already expanded, or the run already
+	// failed (a matrix that didn't expand fails it at hop 0).
+	if r.Hops == 0 && len(r.Queue) == 0 && len(r.Active) == 0 && len(r.Matrix) == 0 && r.Failure == nil {
 		r.Queue = entrySteps(r.Spec)
 	}
 
-	// 0. Failed items a human answered: retry the step, or abort the run. An answer that can't
-	// be read is asked again, under a new item: the old one is gone from the inbox.
-	var blocked, reask []*state.Blocked
-	for _, b := range r.Blocked {
-		it, err := inbox.Answered(e.Home, b.Item)
-		switch {
-		case err != nil:
-			e.logf("warning: can't read the answer to %s, asking again: %v", b.Step, err)
-			reask = append(reask, b)
-		case it == nil:
-			blocked = append(blocked, b)
-		case it.Answer == inbox.Retry:
-			e.logf("↻ %s: retried from the inbox", label(b.Step, b.Copy))
-			r.ExtraHops++ // a human chose to go on: past max_hops if need be (rule 4)
-			if m := r.Matrix[b.Step]; b.Copy > 0 && m != nil {
-				m.Pending, m.Results[b.Copy-1] = append(m.Pending, b.Copy), nil // that copy only
-			} else {
-				r.Queue = append(r.Queue, b.Step)
-			}
-		default:
-			e.logf("✕ %s: aborted from the inbox", b.Step)
-			return state.Failed, b.Error + "; aborted from the inbox", nil, nil, events
+	// failRun records why the run fails: the first failure wins, later ones are only step.done.
+	failRun := func(f state.Failure) {
+		if r.Failure != nil {
+			return
 		}
-	}
-	r.Blocked = blocked
-	// block holds the run on a failed item (a step, or one copy of a matrix step); without one, a
-	// human would never hear of it, so the run fails instead.
-	block := func(h *state.Hop, step string, copy int, reason string) bool {
-		it := inbox.Item{ID: state.NewID(time.Now()), Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Step: step,
-			Kind: inbox.Failed, Title: reason, Detail: reason, Choices: []string{inbox.Retry, inbox.Abort}}
-		if h != nil {
-			it.Seat, it.Hop = h.Seat, h.N
-		}
-		if err := inbox.Put(e.Home, it); err != nil {
-			e.logf("warning: can't raise an inbox item: %v", err)
-			return false
-		}
-		r.Blocked = append(r.Blocked, &state.Blocked{Step: step, Copy: copy, Item: it.ID, Error: reason})
-		x := state.Event{Run: r.ID, Type: "inbox.raised", Step: step, Seat: it.Seat, Hop: it.Hop,
-			Data: map[string]any{"item": it.ID, "kind": it.Kind}}
-		if copy > 0 {
-			x.Data["copy"] = copy
-		}
-		events = append(events, x)
-		e.logf("  waiting in the inbox: laight inbox %s retry|abort", it.Short())
-		return true
-	}
-	for _, b := range reask {
-		if !block(nil, b.Step, b.Copy, b.Error) {
-			return state.Failed, b.Error, nil, nil, events
-		}
+		f.At = time.Now().UTC()
+		r.Failure = &f
+		e.logf("✕ the run fails: %s; it ends once its running steps finish", f.Reason)
 	}
 
 	// 1. Hops that finished: `laight done`, a failure the engine recorded, a crashed seat, or a
@@ -240,7 +200,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 		if d == nil && h.Item != "" {
 			if it, err := inbox.Answered(e.Home, h.Item); err != nil {
-				if err := e.fail(r.ID, h, fmt.Errorf("can't read the answer to item %s: %w", state.Short(h.Item), err)); err != nil {
+				if err := e.fail(r.ID, h, state.KindCrash, fmt.Errorf("can't read the answer to item %s: %w", state.Short(h.Item), err)); err != nil {
 					e.logf("warning: %v", err)
 				}
 				d, _ = state.ReadDone(e.Home, r.ID, h.Step, h.N)
@@ -256,8 +216,8 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 		if d == nil && h.Seat != "" && e.seatGone(r, h.Seat) {
 			// Recorded like any other ending, so `laight done` racing the crash still wins.
-			crash := state.Done{Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Engine: true,
-				Out: map[string]any{"error": "seat " + h.Seat + " crashed"}}
+			crash := state.Done{Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Engine: true, Kind: state.KindCrash,
+				Out: map[string]any{"error": "seat " + h.Seat + " crashed"}, Detail: e.paneTail(r, h.Seat)}
 			if err := state.WriteDone(e.Home, r.ID, crash); err != nil && !errors.Is(err, state.ErrAlreadyDone) {
 				e.logf("warning: %v", err)
 			}
@@ -274,9 +234,6 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		if d == nil {
 			running = append(running, h)
 			continue
-		}
-		if h.Stuck != "" { // nobody needs to answer it now
-			inbox.Drop(e.Home, h.Stuck)
 		}
 		st := r.Spec.Step(h.Step)
 		res := &state.StepResult{Hop: h.N, Exit: d.Exit, Out: d.Out}
@@ -298,11 +255,8 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 		switch {
 		case next == "" && d.Exit == spec.ExitFailed:
-			reason := "step " + label(h.Step, h.Copy) + " failed" + errSuffix(d.Out)
-			e.logf("✕ %s", reason)
-			if !block(h, h.Step, h.Copy, reason) {
-				return state.Failed, reason, nil, nil, events
-			}
+			e.logf("✕ %s failed%s", label(h.Step, h.Copy), errSuffix(d.Out))
+			failRun(e.failure(r, h, st, d))
 		case h.Copy > 0:
 			e.logf("✓ %s → %s", label(h.Step, h.Copy), d.Exit)
 			if m != nil && finished(m) {
@@ -369,15 +323,12 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 	}
 
 	// begin starts a hop of st on seat (a seat, a seat instance, or none for shell steps and
-	// gates), unless max_hops refuses it. It returns why the run fails, if it must.
-	begin := func(st *spec.Step, seat string, copy int, values map[string]any) string {
-		if r.Hops >= r.Spec.LoopGuards.MaxHops+r.ExtraHops {
-			reason := fmt.Sprintf("loop_guards.max_hops (%d) reached before step %s", r.Spec.LoopGuards.MaxHops, label(st.ID, copy))
-			e.logf("✕ %s", reason)
-			if !block(nil, st.ID, copy, reason) {
-				return reason
-			}
-			return ""
+	// gates), unless max_hops refuses it: then the run fails.
+	begin := func(st *spec.Step, seat string, copy int, values map[string]any) {
+		if r.Hops >= r.Spec.LoopGuards.MaxHops {
+			failRun(state.Failure{Step: st.ID, Copy: copy, Kind: state.KindMaxHops,
+				Reason: fmt.Sprintf("loop_guards.max_hops (%d) reached before step %s", r.Spec.LoopGuards.MaxHops, label(st.ID, copy))})
+			return
 		}
 		r.Hops++
 		h := &state.Hop{Step: st.ID, Seat: seat, N: r.Hops, Started: time.Now().UTC(), Copy: copy, Matrix: values}
@@ -389,17 +340,17 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		ev("step.started", h, data)
 		if st.Type == spec.TypeGate {
 			if it, err := e.gate(r, h); err != nil {
-				if err := e.fail(r.ID, h, err); err != nil {
+				if err := e.fail(r.ID, h, state.KindExit, err); err != nil {
 					e.logf("warning: %v", err)
 				}
 			} else {
 				ev("inbox.raised", h, map[string]any{"item": it.ID, "kind": it.Kind})
 			}
-			return ""
+			return
 		}
 		if seat == "" {
 			starts = append(starts, start{hop: *h})
-			return ""
+			return
 		}
 		s := r.Seats[seat]
 		if s == nil { // a seat instance's first copy: the instance starts with it
@@ -413,7 +364,6 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		restart := !s.Up || (r.Spec.SeatOf(seat).Session == "fresh" && s.Given > 0)
 		s.Step, s.Hop, s.Turn, s.Given = st.ID, h.N, true, s.Given+1
 		starts = append(starts, start{hop: *h, restart: restart})
-		return ""
 	}
 	busy := func(seat string) bool {
 		s := r.Seats[seat]
@@ -425,6 +375,10 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 	var waiting []string
 	for _, id := range r.Queue {
 		st := r.Spec.Step(id)
+		if r.Failure != nil { // a failing run starts nothing new
+			waiting = append(waiting, id)
+			continue
+		}
 		if r.Matrix[id] != nil { // routed to again while its copies run: it waits for them
 			waiting = append(waiting, id)
 			continue
@@ -432,11 +386,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		if len(st.Matrix) > 0 {
 			copies, err := spec.Copies(st, r.TemplateData(nil))
 			if err != nil {
-				reason := "step " + id + ": " + err.Error()
-				e.logf("✕ %s", reason)
-				if !block(nil, id, 0, reason) {
-					return state.Failed, reason, nil, nil, events
-				}
+				failRun(state.Failure{Step: id, Kind: state.KindExit, Reason: "step " + id + ": " + err.Error()})
 				continue
 			}
 			m := &state.MatrixRun{Copies: copies, Results: make([]*state.StepResult, len(copies))}
@@ -454,15 +404,16 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 			waiting = append(waiting, id)
 			continue
 		}
-		if reason := begin(st, st.Seat, 0, nil); reason != "" {
-			return state.Failed, reason, nil, nil, events
-		}
+		begin(st, st.Seat, 0, nil)
 	}
 	r.Queue = waiting
 
 	// 3b. Matrix copies, in copy order, up to max_parallel live at once. Copy k runs on its own
 	// seat instance, <seat>#k (rule 5), and waits for it while another matrix step has it.
 	for _, id := range slices.Sorted(maps.Keys(r.Matrix)) {
+		if r.Failure != nil {
+			break
+		}
 		m, st := r.Matrix[id], r.Spec.Step(id)
 		live := 0
 		for _, h := range r.Active {
@@ -476,39 +427,33 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 			if st.Seat != "" {
 				seat = spec.Instance(st.Seat, k)
 			}
-			if live >= st.MaxParallel || (seat != "" && busy(seat)) {
+			if r.Failure != nil || live >= st.MaxParallel || (seat != "" && busy(seat)) {
 				later = append(later, k)
 				continue
 			}
 			n := len(r.Active)
-			if reason := begin(st, seat, k, m.Copies[k-1]); reason != "" {
-				return state.Failed, reason, nil, nil, events
-			}
+			begin(st, seat, k, m.Copies[k-1])
 			live += len(r.Active) - n
 		}
 		m.Pending = later
 	}
 
-	// A seat instance closes once its copy is over. Its worktree stays (on_finish decides). A
-	// held copy isn't over: its pane stays up for a human to look at (requirement 2), and a retry
-	// is delivered to it.
-	held := map[string]bool{}
-	for _, b := range r.Blocked {
-		if st := r.Spec.Step(b.Step); b.Copy > 0 && st != nil && st.Seat != "" {
-			held[spec.Instance(st.Seat, b.Copy)] = true
-		}
-	}
+	// A seat instance closes once its copy is over. Its worktree stays (on_finish decides).
 	for _, name := range slices.Sorted(maps.Keys(r.Seats)) {
-		if s := r.Seats[name]; strings.Contains(name, "#") && s.Up && !s.Turn && r.ActiveOn(name) == nil && !held[name] {
+		if s := r.Seats[name]; strings.Contains(name, "#") && s.Up && !s.Turn && r.ActiveOn(name) == nil {
 			s.Up = false
 			stops = append(stops, name)
 			events = append(events, state.Event{Run: r.ID, Type: "seat.down", Seat: name})
 		}
 	}
 
-	// 4. Rule 4: nothing running, waiting, or held on a failed item. A step whose needs were
-	// never met (a needed step ended on an exit routed elsewhere, or never ran) is skipped.
-	if len(r.Active) == 0 && len(r.Queue) == 0 && len(r.Blocked) == 0 && len(r.Matrix) == 0 {
+	// 4. Rule 4: a failed run ends once nothing runs; any other, once nothing runs or waits. A
+	// step whose needs were never met (a needed step ended on an exit routed elsewhere, or never
+	// ran) is skipped.
+	if r.Failure != nil && len(r.Active) == 0 {
+		return state.Failed, r.Failure.Reason, nil, stops, events
+	}
+	if len(r.Active) == 0 && len(r.Queue) == 0 && len(r.Matrix) == 0 {
 		for _, st := range r.Spec.Steps {
 			if len(st.Needs) > 0 && r.Steps[st.ID] == nil {
 				miss := unmet(r, st)
@@ -539,12 +484,13 @@ func (e *Engine) gate(r *state.Run, h *state.Hop) (*inbox.Item, error) {
 	return &it, nil
 }
 
-// fail finishes a hop as failed, so it goes through routing like any other ending.
-func (e *Engine) fail(id string, h *state.Hop, err error) error {
+// fail finishes a hop as failed, of the given kind, so it goes through routing like any other
+// ending.
+func (e *Engine) fail(id string, h *state.Hop, kind string, err error) error {
 	e.logf("✕ %s: %v", h.Step, err)
 	msg, _, _ := strings.Cut(err.Error(), "\n")
 	err = state.WriteDone(e.Home, id, state.Done{
-		Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg}, Engine: true,
+		Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Out: map[string]any{"error": msg}, Engine: true, Kind: kind,
 	})
 	if errors.Is(err, state.ErrAlreadyDone) {
 		return nil
@@ -613,8 +559,7 @@ func entrySteps(w *spec.Workflow) []string {
 	return ids
 }
 
-// live reports whether step is queued, running, held on a failed item, or has matrix copies under
-// way.
+// live reports whether step is queued, running, or has matrix copies under way.
 func live(r *state.Run, step string) bool {
 	if r.Matrix[step] != nil {
 		return true
@@ -626,11 +571,6 @@ func live(r *state.Run, step string) bool {
 	}
 	for _, h := range r.Active {
 		if h.Step == step {
-			return true
-		}
-	}
-	for _, b := range r.Blocked {
-		if b.Step == step {
 			return true
 		}
 	}
@@ -704,8 +644,60 @@ func label(step string, copy int) string {
 }
 
 func errSuffix(out map[string]any) string {
-	if msg, ok := out["error"].(string); ok && msg != "" {
+	if msg := reasonOf(out); msg != "" {
 		return ": " + msg
 	}
 	return ""
+}
+
+// reasonOf is why a hop failed, from its outputs: the agent's `reason=`, else the engine's error.
+func reasonOf(out map[string]any) string {
+	for _, k := range []string{"reason", "error"} {
+		if msg, ok := out[k].(string); ok && msg != "" {
+			return msg
+		}
+	}
+	return ""
+}
+
+// failure is the run's failure report for a hop that failed with no route. Its kind is what the
+// engine recorded, else an agent's exit or a shell step's. Its detail is the end of the pane or
+// the shell log, redacted, unless the engine already captured it.
+func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Done) state.Failure {
+	f := state.Failure{Step: h.Step, Hop: h.N, Seat: h.Seat, Copy: h.Copy, Kind: d.Kind, Detail: d.Detail}
+	if f.Kind == "" {
+		f.Kind = state.KindExit
+		if st.Type == spec.TypeShell {
+			f.Kind = state.KindShell
+		}
+	}
+	f.Reason = "step " + label(h.Step, h.Copy) + " failed" + errSuffix(d.Out)
+	if f.Detail == "" {
+		if st.Type == spec.TypeShell {
+			b, _ := os.ReadFile(filepath.Join(state.Dir(e.Home, r.ID), ShellLog(h.Step, h.N)))
+			f.Detail = inbox.Scrub(lastLines(string(b), 15))
+		} else if h.Seat != "" {
+			f.Detail = e.paneTail(r, h.Seat)
+		}
+	}
+	return f
+}
+
+// paneTail is the last lines of a seat's pane, its secrets stripped, or a note saying why it
+// isn't quoted.
+func (e *Engine) paneTail(r *state.Run, seat string) string {
+	s := r.Seats[seat]
+	if s == nil {
+		return ""
+	}
+	secrets, err := rig.Secrets(r, seat)
+	if err != nil {
+		e.logf("warning: %s: %v", seat, err)
+		return "(the pane isn't quoted: its secrets can't be read to strip them)"
+	}
+	screen, err := e.Rig.Tmux.Capture(r.Session, s.Window)
+	if err != nil {
+		return ""
+	}
+	return inbox.Scrub(lastLines(screen, 15), secrets...)
 }
