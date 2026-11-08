@@ -16,10 +16,10 @@ gates, `needs` and `matrix` (#12), and a minimal inbox (`files` queue, `laight i
 passed (#11: two real issues to merged PRs, one review/fix round each); `question` items followed
 (#55). **Direction change (#68, 2026-11-02): unattended by design.** The inbox is parked, not
 deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists are in (#61: a
-permission is denied at once and recorded, never an inbox item); failure reports (#63) are next.
-Where this spec describes that model, the code catches up issue by issue: until #63 lands, a
-failed step still holds on a `failed` inbox item instead of ending the run, and until #64 a
-question still goes to the inbox.
+permission is denied at once and recorded, never an inbox item), and so is the failure report
+(#63: a failed run ends red, nobody is asked about a stuck step); the credentials preflight (#62)
+is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
 
@@ -209,7 +209,7 @@ steps:
 4. The run succeeds when no step is running or ready. An unrouted `failed`, or a step `max_hops`
    refuses, **fails the run** (#63): nothing new starts, steps already running finish and their
    exits are recorded (§12.3), then the run ends red with its failure report (§6) and worktrees
-   follow `on_finish.failure`. It also fails on `laight abort`. A failed run is retried by
+   follow `on_finish.failure`. An open gate doesn't hold it: its exit could start nothing. It also fails on `laight abort`. A failed run is retried by
    **rerunning it from the failed step** (`laight run --from-failed`, #66), after fixing the cause.
    (This reverses #9, which held the step on a `failed` inbox item for retry or abort while the
    rest carried on: a held run needs someone watching it, and once a rerun is cheap a red run
@@ -387,10 +387,14 @@ for most workflows; that is a design goal, measure it.
 ### 6.3 After the run: the failure report (#63)
 
 A run is green or red. A red run's `run.json` holds `failure: {step, hop, seat, kind, reason,
-detail, at}`, `kind` one of `exit` (`laight done failed reason=…`), `permission`, `question`,
-`credential`, `timeout` (quiet past its timeout), `stuck` (stopped twice without `laight done`),
-`crash`, `max_hops`, `shell`, `aborted`; `detail` is the last lines of
-the pane or the shell step's log, redacted (§12.4). A `run.failed` event carries the same.
+detail, at}`, `kind` one of `exit` (`laight done failed reason=…`), `permission` (the same,
+after a request of that hop was denied), `timeout` (quiet past its timeout), `stuck` (stopped
+twice without `laight done`, and again after the engine's reminder), `crash` (a seat or the
+engine died, or the step couldn't be delivered), `max_hops`, `shell`, `aborted`; later
+`question` (#64) and `credential` (#62). The first failure is the report: later ones, and an
+abort that follows, don't replace it. `reason` and `detail` (the last lines of the pane or the
+shell step's log) are redacted and stripped of control characters (§12.4). A `run.failed` event
+carries the same.
 `laight watch` shows ✕ and the reason on the failed step, and `laight run` exits non-zero and
 prints the report. Every run's report also lists the denied requests and the assumptions made.
 
@@ -487,7 +491,7 @@ it, and an expired item fell back to *deny*, never allow.
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
   `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
-  `step.started|done|skipped|timeout`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
+  `step.started|done|skipped|timeout|nudged`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
   `input` redacted and cut, `by` laight or auto mode, auto mode's `reason`; the engine window
   prints each) and `assumption` (#64), `inbox.raised|answered` (parked; `answered` also covers an item that
   expired or was withdrawn, not only a human's answer), `hook.<name>` (session start and stop; a
@@ -641,8 +645,11 @@ could answer a dialog nobody has read, and the report's pane lines show what it 
 Two kinds, because the fixes differ: the objective or guidance for `stuck`, a hang or a dialog
 for `timeout`. Failing on a false stop would kill a healthy run, so #57 (a turn that ends while
 background agents run looks like a stop) is fixed before or with #63.
-Under `human.mode: wait` the `stuck` item is still raised as above, with `human.timeout` as its
-clock. Until #63 lands the code raises the item in every mode.
+Under `human.mode: wait` the `stuck` item is to be raised as above, with `human.timeout` as its
+clock (#64 builds it). A seat whose step is done but whose turn never ends (quiet past its
+timeout after `laight done`) is not freed with a turn still running, which would finish in its
+next step: the engine closes its window, and its next step relaunches it (`--resume`). While a
+spinner runs, the quiet clock can't see a hung turn yet (#72).
 
 ### 12.3 One parallel branch fails while others run (#12)
 

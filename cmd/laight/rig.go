@@ -310,7 +310,7 @@ const askHint = "If you need a human's answer first, ask with the AskUserQuestio
 // stopHook runs when the agent's turn ends. If the seat's step is finished, the seat is idle and
 // may get its next one. If not, the agent is told once how to finish it (Claude sets
 // stop_hook_active when it is already continuing because of this hook, so it never loops); the
-// second time, it marks the seat stopped, and the engine asks a human (a stuck item). A turn that
+// second time, it marks the seat stopped: the engine reminds it once, then fails the step. A turn that
 // ends while background agents run isn't over: the agent resumes when they finish (#57), so it is
 // neither reminded nor counted, and the seat isn't idle even after `laight done`.
 func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
@@ -338,7 +338,7 @@ func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	if r.ActiveOn(seat) == nil {
 		return nil
 	}
-	if in.StopHookActive { // told once already: the engine raises a stuck item
+	if in.StopHookActive { // told once already: the engine takes it from here
 		return os.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
 	}
 	laight, err := os.Executable()
@@ -403,11 +403,11 @@ func follow(srv tmux.Server, home string, r *state.Run, window string, stdout, s
 		return 1
 	case r.Live():
 		fmt.Fprintf(stdout, "run %s is %s; back with: laight attach %s\n", r.Short(), r.Status, r.Short())
-	case r.Error != "":
-		fmt.Fprintf(stdout, "run %s %s: %s\n", r.Short(), r.Status, r.Error)
-		return 1
 	default:
-		fmt.Fprintf(stdout, "run %s %s\n", r.Short(), r.Status)
+		report(stdout, home, r)
+		if r.Status != state.Succeeded {
+			return 1
+		}
 	}
 	return 0
 }
@@ -460,7 +460,11 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		if !confirm(fmt.Sprintf("Abort run %s (%s, %s):", r.Short(), r.Workflow, status), plan, yes, stdout, stderr) {
 			return 1
 		}
-		if err := g.Down(r.ID, state.Aborted, ""); err != nil {
+		reason := ""
+		if engineDied(srv, r) {
+			reason = rig.EngineDied
+		}
+		if err := g.Down(r.ID, state.Aborted, reason); err != nil {
 			return fail(stderr, "%v", err)
 		}
 		fmt.Fprintf(stdout, "run %s aborted\n", r.Short())

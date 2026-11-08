@@ -227,6 +227,9 @@ steps:
 	if r.Status != state.Aborted || r.Finished == nil {
 		t.Errorf("after abort: status %s", r.Status)
 	}
+	if f := r.Failure; f == nil || f.Kind != state.KindAborted || f.Reason != "aborted with laight abort" {
+		t.Errorf("after abort: failure %+v", f)
+	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Errorf("worktree removed on abort: %v", err)
 	}
@@ -254,9 +257,9 @@ on_finish: { failure: destroy }
 `)
 	e.mustLaight("run", "demo")
 	r := e.onlyRun()
-	e.waitFor(r.ID, "run.finished", 1)
+	e.waitFor(r.ID, "run.failed", 1)
 	r, _ = state.Load(e.home, r.ID)
-	if r.Status != state.Failed || !strings.Contains(r.Error, "setup") {
+	if r.Status != state.Failed || !strings.Contains(r.Error, "setup") || r.Failure == nil || r.Failure.Kind != state.KindCrash {
 		t.Errorf("status %s, error %q", r.Status, r.Error)
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -396,6 +399,8 @@ func TestEngineDied(t *testing.T) {
 	}
 	if r := e.waitStatus(r.ID, state.Aborted); len(e.rigWorktrees(r)) != 0 {
 		t.Errorf("on_finish.failure destroy kept %v", e.rigWorktrees(r))
+	} else if f := r.Failure; f == nil || f.Kind != state.KindCrash || f.Reason != rig.EngineDied {
+		t.Errorf("failure %+v: the report must say the engine died", f) // #80 review 11
 	}
 }
 

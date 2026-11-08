@@ -8,6 +8,19 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **A failed run ends red, with a report** (#63). An unrouted `failed` (or a step `max_hops`
+  refuses) no longer holds the run on a `failed` inbox item: nothing new starts, the steps
+  already running finish and are recorded, and the run ends. `run.json` holds `failure: {step,
+  hop, seat, kind, reason, detail, at}`, the same goes into a `run.failed` event, and `laight run`
+  / `laight attach` print it when the terminal comes back (the step, why, the end of its pane or
+  log, and every request a seat was denied, on green runs too) and exit non-zero. Kinds: `exit`
+  (`laight done failed reason="…"`), `permission` (the same after a denied request), `shell`,
+  `timeout`, `stuck`, `crash` (a dead engine too), `max_hops`, `aborted`. The reason and detail
+  are redacted and stripped of control characters. An open gate doesn't keep a failed run alive.
+- **A stuck step no longer asks anyone** (#63). An agent that stops twice without `laight done`
+  is reminded once by the engine, and fails `stuck` if it stops again; a seat or shell step
+  quiet past its timeout fails `timeout`. A seat whose step is done but whose turn never ends is
+  stopped, and its next step relaunches it.
 - **The design is now unattended by design** (#60, #68): what a run needs from a human
   (permissions, credentials, answers, decisions) is settled before it starts. Permissions become
   deny lists on auto mode, credentials a preflight, questions a `human:` policy (`assume` by

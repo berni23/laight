@@ -71,7 +71,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		return err
 	}
 
-	// A context of its own, so a stuck step failed from the inbox can be stopped alone.
+	// A context of its own, so a step that times out can be stopped alone.
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = r.Repo, pw, pw
@@ -129,6 +129,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		code := cmd.ProcessState.ExitCode() // -1 when killed by a signal
 		d := state.Done{Step: st.ID, Hop: h.N, Exit: shellExit(st, code), Out: map[string]any{"code": code}, Engine: true}
 		if d.Exit == spec.ExitFailed {
+			d.Kind = state.KindShell
 			d.Out["error"] = fmt.Sprintf("exit code %d, output in %s", code, logName)
 			if code < 0 {
 				d.Out["error"] = fmt.Sprintf("%v, output in %s", err, logName)

@@ -11,9 +11,10 @@ you before the run, and get a green or red result, CircleCI-style.**
 > `matrix` for one agent per item), runs shell steps and gates, routes on their exits (loops
 > included), and tears the rig down. **The design just changed to unattended by design**
 > ([#68](https://github.com/berni23/laight/issues/68)): deny lists are in (a permission prompt is
-> denied at once and recorded); failure reports, a credentials preflight and rerun-from-failed are
-> next (M3, see the [milestones](CLAUDE.md#10-milestones)); until they land, questions and failed
-> steps still go to a (now parked) inbox.
+> denied at once and recorded), and a failed run ends red with a report naming the step and why;
+> a credentials preflight and rerun-from-failed are next (M3, see the
+> [milestones](CLAUDE.md#10-milestones)); until the `human:` policy lands, questions still go to a
+> (now parked) inbox.
 > The specification is in [CLAUDE.md](CLAUDE.md).
 > Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).

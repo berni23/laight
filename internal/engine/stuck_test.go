@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,17 +13,17 @@ import (
 	"github.com/berni23/laight/internal/state"
 )
 
-// stuckItems returns the run's pending stuck items.
-func stuckItems(t *testing.T, e *Engine, id string) []*inbox.Item {
+// events returns the run's events of one type.
+func eventsOf(t *testing.T, e *Engine, id, typ string) []state.Event {
 	t.Helper()
-	items, err := inbox.Pending(e.Home)
+	evs, err := state.Events(e.Home, id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []*inbox.Item
-	for _, it := range items {
-		if it.Run == id && it.Kind == inbox.Stuck {
-			out = append(out, it)
+	var out []state.Event
+	for _, ev := range evs {
+		if ev.Type == typ {
+			out = append(out, ev)
 		}
 	}
 	return out
@@ -38,9 +37,9 @@ func tick(t *testing.T, e *Engine, id string) {
 }
 
 // A hooked seat that ran `laight done` but whose Stop hook never said its turn ended (the hook
-// failed) holds its next step: past the step's timeout that is a stuck item, not a silent stall.
-// While a question item is pending for the seat, a human is already asked, so it isn't one.
-// Fail frees the seat.
+// failed) holds its next step: past the step's timeout it is stopped, so a turn still running
+// can't finish in its next step, and that step relaunches it. While a question item is pending
+// for the seat, a human is already asked, so it waits.
 func TestStuckTurnNeverEnded(t *testing.T) {
 	steps := two(map[string]string{"handoff": "two"})
 	timeout := spec.Duration(time.Second)
@@ -51,73 +50,70 @@ func TestStuckTurnNeverEnded(t *testing.T) {
 		t.Fatal(err)
 	}
 	tick(t, e, id)
-	if items := stuckItems(t, e, id); len(items) != 0 {
-		t.Fatalf("stuck before the timeout: %+v", items)
+	if r := load(t, e, id); !r.Seats["a"].Up || len(r.Queue) != 1 {
+		t.Fatalf("stopped before the timeout: %+v", r.Seats["a"])
 	}
 
-	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?", Questions: []inbox.Ask{{Question: "which fix?"}}}
-	if err := inbox.Put(e.Home, perm); err != nil {
+	q := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?", Questions: []inbox.Ask{{Question: "which fix?"}}}
+	if err := inbox.Put(e.Home, q); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1200 * time.Millisecond)
 	tick(t, e, id)
-	if items := stuckItems(t, e, id); len(items) != 0 {
-		t.Fatalf("stuck while a question item waits: %+v", items)
+	if r := load(t, e, id); !r.Seats["a"].Up {
+		t.Fatalf("stopped while a question item waits: %+v", r.Seats["a"])
 	}
-	inbox.Drop(e.Home, perm.ID)
+	inbox.Drop(e.Home, q.ID)
 
-	tick(t, e, id)
-	items := stuckItems(t, e, id)
-	if len(items) != 1 || !strings.HasPrefix(items[0].Title, "a finished step one, but its turn hasn't ended") {
-		t.Fatalf("items %+v", items)
-	}
-	if r := load(t, e, id); r.Seats["a"].Stuck != items[0].ID || len(r.Queue) != 1 {
-		t.Fatalf("seat %+v, queue %v", r.Seats["a"], r.Queue)
-	}
-	tick(t, e, id)
-	if n := len(stuckItems(t, e, id)); n != 1 {
-		t.Fatalf("asked %d times", n)
-	}
-	if _, err := inbox.Answer(e.Home, items[0].ID, inbox.Fail); err != nil {
+	var starts []start
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		nudges, _ := e.watch(r)
+		if len(nudges) != 1 || !nudges[0].kill || nudges[0].window != "a" {
+			t.Errorf("nudges %+v", nudges)
+		}
+		if s := r.Seats["a"]; s.Up || s.Turn {
+			t.Errorf("seat %+v", s)
+		}
+		_, _, starts, _, _ = e.advance(r)
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	tick(t, e, id) // the answer frees the seat…
-	tick(t, e, id) // …and two starts on it
-	r := load(t, e, id)
-	if h := r.ActiveOn("a"); h == nil || h.Step != "two" || r.Seats["a"].Stuck != "" {
-		t.Fatalf("active %+v, seat %+v", r.Active, r.Seats["a"])
+	if len(starts) != 1 || starts[0].hop.Step != "two" || !starts[0].restart {
+		t.Fatalf("starts %+v", starts)
+	}
+	if evs := eventsOf(t, e, id, "step.timeout"); len(evs) != 0 {
+		t.Errorf("a done step timed out: %+v", evs)
 	}
 }
 
-// A stuck item about a turn that then ends on its own is withdrawn: nobody needs to answer it.
-func TestStuckItemWithdrawn(t *testing.T) {
+// A step quiet past its timeout fails as a timeout, with the end of its pane, and the run ends
+// red once nothing runs. Nobody is asked.
+func TestQuietStepTimesOut(t *testing.T) {
 	steps := two(nil)
 	timeout := spec.Duration(100 * time.Millisecond)
 	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
-	time.Sleep(200 * time.Millisecond)
-	tick(t, e, id)
-	items := stuckItems(t, e, id)
-	if len(items) != 1 || !strings.HasPrefix(items[0].Title, "a has been quiet for") {
-		t.Fatalf("items %+v", items)
-	}
-	finish(t, e, id, state.Hop{Step: "one", Seat: "a", N: 1}, "handoff")
-	tick(t, e, id)
-	if items := stuckItems(t, e, id); len(items) != 0 {
-		t.Fatalf("still asked: %+v", items)
-	}
-	if _, err := os.Stat(filepath.Join(e.Home, "inbox", items[0].ID+".json")); !os.IsNotExist(err) {
-		t.Errorf("item file: %v", err)
-	}
-	evs, err := state.Events(e.Home, id)
-	if err != nil {
+	r := load(t, e, id)
+	if err := e.Rig.Tmux.Paste(r.Session, "a", "echo waiting-on-a-dialog"); err != nil {
 		t.Fatal(err)
 	}
-	if i := slices.IndexFunc(evs, func(ev state.Event) bool {
-		return ev.Type == "inbox.answered" && ev.Data["item"] == items[0].ID && ev.Data["answer"] == "withdrawn"
-	}); i < 0 {
-		t.Errorf("no withdrawn event: %+v", evs)
+	time.Sleep(400 * time.Millisecond)
+	tick(t, e, id) // fails the hop…
+	status, reason, err := e.tick(context.Background(), id)
+	if status != state.Failed || err != nil || !strings.Contains(reason, "a was quiet for") {
+		t.Fatalf("tick: %q %q %v", status, reason, err)
+	}
+	f := load(t, e, id).Failure
+	if f == nil || f.Kind != state.KindTimeout || f.Step != "one" || f.Seat != "a" || !strings.Contains(f.Detail, "waiting-on-a-dialog") {
+		t.Fatalf("failure %+v", f)
+	}
+	if evs := eventsOf(t, e, id, "step.timeout"); len(evs) != 1 {
+		t.Errorf("step.timeout events %+v", evs)
+	}
+	if items, _ := inbox.Pending(e.Home); len(items) != 0 {
+		t.Errorf("a human was asked: %+v", items)
 	}
 }
 
@@ -131,28 +127,20 @@ func TestLastLines(t *testing.T) {
 	}
 }
 
-// Failing a quiet hooked seat from the inbox fails its step, but its turn may still be running:
-// the next step waits for the Stop hook, so a late `laight done` from that turn can't finish it.
-func TestStuckFailWaitsForTurn(t *testing.T) {
+// A timed-out step routes like any failure, but its turn may still be running: the seat takes
+// its next step only once its Stop hook says the turn ended.
+func TestTimeoutWaitsForTurn(t *testing.T) {
 	steps := two(map[string]string{"failed": "two"})
 	timeout := spec.Duration(100 * time.Millisecond)
 	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
 	time.Sleep(200 * time.Millisecond)
-	tick(t, e, id)
-	items := stuckItems(t, e, id)
-	if len(items) != 1 {
-		t.Fatalf("items %+v", items)
-	}
-	if _, err := inbox.Answer(e.Home, items[0].ID, inbox.Fail); err != nil {
-		t.Fatal(err)
-	}
-	tick(t, e, id) // the answer fails the hop…
-	tick(t, e, id) // …which routes to two, on the same seat
+	tick(t, e, id) // the hop times out…
+	tick(t, e, id) // …and routes to two, on the same seat
 	r := load(t, e, id)
-	if r.Steps["one"] == nil || r.Steps["one"].Exit != spec.ExitFailed || r.ActiveOn("a") != nil || !r.Seats["a"].Turn {
-		t.Fatalf("steps %+v, active %+v, seat %+v", r.Steps, r.Active, r.Seats["a"])
+	if r.Steps["one"] == nil || r.Steps["one"].Exit != spec.ExitFailed || r.ActiveOn("a") != nil || !r.Seats["a"].Turn || r.Failure != nil {
+		t.Fatalf("steps %+v, active %+v, seat %+v, failure %+v", r.Steps, r.Active, r.Seats["a"], r.Failure)
 	}
 	mark := filepath.Join(state.Dir(e.Home, id), "seats", "a.idle")
 	if err := os.WriteFile(mark, []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
@@ -180,48 +168,57 @@ func TestOwnWrite(t *testing.T) {
 	}
 }
 
-// A gate is never stuck, even with a timeout of its own: it already waits on a human.
+// A gate is never timed, even with a timeout of its own: it already waits on a human.
 func TestGateNeverStuck(t *testing.T) {
 	timeout := spec.Duration(100 * time.Millisecond)
 	e, id := hooked(t, []*spec.Step{{ID: "ask", Type: spec.TypeGate, Ask: "Go on?", AllowedExits: []string{"yes"}, Timeout: &timeout}})
 	tick(t, e, id)
 	time.Sleep(200 * time.Millisecond)
 	tick(t, e, id)
-	items, _ := inbox.Pending(e.Home)
-	if len(items) != 1 || items[0].Kind != inbox.Gate {
-		t.Fatalf("items %+v", items)
+	r := load(t, e, id)
+	if len(r.Active) != 1 || r.Failure != nil {
+		t.Fatalf("active %+v, failure %+v", r.Active, r.Failure)
 	}
 }
 
-// A nudge answered after the agent started working again and reached a question's dialog is not
-// pasted: its Enter would answer the question without anyone answering the question item.
-func TestNudgeSkippedWhileQuestionWaits(t *testing.T) {
+// An agent that stopped without `laight done` (its Stop hook already reminded it once) is reminded
+// once more by the engine; if it stops again, its hop fails as stuck and the run ends red.
+func TestStoppedNudgedThenStuck(t *testing.T) {
 	e, id := hooked(t, two(nil), "a")
+	e.Rig.Laight = "laight"
 	tick(t, e, id)
-	if err := os.WriteFile(StoppedMark(e.Home, id, "a"), []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+	stop := func() {
+		t.Helper()
+		if err := os.WriteFile(StoppedMark(e.Home, id, "a"), []byte(IdleMark("one", 1)+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	stop()
 	tick(t, e, id)
-	items := stuckItems(t, e, id)
-	if len(items) != 1 {
-		t.Fatalf("items %+v", items)
-	}
-	perm := inbox.Item{ID: state.NewID(time.Now()), Run: id, Seat: "a", Kind: inbox.Question, Title: "a asks: which fix?", Questions: []inbox.Ask{{Question: "which fix?"}}}
-	if err := inbox.Put(e.Home, perm); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := inbox.Answer(e.Home, items[0].ID, inbox.Nudge); err != nil {
-		t.Fatal(err)
-	}
-	tick(t, e, id)
-	time.Sleep(300 * time.Millisecond) // a paste would have reached the pane by now
 	r := load(t, e, id)
-	screen, err := e.Rig.Tmux.Capture(r.Session, "a")
-	if err != nil {
-		t.Fatal(err)
+	var screen string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if screen, _ = e.Rig.Tmux.Capture(r.Session, "a"); strings.Contains(screen, "laight: Step one is not finished") {
+			break
+		}
 	}
-	if strings.Contains(screen, "laight: Step") || r.Seats["a"].Stuck != "" {
-		t.Fatalf("nudged with a question item waiting; seat %+v\n%s", r.Seats["a"], screen)
+	if !strings.Contains(screen, "laight: Step one is not finished") || r.Active[0].Nudged.IsZero() {
+		t.Fatalf("not nudged; hop %+v\n%s", r.Active[0], screen)
+	}
+	tick(t, e, id)
+	if r := load(t, e, id); len(r.Active) != 1 || len(eventsOf(t, e, id, "step.nudged")) != 1 {
+		t.Fatalf("nudged twice, or failed on the same stop: %+v", r.Active)
+	}
+	time.Sleep(10 * time.Millisecond) // a later mtime
+	stop()
+	tick(t, e, id)
+	status, _, _ := e.tick(context.Background(), id)
+	f := load(t, e, id).Failure
+	if status != state.Failed || f == nil || f.Kind != state.KindStuck || f.Step != "one" || !strings.Contains(f.Detail, "laight: Step one") {
+		t.Fatalf("status %q, failure %+v", status, f)
+	}
+	if r := load(t, e, id); r.Seats["a"].Turn {
+		t.Error("a stopped agent's turn is over, but the seat still waits for it")
 	}
 }
 
@@ -279,5 +276,18 @@ func TestAnnounceDenialAtTheEnd(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "⊘ a denied Bash: touch x") {
 		t.Errorf("not printed:\n%s", log.String())
+	}
+}
+
+// A reminder that can't be pasted fails the hop as stuck at once: the hop is already marked
+// nudged, so nothing else would ever end it in a step without a timeout (#80 review, question 15).
+func TestFailedNudgeFailsHop(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	tick(t, e, id)
+	r := load(t, e, id)
+	e.apply(r, nudge{window: "no-such-window", text: "laight: remind", step: "one", hop: 1})
+	d, err := state.ReadDone(e.Home, id, "one", 1)
+	if err != nil || d == nil || d.Exit != spec.ExitFailed || d.Kind != state.KindStuck {
+		t.Fatalf("done %+v %v", d, err)
 	}
 }
