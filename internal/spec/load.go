@@ -408,7 +408,6 @@ func applyDefaults(w *Workflow) {
 			s.Session = "resume"
 		}
 		if s.Permissions.Mode == "" {
-			s.Permissions.noMode = len(s.Permissions.Deny) > 0
 			s.Permissions.Mode = "default"
 		}
 	}
