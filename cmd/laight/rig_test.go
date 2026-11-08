@@ -227,6 +227,9 @@ steps:
 	if r.Status != state.Aborted || r.Finished == nil {
 		t.Errorf("after abort: status %s", r.Status)
 	}
+	if f := r.Failure; f == nil || f.Kind != state.KindAborted || f.Reason != "aborted with laight abort" {
+		t.Errorf("after abort: failure %+v", f)
+	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Errorf("worktree removed on abort: %v", err)
 	}
