@@ -18,30 +18,26 @@ that.
   out. `waiting()` now counts `subagent` and `workflow` entries, what Claude's own "Waiting for N
   background agents and M dynamic workflows" counts; shells and Monitors (both `shell`) don't.
   Details on #73; spec §12.2 updated.
-- **#72 measured** (comment on #72): the spinner grows the pane log ~70 B/s while the main
-  transcript and `<session>/subagents/agent-*.jsonl` stay still. They are the clock to use.
+- **#72 done**: the quiet clock reads the agent's transcripts (the
+  SessionStart hook now records `transcript_path` in `.ready`; the session's and
+  `<session>/subagents/**`), no longer the pane log the spinner keeps growing. Checked on a real
+  run (`.laight/workflows/background-hang.yaml`): a background agent stuck in `ping` failed the
+  step `timeout` after 2m. Trade-off, in §12.2: one long tool call that writes nothing is quiet.
 
 ---
 
 ## Do this next
 
-### 1. #72: take the quiet clock from the transcripts, not the seat log
-
-For claude-code seats, the max mtime of the transcript (`transcript_path`, from the SessionStart
-hook) and `<session-id>/subagents/*.jsonl` replaces the seat log's mtime in `stuck.go`, the
-post-done path (`h == nil` in `watchSeat`) included. Then a seat waiting on a background agent
-that never returns times out instead of waiting for ever. Check on a real run.
-
-### 2. #67, park the inbox in code
+### 1. #67, park the inbox in code
 
 Hide `laight inbox` and stop opening the inbox pane by default. Only questions still raise items
 (gates too, until #64). Small.
 
-### 3. #62 (credentials preflight), then #66 (rerun from failed)
+### 2. #62 (credentials preflight), then #66 (rerun from failed)
 
 §10 M3 order. #66 matters more now that runs fail instead of waiting.
 
-### 4. #82, declared step outputs
+### 3. #82, declared step outputs
 
 Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
 a dry render at `laight run`. Required exactly for steps whose outputs another step reads.

@@ -886,3 +886,20 @@ func TestStopHook(t *testing.T) {
 		t.Errorf("hook.stop background = %v, want %v", background, want)
 	}
 }
+
+// The SessionStart hook marks the seat ready, with where its transcript is: the engine's quiet
+// clock reads it, since the spinner keeps the pane log moving (#72).
+func TestSessionStartHook(t *testing.T) {
+	home, id := doneEnv(t)
+	os.MkdirAll(filepath.Join(state.Dir(home, id), "seats"), 0o700)
+	var out, errOut bytes.Buffer
+	in := `{"session_id":"s1","source":"startup","transcript_path":"/x/s1.jsonl"}`
+	if code := cmdHook([]string{"session-start"}, strings.NewReader(in), &out, &errOut); code != 0 || errOut.Len() > 0 {
+		t.Fatalf("hook: %d %s", code, errOut.String())
+	}
+	var ready map[string]any
+	b, err := os.ReadFile(filepath.Join(state.Dir(home, id), "seats", "a.ready"))
+	if err != nil || json.Unmarshal(b, &ready) != nil || ready["session_id"] != "s1" || ready["transcript_path"] != "/x/s1.jsonl" {
+		t.Errorf(".ready = %s %v", b, err)
+	}
+}

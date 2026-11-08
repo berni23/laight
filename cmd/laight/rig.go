@@ -238,7 +238,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	unread := json.NewDecoder(io.LimitReader(stdin, hookInputMax)).Decode(&in)
 	switch args[0] {
 	case "session-start":
-		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "ts": time.Now().UTC()})
+		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "transcript_path": in.TranscriptPath, "ts": time.Now().UTC()})
 		if err := os.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b, 0o600); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
