@@ -26,6 +26,10 @@ that.
   Denials in the run's last tick are printed, and the starter list covers `+refspec` and
   `refs/heads/<base>`. Filed #76 (push rules have other spellings; this repo's `dev` and `main`
   aren't protected on GitHub).
+- **PR #78** carries that review answer, which missed #75's merge. Its own review (2026-11-08) is
+  answered: the `laight done` guard covers every exit a seat's steps take (`failed` included, with
+  outputs too), any `permissions` map without a mode warns, and claude-code-only warnings stay off
+  other runtimes. Needs a push, then merge.
 
 ---
 

@@ -100,6 +100,7 @@ func (p *Permissions) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*p = Permissions(v)
+	p.noMode = p.Mode == ""
 	return nil
 }
 

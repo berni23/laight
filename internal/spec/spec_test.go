@@ -183,13 +183,13 @@ func TestLoadProblems(t *testing.T) {
 		}, "deny rules are not templates", 0, false},
 		{"deny every Bash call", func(s string) string {
 			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [Bash] }", 1)
-		}, "forbids `laight done`", 0, false},
+		}, `"Bash" forbids`, 0, false},
 		{"deny laight done by wildcard", func(s string) string {
 			return strings.Replace(s, "permissions: auto", "permissions: { mode: auto, deny: [\"Bash(laight *)\"] }", 1)
-		}, "forbids `laight done`", 0, false},
+		}, `"Bash(laight *)" forbids`, 0, false},
 		{"deny laight done by prefix", func(s string) string {
-			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(*)\", \"Bash(laight done:*)\"] }", 1)
-		}, "forbids `laight done`", 0, false},
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done:*)\"] }", 1)
+		}, `"Bash(laight done:*)" forbids`, 0, false},
 		{"deny without a mode warns", func(s string) string {
 			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
 		}, "permissions has no mode", 0, true},
@@ -262,6 +262,73 @@ func TestLoadProblems(t *testing.T) {
 				}
 			}
 			t.Errorf("no problem containing %q; got %v", tt.want, probs)
+		})
+	}
+}
+
+// TestPermissionChecks pins checks that must fire for some seats and stay quiet for others.
+func TestPermissionChecks(t *testing.T) {
+	shellSeat := "  sh:\n    runtime: shell\n    command: bash\n"
+	tests := []struct {
+		name    string
+		edit    func(string) string
+		want    string // substring of one problem; "" = none expected
+		notWant string // substring no problem may contain
+	}{
+		// #78 review 1: every exit a seat can take, not only handoff.
+		{"workflow rule forbids another exit", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done pass*)\"] }", 1)
+		}, "forbids `laight done pass`", ""},
+		{"workflow rule forbids failed", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done failed:*)\"] }", 1)
+		}, "forbids `laight done failed`", ""},
+		{"rule forbids an exit with outputs", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done handoff *)\"] }", 1)
+		}, "forbids `laight done handoff`", ""},
+		{"seat rule on an exit only another seat takes", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: { mode: auto, deny: [\"Bash(laight done pass*)\"] }", 1)
+		}, "", "forbids"},
+		{"seat rule on an exit its own step takes", func(s string) string {
+			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { mode: auto, deny: [\"Bash(laight done pass*)\"] }\n", 1)
+		}, "forbids `laight done pass`", ""},
+		// #78 review 2: any map without a mode, not only one with a deny list.
+		{"empty permissions map warns", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: {}", 1)
+		}, "permissions has no mode", ""},
+		{"empty deny list without a mode warns", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: { deny: [] }", 1)
+		}, "permissions has no mode", ""},
+		{"omitted permissions stay quiet", func(s string) string {
+			return strings.Replace(s, "    permissions: auto\n", "", 1)
+		}, "", "has no mode"},
+		// #78 review 3: claude-code advice stays off other runtimes.
+		{"shell seat without a mode", func(s string) string {
+			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
+		}, "only applies to claude-code", "has no mode"},
+		{"shell seat with yolo", func(s string) string {
+			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: yolo\n", 1)
+		}, "", "runs every command unasked"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			edited := tt.edit(issueCycle)
+			if edited == issueCycle {
+				t.Fatal("the edit changed nothing")
+			}
+			dir, file := project(t, edited)
+			_, probs := Load(dir, file)
+			found := tt.want == ""
+			for _, p := range probs {
+				if tt.want != "" && strings.Contains(p.String(), tt.want) {
+					found = true
+				}
+				if tt.notWant != "" && strings.Contains(p.String(), tt.notWant) {
+					t.Errorf("unexpected problem: %s", p)
+				}
+			}
+			if !found {
+				t.Errorf("no problem containing %q; got %v", tt.want, probs)
+			}
 		})
 	}
 }
