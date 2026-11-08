@@ -26,9 +26,11 @@ All notable changes to laight are documented here. The format follows
   `permissions: { mode: auto, deny: [...] }` (a plain `permissions: auto` still works). Claude
   blocks a matching call itself, in every permission mode, yolo included. `laight validate` checks
   the rules and rejects the ones Claude would silently skip or never match (`Write(…)`,
-  `Glob(…)`…), templates, and rules that would forbid `laight done` with any exit a seat's steps
-  take (`failed` included); it warns about a claude-code seat's `permissions` map with no `mode`
-  (it means `default`, where every prompt is denied).
+  `Glob(…)`…), templates, and rules that would forbid `laight done` with any exit a seat's
+  claude-code agent steps take (`failed` included, with any outputs); it warns about a
+  claude-code seat's `permissions` map with no `mode` (it means `default`, where every prompt is
+  denied). The yolo and no-mode warnings apply to claude-code seats only: other runtimes ignore
+  `permissions`.
   `laight init` scaffolds a starter list: force pushes (`--force`, `-f`, `+refspec`), pushes to
   the base branch, `gh pr merge`, destructive infra commands.
 - A question item shows what the agent said in its turn before asking: its messages and the

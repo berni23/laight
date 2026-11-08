@@ -512,13 +512,17 @@ var denyRule = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*|mcp__[A-Za-z0-9_*-]+)
 var noMatch = map[string]string{"Write": "Edit", "NotebookEdit": "Edit", "Glob": "Read"}
 
 // exits lists every exit an agent can finish a step with on seat (every claude-code seat when seat
-// is ""), failed included: the `laight done` calls a deny list must leave alone.
+// is ""), failed included: the `laight done` calls a deny list must leave alone. A seat that runs
+// no claude-code agent step has none: its deny list reaches no agent.
 func (c *checker) exits(seat string) []string {
-	out := []string{ExitFailed}
+	var out []string
 	for _, st := range c.w.Steps {
 		s := c.w.Seats[st.Seat]
 		if st.Type != TypeAgent || s == nil || s.Runtime != "claude-code" || (seat != "" && st.Seat != seat) {
 			continue
+		}
+		if len(out) == 0 {
+			out = append(out, ExitFailed)
 		}
 		for _, e := range st.AllowedExits {
 			if !slices.Contains(out, e) {
@@ -552,13 +556,28 @@ func (c *checker) deny(path []string, rules []string, exits []string) {
 			// Deny beats laight's own allow rule: a seat could never finish a step with that
 			// exit, and the run would blame the agent (stuck) for the workflow's rule.
 			for _, e := range exits {
-				if denies(m, "laight done "+e) || denies(m, "laight done "+e+" k=v") {
+				if denies(m, "laight done "+e) || denies(m, "laight done "+e+" k=v") || aimsAt(m, "laight done "+e+" ") {
 					c.add(Error, at, "%q forbids `laight done %s`: a seat could never finish its step with it", r, e)
 					break
 				}
 			}
 		}
 	}
+}
+
+// aimsAt reports whether a parsed Bash deny rule is written for commands starting with prefix: its
+// text before the first * starts with it (`Bash(laight done handoff pr=*)` aims at
+// "laight done handoff "). Sample commands can't cover every output an agent may pass.
+func aimsAt(m []string, prefix string) bool {
+	if m[1] != "Bash" || m[2] == "" {
+		return false
+	}
+	pat := m[2]
+	if strings.HasSuffix(pat, ":*") {
+		pat = strings.TrimSuffix(pat, ":*") + " *"
+	}
+	lit, _, _ := strings.Cut(pat, "*")
+	return strings.HasPrefix(lit, prefix)
 }
 
 // denies reports whether a parsed Bash deny rule matches cmd, roughly as Claude matches it (*

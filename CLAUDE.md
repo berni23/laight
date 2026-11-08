@@ -123,7 +123,8 @@ seats:                            # the rig: exactly these agents are started fo
     runtime: claude-code          # claude-code | codex | shell (any command)
     cwd: worktree                 # worktree (own per run, default) | repo (the main checkout) | <path>
     session: resume               # resume | fresh
-    permissions: auto             # default | auto | yolo   (yolo prints a warning at `run`);
+    permissions: auto             # default | auto | yolo   (yolo prints a warning at `run`;
+                                  # claude-code seats only: other runtimes ignore permissions);
                                   # or { mode: auto, deny: [...] }, added to the workflow's list
     guidance: guidance/implementer.md
     model: opus                   # optional, passed to the runtime
@@ -347,7 +348,7 @@ an entry point (issue, ticket, prompt) into a brief, deny lists and credentials 
   the rules' shape and rejects those Claude accepts but never matches (`Write(…)`, `Glob(…)`,
   `NotebookEdit(…)`; an MCP rule with `(…)`; `:*` before the end), since a broken deny rule is
   silently skipped. It also rejects a template in a rule (rules reach Claude as written) and a
-  rule that would forbid `laight done` with any exit the seat's steps take, `failed` included
+  rule written for `laight done` with any exit the seat's agent steps take, `failed` included
   (deny beats laight's allow: no step could finish with it), and warns about a claude-code seat's
   `permissions` map with no `mode` (it means `default`). A deny list is a backstop,
   not a fence: a command has many spellings (#76), so the forge protects the base branch too.

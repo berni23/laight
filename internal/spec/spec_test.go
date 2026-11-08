@@ -291,6 +291,20 @@ func TestPermissionChecks(t *testing.T) {
 		{"seat rule on an exit its own step takes", func(s string) string {
 			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { mode: auto, deny: [\"Bash(laight done pass*)\"] }\n", 1)
 		}, "forbids `laight done pass`", ""},
+		// #79 review 1: a rule on a real output key, not only on every output.
+		{"rule on an output key", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done handoff pr=*)\"] }", 1)
+		}, "forbids `laight done handoff`", ""},
+		{"rule on one exact call", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done handoff pr=x)\"] }", 1)
+		}, "forbids `laight done handoff`", ""},
+		{"rule starting with a wildcard stays quiet", func(s string) string {
+			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(* --force)\", \"Bash(laight done passed*)\"] }", 1)
+		}, "", "forbids"},
+		// #79 review 2: a seat that runs no claude-code agent step has no exit to guard.
+		{"shell seat denying failed", func(s string) string {
+			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: { mode: auto, deny: [\"Bash(laight done failed)\"] }\n", 1)
+		}, "only applies to claude-code", "forbids"},
 		// #78 review 2: any map without a mode, not only one with a deny list.
 		{"empty permissions map warns", func(s string) string {
 			return strings.Replace(s, "permissions: auto", "permissions: {}", 1)

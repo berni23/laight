@@ -26,10 +26,10 @@ that.
   Denials in the run's last tick are printed, and the starter list covers `+refspec` and
   `refs/heads/<base>`. Filed #76 (push rules have other spellings; this repo's `dev` and `main`
   aren't protected on GitHub).
-- **PR #78** carries that review answer, which missed #75's merge. Its own review (2026-11-08) is
-  answered: the `laight done` guard covers every exit a seat's steps take (`failed` included, with
-  outputs too), any `permissions` map without a mode warns, and claude-code-only warnings stay off
-  other runtimes. Needs a push, then merge.
+- **#75's review answer** missed its merge; it went in through #78, and #78's own review through
+  #79: the `laight done` guard covers every exit a seat's claude-code agent steps take (`failed`
+  included, and any rule aimed at `laight done <exit> `, outputs or not), any `permissions` map
+  without a mode warns, and claude-code-only warnings stay off other runtimes.
 
 ---
 
