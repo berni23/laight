@@ -34,6 +34,9 @@ that.
   `config` too; a missing secret stays `crash` (`spec.ErrNoSecret`, checked in `kindOf`; #62
   turns it into `credential` there). A `config` failure no longer quotes the seat's previous
   pane. A routed `config` failure keeps routing (a loop of them ends `max_hops`, now in §6.3).
+- **CI flake fixed**: `TestTimeoutWaitsForTurn` lost a race on a slow runner (a tick past its
+  100 ms timeout read the seat as "turn never ended" and stopped it); the test now lifts the
+  timeout once it has fired.
 
 ---
 

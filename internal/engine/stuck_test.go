@@ -137,6 +137,16 @@ func TestTimeoutWaitsForTurn(t *testing.T) {
 	tick(t, e, id)
 	time.Sleep(200 * time.Millisecond)
 	tick(t, e, id) // the hop times out…
+	// From here the seat's turn is waiting on its Stop hook. Past the same 100 ms a slow tick
+	// would take it for a turn that never ended and stop the seat (TestStuckTurnNeverEnded):
+	// not what this test is about, so the clock goes out of reach.
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		long := spec.Duration(time.Hour)
+		r.Spec.Step("one").Timeout = &long
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	tick(t, e, id) // …and routes to two, on the same seat
 	r := load(t, e, id)
 	if r.Steps["one"] == nil || r.Steps["one"].Exit != spec.ExitFailed || r.ActiveOn("a") != nil || !r.Seats["a"].Turn || r.Failure != nil {
