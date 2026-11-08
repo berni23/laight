@@ -26,18 +26,20 @@ All notable changes to laight are documented here. The format follows
   `permissions: { mode: auto, deny: [...] }` (a plain `permissions: auto` still works). Claude
   blocks a matching call itself, in every permission mode, yolo included. `laight validate` checks
   the rules and rejects the ones Claude would silently skip or never match (`Write(…)`,
-  `Glob(…)`…). `laight init` scaffolds a starter list: force pushes, pushes to the base branch,
-  `gh pr merge`, destructive infra commands.
+  `Glob(…)`…), templates, and rules that would forbid `laight done`; it warns about a
+  `permissions` map with no `mode` (it means `default`, where every prompt is denied).
+  `laight init` scaffolds a starter list: force pushes (`--force`, `-f`, `+refspec`), pushes to
+  the base branch, `gh pr merge`, destructive infra commands.
 - A question item shows what the agent said in its turn before asking: its messages and the
   tools it ran, so you can answer without attaching to its window. (#55)
-- `laight run` opens the run's inbox in a pane under the engine: each question, permission, gate
-  or failed step shows up there in full, and you answer it by typing at the prompt (`2`, your own
+- `laight run` opens the run's inbox in a pane under the engine: each question, gate or failed
+  step shows up there in full, and you answer it by typing at the prompt (`2`, your own
   words, `a` for allow…). `laight inbox --follow [run]` does the same anywhere. (#55)
 - Questions an agent asks (`AskUserQuestion`) are `question` items: `laight inbox` shows the
   question and its numbered options, `laight inbox <item>` shows the whole item, and
   `laight inbox <item> 2` (or your own words, one answer per question, `1,3` for several options)
   answers it; the agent gets the answer as if you had typed it. Answering in the pane withdraws
-  the item. The run's engine window now announces every question and permission item with how to
+  the item. The run's engine window now announces every question item with how to
   answer it, and the Stop hook's reminder tells agents to ask with `AskUserQuestion`. A typed
   answer is redacted in the run's events, and a question laight can't read is denied with the
   reason instead of becoming an allow/deny item. (#55)
@@ -55,7 +57,7 @@ All notable changes to laight are documented here. The format follows
   after `done` each raise a `stuck` inbox item instead of stalling the run. A stopped agent can be
   `nudge`d (the reminder is pasted) or failed; a quiet one can be waited on (the clock restarts)
   or failed, never pasted into. A shell step quiet past its timeout can `wait` or `fail` (which
-  stops its command). Not while a permission item for the seat is pending. Gates are never timed
+  stops its command). Not while a question item for the seat is pending. Gates are never timed
   (`validate` warns about a gate's `timeout`), and `timeout: 0s` opts a step out of
   `timeouts.step`.
 
@@ -115,11 +117,9 @@ All notable changes to laight are documented here. The format follows
   an item file that can't be read is reported, never taken for an empty inbox). Items are files under
   `~/.laight/inbox/`, their title and detail redacted (a long run only when it mixes upper case, lower case and
   digits, so commit SHAs and branch names survive) and stripped of control characters.
-- Permission prompts go to the inbox: a Claude Code seat's `PermissionRequest` hook raises a
-  `permission` item (the command, with the seat's secret env values redacted) and waits for
-  `laight inbox <item> allow|deny`. Unanswered for an hour, it denies; an item answered in the
-  seat's own dialog leaves the inbox by itself. A request the hook can't read (over 64 MiB, or
-  malformed) is denied at once, never shown as an empty item; an expired item can't be answered.
+- A Claude Code seat's `PermissionRequest` hook answers its permission prompts, so none sits in
+  a pane nobody watches: since #61 it denies them at once and records them (see *Changed*). A
+  request the hook can't read (over 64 MiB, or malformed) is denied at once.
 - Gates (`type: gate`): the rendered `ask` goes to the inbox with the step's exits as choices, and
   the run routes on the answer.
 - A step that fails with no route, or that `max_hops` refuses, no longer ends the run: it raises a

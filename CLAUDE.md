@@ -346,7 +346,10 @@ an entry point (issue, ticket, prompt) into a brief, deny lists and credentials 
   fires `PermissionDenied` (tool, input, reason), recorded as `by: auto mode`. `validate` checks
   the rules' shape and rejects those Claude accepts but never matches (`Write(…)`, `Glob(…)`,
   `NotebookEdit(…)`; an MCP rule with `(…)`; `:*` before the end), since a broken deny rule is
-  silently skipped.
+  silently skipped. It also rejects a template in a rule (rules reach Claude as written) and a
+  rule that would forbid `laight done` (deny beats laight's allow: no step could finish), and
+  warns about a `permissions` map with no `mode` (it means `default`). A deny list is a backstop,
+  not a fence: a command has many spellings (#76), so the forge protects the base branch too.
 - **Credentials are a preflight** (#62): `credentials: { <name>: { check, login?, min_valid? } }`.
   `laight run` runs every `check` before the rig spins up; a failing one with a `login` runs it in
   the user's terminal (the one human moment, at the start) and checks again; otherwise the run

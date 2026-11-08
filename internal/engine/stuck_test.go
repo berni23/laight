@@ -259,3 +259,25 @@ func TestAnnounce(t *testing.T) {
 		t.Errorf("another run's item printed:\n%s", got)
 	}
 }
+
+// A request denied in the tick that ends the run is printed too, before the engine returns.
+func TestAnnounceDenialAtTheEnd(t *testing.T) {
+	e, id := hooked(t, two(nil)[:1], "a")
+	var log strings.Builder
+	e.Log = &log
+	tick(t, e, id)
+	if err := state.Append(e.Home, state.Event{Run: id, Type: "permission.denied", Seat: "a",
+		Data: map[string]any{"tool": "Bash", "input": "touch x", "by": "laight"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: "handoff"}); err != nil {
+		t.Fatal(err)
+	}
+	status, _, err := e.tick(context.Background(), id)
+	if err != nil || status != state.Succeeded {
+		t.Fatalf("tick: %q %v", status, err)
+	}
+	if !strings.Contains(log.String(), "⊘ a denied Bash: touch x") {
+		t.Errorf("not printed:\n%s", log.String())
+	}
+}

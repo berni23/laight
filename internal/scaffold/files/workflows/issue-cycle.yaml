@@ -14,14 +14,18 @@ inputs:
 # What no agent may ever do. Claude blocks a matching call itself, in every permission mode;
 # auto mode judges everything else, and nothing is ever asked of a human mid-run.
 # Rules: Tool or Tool(specifier), * matches anything (https://code.claude.com/docs/en/permissions).
+# A deny list is a backstop, not a fence: a command can be spelled many ways (git -C . push…), so
+# protect {{BASE}} on your forge too. Rules are not templates: if you change `base:`, update them.
 permissions:
   deny:
     - "Bash(git push *--force*)"          # --force, --force-with-lease, before or after the refspec
     - "Bash(git push -f *)"
     - "Bash(git push * -f)"
     - "Bash(git push * -f *)"
+    - "Bash(git push * +*)"               # a +refspec is a force push
     - "Bash(git push * {{BASE}})"         # agents push their own branch; {{BASE}} moves by merge only
     - "Bash(git push *:{{BASE}})"
+    - "Bash(git push *:refs/heads/{{BASE}})"
     - "Bash(gh pr merge *)"               # merging is the merge step's, after you say yes
     - "Bash(terraform apply *)"
     - "Bash(terraform destroy *)"
