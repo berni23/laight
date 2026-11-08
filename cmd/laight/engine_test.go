@@ -824,7 +824,11 @@ func TestStopHook(t *testing.T) {
 	// A turn that ends while a background agent runs (input as Claude Code 2.1.316 sends it) is
 	// not a stop: no reminder, no stopped mark, however often it happens (#57).
 	waiting := `{"background_tasks":[{"id":"a3","type":"subagent","status":"running","description":"review"}]}`
-	for _, in := range []string{waiting, strings.Replace(waiting, `{`, `{"stop_hook_active": true,`, 1)} {
+	// So is one that ends while a dynamic workflow runs, or with an agent not yet started: Claude
+	// lists in-flight work only, `running` or `pending` (#73, Claude Code 2.1.319).
+	workflow := `{"background_tasks":[{"type":"shell","status":"running"},{"id":"w1","type":"workflow","status":"running","name":"review"}]}`
+	pending := `{"background_tasks":[{"id":"a4","type":"subagent","status":"pending","description":"fix"}]}`
+	for _, in := range []string{waiting, strings.Replace(waiting, `{`, `{"stop_hook_active": true,`, 1), workflow, pending} {
 		if out := hook(in); out != "" {
 			t.Errorf("stop while a background agent runs blocked: %s", out)
 		}
@@ -833,9 +837,10 @@ func TestStopHook(t *testing.T) {
 		t.Errorf("stopped mark while a background agent runs: %v", err)
 	}
 	var got map[string]string
-	// A background shell is not waited on: it may never end (a dev server), and Claude's own
-	// "Waiting for N background agents" counts agents only (checked on 2.1.316).
-	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"}]}`
+	// A background shell or Monitor is not waited on: it may never end (a dev server), and
+	// Claude's own "Waiting for N background agents" leaves them out (checked on 2.1.316); nor is
+	// any other type, or a finished entry.
+	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"},{"type":"monitor","status":"running"},{"type":"teammate","status":"running"}]}`
 	if err := json.Unmarshal([]byte(hook(shell)), &got); err != nil || got["decision"] != "block" ||
 		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail)") || !strings.Contains(got["reason"], ` done failed reason="<why>"`) {
 		t.Errorf("first stop: %v %v", got, err)
@@ -877,7 +882,7 @@ func TestStopHook(t *testing.T) {
 			background = append(background, ev.Data["background"])
 		}
 	}
-	if want := []any{1.0, 1.0, nil, nil, 1.0, nil}; fmt.Sprint(background) != fmt.Sprint(want) {
+	if want := []any{1.0, 1.0, 1.0, 1.0, nil, nil, 1.0, nil}; fmt.Sprint(background) != fmt.Sprint(want) {
 		t.Errorf("hook.stop background = %v, want %v", background, want)
 	}
 }

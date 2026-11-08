@@ -11,44 +11,26 @@ that.
 
 ---
 
-## Last session — 2026-11-08
+## Last session — 2026-11-08 (2)
 
-- **#63 done**: a failed run ends red. The first unrouted `failed` (or `max_hops` refusal) sets
-  `failure: {step, hop, seat, copy, kind, reason, detail, at}` in run.json; nothing new starts,
-  running steps finish, and the run ends. `Down` emits `run.failed` with it (an abort records
-  `kind: aborted`, a rig/engine error `crash`). `laight run`/`attach` print the report (step, why,
-  pane or log tail redacted, every `permission.denied`) and exit 1; checked in a real terminal.
-  The failed-item hold (retry/abort, `Blocked`, `ExtraHops`) is gone. Stuck steps ask nobody: a
-  stopped agent is nudged once, then fails `stuck`; a quiet one fails `timeout`; a seat whose
-  turn never ends after `laight done` is stopped and relaunched by its next step.
-- **#78's review answered** (PR #79): #78 was merged before the fix commit was pushed, again.
-  Push review fixes before saying "merge".
-- **#79's and #80's reviews answered**: the deny guard catches rules aimed at a `laight done`
-  exit; the failure report is redacted where it is built, a denial makes it `permission`, a dead
-  engine is `crash`, an open gate no longer holds a failed run, a reminder that can't be pasted
-  fails the hop `stuck`.
-- **Template errors are kind `config`** (decided with the user, CircleCI's model): an objective,
-  `run:`, gate `ask` or matrix value that doesn't render. Filed #82, declared step outputs
-  (required exactly for steps whose outputs another step reads), to catch them before the run.
-- **#83's review answered**: a shell step's or the workflow's `env` that doesn't render is
-  `config` too; a missing secret stays `crash` (`spec.ErrNoSecret`, checked in `kindOf`; #62
-  turns it into `credential` there). A `config` failure no longer quotes the seat's previous
-  pane. A routed `config` failure keeps routing (a loop of them ends `max_hops`, now in §6.3).
-- **CI flake fixed**: `TestTimeoutWaitsForTurn` lost a race on a slow runner (a tick past its
-  100 ms timeout read the seat as "turn never ended" and stopped it); the test now lifts the
-  timeout once it has fired.
+- **#73 done**: probed Claude Code 2.1.319 on a real session and in its source. `background_tasks`
+  lists in-flight work only (`running` or `pending`); a finished, failed or stopped task drops
+  out. `waiting()` now counts `subagent` and `workflow` entries, what Claude's own "Waiting for N
+  background agents and M dynamic workflows" counts; shells and Monitors (both `shell`) don't.
+  Details on #73; spec §12.2 updated.
+- **#72 measured** (comment on #72): the spinner grows the pane log ~70 B/s while the main
+  transcript and `<session>/subagents/agent-*.jsonl` stay still. They are the clock to use.
 
 ---
 
 ## Do this next
 
-### 1. #73, then #72: make stuck detection trustworthy on a real Claude
+### 1. #72: take the quiet clock from the transcripts, not the seat log
 
-#63 turns a false stop into a failed run (nudge, then `stuck`). #73: check which
-`background_tasks` statuses a real Claude sends (queued, failed, killed, several at once) and make
-`waiting()` (cmd/laight/rig.go) match. #72: the spinner keeps the seat log moving, so a hung turn
-never times out; pick a clock source the spinner doesn't touch (the transcript's mtime is the lead)
-on a real run. Both need a supervised Claude session.
+For claude-code seats, the max mtime of the transcript (`transcript_path`, from the SessionStart
+hook) and `<session-id>/subagents/*.jsonl` replaces the seat log's mtime in `stuck.go`, the
+post-done path (`h == nil` in `watchSeat`) included. Then a seat waiting on a background agent
+that never returns times out instead of waiting for ever. Check on a real run.
 
 ### 2. #67, park the inbox in code
 

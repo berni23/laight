@@ -165,6 +165,10 @@ All notable changes to laight are documented here. The format follows
 
 ### Fixed
 
+- **A turn that ends while a dynamic workflow runs, or with a background agent not yet started,
+  is no longer taken for a stop** (#73): the Stop hook counts what Claude's own "Waiting for…"
+  line counts, Agent-tool and Workflow-tool runs, `running` or `pending`. Under #63 a false stop
+  could fail the run.
 - A step whose agent waits on background agents (`/cross:cr`, `/cross:fix-cr`…) is no longer taken
   for a stopped agent: no reminder and no `stuck` item while they run, and the seat gets its next
   step only once they are back. Background shells (a dev server) don't count. A background agent

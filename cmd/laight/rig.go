@@ -282,22 +282,24 @@ type hookInput struct {
 	ToolInput      json.RawMessage `json:"tool_input"`
 	TranscriptPath string          `json:"transcript_path"`
 	Reason         string          `json:"reason"` // PermissionDenied: why auto mode refused
-	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background tasks:
-	// `subagent` and `shell` entries, `running` while they run, dropped once they finish.
+	// BackgroundTasks (Stop) lists the session's in-flight background work (#73, read in Claude
+	// Code 2.1.319's source and seen on a run): status `running` or `pending`, an entry dropped
+	// once it completes, fails or is stopped. Types: `subagent`, `workflow`, `shell` (a Monitor
+	// too), `monitor`, `MCP task`, `teammate`, `cloud session` and a few internal ones.
 	BackgroundTasks []struct {
 		Type   string `json:"type"`
 		Status string `json:"status"`
 	} `json:"background_tasks"`
 }
 
-// waiting counts the background agents still running when the turn ended: each starts a new
-// turn when it finishes. Shells don't count: one may never end (a dev server), and Claude's own
-// "Waiting for N background agents" leaves them out too. Other types and statuses are unchecked
-// (#73), so they don't count either.
+// waiting counts the background work that will start a new turn when it finishes: what Claude's
+// own "Waiting for N background agents and M dynamic workflows" counts, Agent-tool and
+// Workflow-tool runs, running or not yet started (#73). Shells and Monitors don't count: one may
+// never end (a dev server), and Claude's line leaves them out too; nor do the other types.
 func (in hookInput) waiting() int {
 	n := 0
 	for _, t := range in.BackgroundTasks {
-		if t.Type == "subagent" && t.Status == "running" {
+		if (t.Type == "subagent" || t.Type == "workflow") && (t.Status == "running" || t.Status == "pending") {
 			n++
 		}
 	}
