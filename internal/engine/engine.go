@@ -142,7 +142,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 			if ctx.Err() != nil {
 				return "", "", ctx.Err()
 			}
-			if err := e.fail(id, &s.hop, state.KindCrash, err); err != nil {
+			if err := e.fail(id, &s.hop, kindOf(err), err); err != nil {
 				return "", "", err
 			}
 		}
@@ -331,7 +331,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		ev("step.started", h, data)
 		if st.Type == spec.TypeGate {
 			if it, err := e.gate(r, h); err != nil {
-				if err := e.fail(r.ID, h, state.KindExit, err); err != nil {
+				if err := e.fail(r.ID, h, kindOf(err), err); err != nil {
 					e.logf("warning: %v", err)
 				}
 			} else {
@@ -377,7 +377,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		if len(st.Matrix) > 0 {
 			copies, err := spec.Copies(st, r.TemplateData(nil))
 			if err != nil {
-				failRun(state.Failure{Step: id, Kind: state.KindExit, Reason: "step " + id + ": " + err.Error()})
+				failRun(state.Failure{Step: id, Kind: state.KindConfig, Reason: "step " + id + ": " + err.Error()})
 				continue
 			}
 			m := &state.MatrixRun{Copies: copies, Results: make([]*state.StepResult, len(copies))}
@@ -466,7 +466,7 @@ func (e *Engine) gate(r *state.Run, h *state.Hop) (*inbox.Item, error) {
 	st := r.Spec.Step(h.Step)
 	title, err := spec.Render(st.ID+".ask", st.Ask, r.TemplateData(h))
 	if err != nil {
-		return nil, fmt.Errorf("ask: %w", err)
+		return nil, configError{fmt.Errorf("ask: %w", err)}
 	}
 	h.Item = state.NewID(time.Now())
 	it := inbox.Item{ID: h.Item, Run: r.ID, Repo: r.Repo, Workflow: r.Workflow, Step: st.ID, Hop: h.N,
@@ -476,6 +476,27 @@ func (e *Engine) gate(r *state.Run, h *state.Hop) (*inbox.Item, error) {
 	}
 	e.logf("? %s: %s (laight inbox %s %s)", st.ID, it.Title, it.Short(), strings.Join(it.Choices, "|"))
 	return &it, nil
+}
+
+// configError is a template in the workflow that didn't render: the YAML is wrong, not an agent
+// or a seat (CircleCI's "errored, type config"). Declared outputs (#82) will catch most of them
+// before the run starts.
+type configError struct{ error }
+
+func (e configError) Unwrap() error { return e.error }
+
+// kindOf is the failure kind of an error that kept a step from starting. A secret that can't be
+// found is not config, even inside a template: the workflow is right, the access is missing
+// (CircleCI's model; crash until #62 gives it kind credential).
+func kindOf(err error) string {
+	var ce configError
+	if errors.Is(err, spec.ErrNoSecret) {
+		return state.KindCrash
+	}
+	if errors.As(err, &ce) {
+		return state.KindConfig
+	}
+	return state.KindCrash
 }
 
 // fail finishes a hop as failed, of the given kind, so it goes through routing like any other
@@ -501,7 +522,7 @@ func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 	}
 	text, err := spec.Render(st.ID+".objective", st.Objective, r.TemplateData(&s.hop))
 	if err != nil {
-		return fmt.Errorf("objective: %w", err)
+		return configError{fmt.Errorf("objective: %w", err)}
 	}
 	seat := s.hop.Seat // the step's seat, or a matrix copy's instance of it
 	if s.restart {
@@ -656,7 +677,8 @@ func reasonOf(out map[string]any) string {
 
 // failure is the run's failure report for a hop that failed with no route. Its kind is what the
 // engine recorded, else an agent's exit or a shell step's. Its detail is the end of the pane or
-// the shell log, redacted, unless the engine already captured it.
+// the shell log, redacted, unless the engine already captured it; none for config, since a step
+// whose template didn't render never reached its pane, which still shows the previous step.
 func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Done) state.Failure {
 	f := state.Failure{Step: h.Step, Hop: h.N, Seat: h.Seat, Copy: h.Copy, Kind: d.Kind, Detail: d.Detail}
 	if f.Kind == "" {
@@ -674,7 +696,7 @@ func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Don
 		if st.Type == spec.TypeShell {
 			b, _ := os.ReadFile(filepath.Join(state.Dir(e.Home, r.ID), ShellLog(h.Step, h.N)))
 			f.Detail = inbox.Scrub(lastLines(string(b), 15))
-		} else if h.Seat != "" {
+		} else if h.Seat != "" && f.Kind != state.KindConfig { // config: nothing reached the pane
 			f.Detail = e.paneTail(r, h.Seat)
 		}
 	}

@@ -311,6 +311,18 @@ func TestFailureAfterDenialIsPermission(t *testing.T) {
 	}
 }
 
+// A gate whose question doesn't render fails as config: the workflow is wrong, not an agent.
+func TestGateAskConfigError(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{{ID: "g", Type: spec.TypeGate, Ask: "Merge {{ .steps.g.out.pr }}?", AllowedExits: []string{"yes"}}})
+	e.step(t, id)
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q", status)
+	}
+	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindConfig || !strings.Contains(f.Reason, "ask:") {
+		t.Fatalf("failure %+v", f)
+	}
+}
+
 // A step max_hops refuses fails the run, saying which step it refused.
 func TestMaxHopsFailsRun(t *testing.T) {
 	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")
@@ -604,7 +616,8 @@ func TestMatrixBadList(t *testing.T) {
 	if status, s := e.step(t, id); status != state.Failed || len(s) != 0 {
 		t.Fatalf("status %q, started %+v", status, s)
 	}
-	if r := load(t, e, id); r.Failure == nil || r.Failure.Step != "build" || !strings.Contains(r.Failure.Reason, "step build: matrix task:") || r.Hops != 0 {
+	if r := load(t, e, id); r.Failure == nil || r.Failure.Step != "build" || r.Failure.Kind != state.KindConfig ||
+		!strings.Contains(r.Failure.Reason, "step build: matrix task:") || r.Hops != 0 {
 		t.Fatalf("failure %+v, hops %d", r.Failure, r.Hops)
 	}
 }
@@ -661,5 +674,43 @@ func TestDeliverCompactFirst(t *testing.T) {
 				t.Fatalf("compact %v: want /compact pasted only then, before the objective:\n%s", compact, screen)
 			}
 		})
+	}
+}
+
+// A shell step's env that doesn't render is the workflow's fault (config), the step's or the
+// workflow's env alike; a secret that can't be found is not (crash, until #62's credential).
+func TestShellEnvRenderKind(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		wfEnv    spec.StringMap
+		stepEnv  spec.StringMap
+		wantKind string
+	}{
+		{"step env", nil, spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, state.KindConfig},
+		{"workflow env", spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, nil, state.KindConfig},
+		{"missing secret", nil, spec.StringMap{"TOK": `{{ secret "laight-test-no-such-secret" }}`}, state.KindCrash},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e, id := hooked(t, []*spec.Step{{ID: "s", Type: spec.TypeShell, Run: "true", Env: c.stepEnv}})
+			r := load(t, e, id)
+			r.Spec.Env = c.wfEnv
+			err := e.shell(context.Background(), r, state.Hop{Step: "s", N: 1})
+			if err == nil {
+				t.Fatal("no error")
+			}
+			if k := kindOf(err); k != c.wantKind {
+				t.Errorf("kind %q, want %q (%v)", k, c.wantKind, err)
+			}
+		})
+	}
+}
+
+// kindOf: only a configError is config; anything else that kept a step from starting is crash.
+func TestKindOf(t *testing.T) {
+	if k := kindOf(fmt.Errorf("tmux: no server")); k != state.KindCrash {
+		t.Errorf("plain error: %q", k)
+	}
+	if k := kindOf(fmt.Errorf("deliver: %w", configError{fmt.Errorf("objective: x")})); k != state.KindConfig {
+		t.Errorf("wrapped configError: %q", k)
 	}
 }

@@ -354,13 +354,17 @@ func TestEngineRenderFailure(t *testing.T) {
 	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
   a: { runtime: shell, command: sh, cwd: repo }
 steps:
-  - { id: one, seat: a, objective: '"$L" done failed', next_hop: { on: { failed: two } } }
+  - { id: one, seat: a, objective: 'echo PREVIOUS-TURN; "$L" done failed', next_hop: { on: { failed: two } } }
   - { id: two, seat: a, objective: 'echo {{ .steps.one.out.missing }}' }
 `))
 	e.mustLaight("run", "demo")
-	r := e.waitFailed(e.onlyRun().ID, state.KindCrash)
+	r := e.waitFailed(e.onlyRun().ID, state.KindConfig)
 	if r.Failure.Step != "two" || !strings.Contains(r.Error, "step two failed: objective:") {
 		t.Errorf("failure %+v, error %q", r.Failure, r.Error)
+	}
+	// Nothing was pasted: the seat's pane is its previous step's, which isn't the cause.
+	if strings.Contains(r.Failure.Detail, "PREVIOUS-TURN") {
+		t.Errorf("detail quotes the previous step's pane: %q", r.Failure.Detail)
 	}
 }
 
@@ -590,6 +594,9 @@ steps:
 	}
 	if msg, _ := r.Steps["one"].Out["error"].(string); !strings.HasPrefix(msg, "run:") {
 		t.Errorf("one: %+v", r.Steps["one"])
+	}
+	if d, _ := state.ReadDone(e.home, r.ID, "one", 1); d == nil || d.Kind != state.KindConfig {
+		t.Errorf("one ended %+v; want kind config", d)
 	}
 }
 

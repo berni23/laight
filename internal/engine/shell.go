@@ -37,7 +37,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 	data := r.TemplateData(&h)
 	command, err := spec.Render(st.ID+".run", st.Run, data)
 	if err != nil {
-		return fmt.Errorf("run: %w", err)
+		return configError{fmt.Errorf("run: %w", err)}
 	}
 	env := map[string]string{}
 	var secrets []string
@@ -45,7 +45,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		for k, v := range m {
 			out, used, err := spec.RenderWithSecrets("env "+k, v, data)
 			if err != nil {
-				return fmt.Errorf("env %s: %w", k, err)
+				return configError{fmt.Errorf("env %s: %w", k, err)} // a missing secret: see kindOf
 			}
 			env[k], secrets = out, append(secrets, used...)
 		}
