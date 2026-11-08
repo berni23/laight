@@ -59,13 +59,14 @@ type Run struct {
 
 // Failure kinds (CLAUDE.md §6.3): why a red run is red.
 const (
-	KindExit    = "exit"     // an agent's `laight done failed`
-	KindShell   = "shell"    // a shell step's non-zero exit
-	KindTimeout = "timeout"  // quiet past its timeout
-	KindStuck   = "stuck"    // stopped without `laight done`, nudged, and stopped again
-	KindCrash   = "crash"    // the seat's agent exited, or the step couldn't be delivered
-	KindMaxHops = "max_hops" // loop_guards.max_hops refused a step
-	KindAborted = "aborted"  // `laight abort`, or the engine interrupted
+	KindExit       = "exit"       // an agent's `laight done failed`
+	KindPermission = "permission" // an agent's `laight done failed` after a request was denied
+	KindShell      = "shell"      // a shell step's non-zero exit
+	KindTimeout    = "timeout"    // quiet past its timeout
+	KindStuck      = "stuck"      // stopped without `laight done`, nudged, and stopped again
+	KindCrash      = "crash"      // the seat's agent exited, or the step couldn't be delivered
+	KindMaxHops    = "max_hops"   // loop_guards.max_hops refused a step
+	KindAborted    = "aborted"    // `laight abort`, or the engine interrupted
 )
 
 // Failure is why a run failed: the first step that failed with no route, or what else ended it.

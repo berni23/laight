@@ -32,6 +32,8 @@ type nudge struct {
 	window, text string
 	keys         []string
 	kill         bool
+	step         string // a reminder's hop…
+	hop          int    // …which fails as stuck if it can't be pasted
 }
 
 // Reminder is how an agent is told to finish its step: by the Stop hook, and by a nudge.
@@ -92,7 +94,7 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 		if h.Nudged.IsZero() {
 			e.logf("↻ %s stopped without finishing step %s: reminded", name, label(h.Step, h.Copy))
 			h.Nudged = now
-			return &nudge{window: s.Window, text: "laight: " + Reminder(st, e.Rig.Laight)},
+			return &nudge{window: s.Window, text: "laight: " + Reminder(st, e.Rig.Laight), step: h.Step, hop: h.N},
 				[]state.Event{{Run: r.ID, Type: "step.nudged", Step: h.Step, Seat: name, Hop: h.N}}
 		}
 		reason := fmt.Sprintf("%s stopped without finishing step %s, again after a reminder", name, label(h.Step, h.Copy))
@@ -145,6 +147,28 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 	}
 	e.failHop(r, h, state.KindTimeout, reason, turn)
 	return n, []state.Event{{Run: r.ID, Type: "step.timeout", Step: h.Step, Seat: name, Hop: h.N}}
+}
+
+// apply does what watch decided to a seat, once run.json is saved.
+func (e *Engine) apply(r *state.Run, n nudge) {
+	var err error
+	switch {
+	case n.kill:
+		err = e.Rig.Tmux.KillWindow(r.Session, n.window)
+	case len(n.keys) > 0:
+		err = e.Rig.Tmux.SendKeys(r.Session, n.window, n.keys...)
+	default:
+		err = e.Rig.Tmux.Paste(r.Session, n.window, n.text)
+	}
+	if err != nil {
+		e.logf("warning: can't nudge %s: %v", n.window, err)
+	}
+	if err != nil && n.hop > 0 {
+		// The hop is marked nudged already: nothing else would end it in a step without a
+		// timeout. Its agent stopped twice and couldn't be reminded: it is stuck.
+		h := &state.Hop{Step: n.step, N: n.hop, Seat: n.window}
+		e.failHop(r, h, state.KindStuck, fmt.Sprintf("%s stopped without finishing step %s, and couldn't be reminded: %v", n.window, n.step, err), false)
+	}
 }
 
 // failHop ends a seat's hop as failed, of the given kind, with the end of its pane: advance

@@ -251,6 +251,66 @@ func TestFailingRunStartsNothing(t *testing.T) {
 	}
 }
 
+// An open gate doesn't keep a failed run alive: its exit could start nothing, and nobody is
+// watching it (#80 review 5).
+func TestFailedRunEndsDespiteOpenGate(t *testing.T) {
+	e, id := hooked(t, []*spec.Step{agent("one", "a", nil), {ID: "g", Type: spec.TypeGate, Ask: "Go?", AllowedExits: []string{"yes"}}}, "a")
+	_, starts := e.step(t, id)
+	if r := load(t, e, id); len(starts) != 1 || len(r.Active) != 2 {
+		t.Fatalf("starts %+v, active %+v", starts, r.Active)
+	}
+	finish(t, e, id, starts[0].hop, spec.ExitFailed)
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q with only a gate open", status)
+	}
+}
+
+// The failure report is redacted where it is built: the seat's secrets and anything that looks
+// like a token, in the reason and the detail, and control characters stripped (#80 review 6, 10).
+func TestFailureRedacted(t *testing.T) {
+	t.Setenv("LAIGHT_SECRET_TOK", "plain-words-secret")
+	e, id := hooked(t, two(nil), "a")
+	state.Update(e.Home, id, func(r *state.Run) error {
+		r.Spec.Seats["a"].Env = spec.StringMap{"TOK": `{{ secret "tok" }}`}
+		return nil
+	})
+	e.step(t, id)
+	token := "ghp_" + strings.Repeat("aB3", 12)
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: spec.ExitFailed, Engine: true,
+		Out:    map[string]any{"reason": "auth failed: plain-words-secret " + token + " \x1b[31mred"},
+		Detail: "tok=plain-words-secret\n\x1b]0;title\x07done"}); err != nil {
+		t.Fatal(err)
+	}
+	if status, _ := e.step(t, id); status != state.Failed {
+		t.Fatalf("status %q", status)
+	}
+	r := load(t, e, id)
+	for _, got := range []string{r.Failure.Reason, r.Failure.Detail, r.Error} {
+		if strings.Contains(got, "plain-words-secret") || strings.Contains(got, token) || strings.ContainsAny(got, "\x1b\x07") {
+			t.Errorf("not redacted: %q", got)
+		}
+	}
+	if !strings.Contains(r.Failure.Reason, "auth failed: ***") || !strings.Contains(r.Failure.Detail, "tok=***\n") {
+		t.Errorf("failure %+v", r.Failure)
+	}
+}
+
+// An agent that gives up after a denied request fails as `permission`, so a postmortem can tell a
+// tight deny list from an impossible task (#80 review 7).
+func TestFailureAfterDenialIsPermission(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	_, starts := e.step(t, id)
+	if err := state.Append(e.Home, state.Event{Run: id, Type: "permission.denied", Step: "one", Seat: "a", Hop: 1,
+		Data: map[string]any{"tool": "Bash", "input": "git push --force", "by": "laight"}}); err != nil {
+		t.Fatal(err)
+	}
+	finish(t, e, id, starts[0].hop, spec.ExitFailed)
+	e.step(t, id)
+	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindPermission {
+		t.Fatalf("failure %+v", f)
+	}
+}
+
 // A step max_hops refuses fails the run, saying which step it refused.
 func TestMaxHopsFailsRun(t *testing.T) {
 	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")

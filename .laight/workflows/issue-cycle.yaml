@@ -95,5 +95,5 @@ steps:
       { [ -z "$ISSUE" ] || gh issue close "$ISSUE" --reason completed --comment "Merged into {{ .base }} via $PR"; }
 
 loop_guards: { max_hops: 10 }     # 6 steps, plus up to 2 more fix → verify rounds
-timeouts: { step: 90m }           # quiet this long → a `stuck` inbox item
+timeouts: { step: 90m }           # quiet this long → the step fails (timeout)
 on_finish: { success: destroy, failure: keep }

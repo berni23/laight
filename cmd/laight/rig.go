@@ -460,7 +460,11 @@ func cmdAbort(args []string, stdout, stderr io.Writer) int {
 		if !confirm(fmt.Sprintf("Abort run %s (%s, %s):", r.Short(), r.Workflow, status), plan, yes, stdout, stderr) {
 			return 1
 		}
-		if err := g.Down(r.ID, state.Aborted, ""); err != nil {
+		reason := ""
+		if engineDied(srv, r) {
+			reason = rig.EngineDied
+		}
+		if err := g.Down(r.ID, state.Aborted, reason); err != nil {
 			return fail(stderr, "%v", err)
 		}
 		fmt.Fprintf(stdout, "run %s aborted\n", r.Short())

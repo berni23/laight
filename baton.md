@@ -23,6 +23,11 @@ that.
   turn never ends after `laight done` is stopped and relaunched by its next step.
 - **#78's review answered** (PR #79): #78 was merged before the fix commit was pushed, again.
   Push review fixes before saying "merge".
+- **#79's and #80's reviews answered**: the deny guard catches rules aimed at a `laight done`
+  exit; the failure report is redacted where it is built, a denial makes it `permission`, a dead
+  engine is `crash`, an open gate no longer holds a failed run, a reminder that can't be pasted
+  fails the hop `stuck`. Template errors are `crash` in two places and `exit` in two: which kind
+  they should share is the user's call.
 
 ---
 
@@ -49,7 +54,8 @@ Hide `laight inbox` and stop opening the inbox pane by default. Only questions s
 
 ## Waiting on the user
 
-- Merge PR #79 (the #78 review fixes) and this branch's PR.
+- Template errors (objective, `run:`, gate `ask`, matrix values): which failure kind should they
+  share? Today `crash` for the first two, `exit` for the others (#80 review).
 - #74: should a seat's `permissions` default to `auto`? In `default` mode every prompt is now
   denied.
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its

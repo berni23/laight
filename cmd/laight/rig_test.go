@@ -399,6 +399,8 @@ func TestEngineDied(t *testing.T) {
 	}
 	if r := e.waitStatus(r.ID, state.Aborted); len(e.rigWorktrees(r)) != 0 {
 		t.Errorf("on_finish.failure destroy kept %v", e.rigWorktrees(r))
+	} else if f := r.Failure; f == nil || f.Kind != state.KindCrash || f.Reason != rig.EngineDied {
+		t.Errorf("failure %+v: the report must say the engine died", f) // #80 review 11
 	}
 }
 

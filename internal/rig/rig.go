@@ -430,11 +430,14 @@ func (g *Rig) Down(id, status, reason string) error {
 	return errors.Join(errs...)
 }
 
+// EngineDied is the reason a run whose engine died is aborted with: its report is a crash.
+const EngineDied = "its engine died"
+
 // endFailure is the failure report of a run that ends red without a step failing: an abort, or
 // the rig or engine failing. It names the steps that were running.
 func endFailure(r *state.Run, status, reason string, at time.Time) *state.Failure {
-	f := &state.Failure{Kind: state.KindCrash, Reason: reason, At: at}
-	if status == state.Aborted {
+	f := &state.Failure{Kind: state.KindCrash, Reason: inbox.Scrub(inbox.Clean(reason)), At: at}
+	if status == state.Aborted && reason != EngineDied {
 		f.Kind = state.KindAborted
 		if f.Reason == "" {
 			f.Reason = "aborted with laight abort"

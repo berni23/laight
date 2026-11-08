@@ -135,17 +135,7 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 		}
 	}
 	for _, n := range nudges {
-		var err error
-		if n.kill {
-			err = e.Rig.Tmux.KillWindow(r.Session, n.window)
-		} else if len(n.keys) > 0 {
-			err = e.Rig.Tmux.SendKeys(r.Session, n.window, n.keys...)
-		} else {
-			err = e.Rig.Tmux.Paste(r.Session, n.window, n.text)
-		}
-		if err != nil {
-			e.logf("warning: can't nudge %s: %v", n.window, err)
-		}
+		e.apply(r, n)
 	}
 	for _, s := range starts {
 		if err := e.deliver(ctx, r, s); err != nil {
@@ -185,6 +175,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		if r.Failure != nil {
 			return
 		}
+		e.redact(r, &f)
 		f.At = time.Now().UTC()
 		r.Failure = &f
 		e.logf("✕ the run fails: %s; it ends once its running steps finish", f.Reason)
@@ -255,7 +246,7 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 		switch {
 		case next == "" && d.Exit == spec.ExitFailed:
-			e.logf("✕ %s failed%s", label(h.Step, h.Copy), errSuffix(d.Out))
+			e.logf("✕ %s failed", label(h.Step, h.Copy)) // failRun prints why, redacted
 			failRun(e.failure(r, h, st, d))
 		case h.Copy > 0:
 			e.logf("✓ %s → %s", label(h.Step, h.Copy), d.Exit)
@@ -447,10 +438,13 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 	}
 
-	// 4. Rule 4: a failed run ends once nothing runs; any other, once nothing runs or waits. A
+	// 4. Rule 4: a failed run ends once nothing but gates runs; any other, once nothing runs or
+	// waits. A
 	// step whose needs were never met (a needed step ended on an exit routed elsewhere, or never
 	// ran) is skipped.
-	if r.Failure != nil && len(r.Active) == 0 {
+	if r.Failure != nil && !slices.ContainsFunc(r.Active, func(h *state.Hop) bool { return h.Item == "" }) {
+		// Only gates are left, if anything: their exits could start nothing, and nobody watches
+		// them. Down withdraws their items.
 		return state.Failed, r.Failure.Reason, nil, stops, events
 	}
 	if len(r.Active) == 0 && len(r.Queue) == 0 && len(r.Matrix) == 0 {
@@ -669,6 +663,10 @@ func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Don
 		f.Kind = state.KindExit
 		if st.Type == spec.TypeShell {
 			f.Kind = state.KindShell
+		} else if evs, _, err := state.EventsFrom(e.Home, r.ID, 0); err == nil && slices.ContainsFunc(evs, func(ev state.Event) bool {
+			return ev.Type == "permission.denied" && ev.Step == h.Step && ev.Hop == h.N
+		}) {
+			f.Kind = state.KindPermission // it gave up after a request was denied
 		}
 	}
 	f.Reason = "step " + label(h.Step, h.Copy) + " failed" + errSuffix(d.Out)
@@ -681,6 +679,24 @@ func (e *Engine) failure(r *state.Run, h *state.Hop, st *spec.Step, d *state.Don
 		}
 	}
 	return f
+}
+
+// redact strips a failure's reason and detail of the seat's secrets, anything that looks like a
+// token, and control characters, before it reaches run.json, events and the user's terminal
+// (§12.4). The reason is cut to an excerpt.
+func (e *Engine) redact(r *state.Run, f *state.Failure) {
+	var secrets []string
+	if f.Seat != "" && r.Spec.SeatOf(f.Seat) != nil {
+		var err error
+		if secrets, err = rig.Secrets(r, f.Seat); err != nil {
+			e.logf("warning: %s: %v", f.Seat, err)
+		}
+	}
+	f.Reason = inbox.Scrub(inbox.Clean(f.Reason), secrets...)
+	if len(f.Reason) > 500 {
+		f.Reason = strings.ToValidUTF8(f.Reason[:500], "") + "…"
+	}
+	f.Detail = inbox.Scrub(inbox.Clean(f.Detail), secrets...)
 }
 
 // paneTail is the last lines of a seat's pane, its secrets stripped, or a note saying why it

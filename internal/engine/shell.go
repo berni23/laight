@@ -71,7 +71,7 @@ func (e *Engine) shell(ctx context.Context, r *state.Run, h state.Hop) error {
 		return err
 	}
 
-	// A context of its own, so a stuck step failed from the inbox can be stopped alone.
+	// A context of its own, so a step that times out can be stopped alone.
 	ctx, cancel := context.WithCancel(ctx)
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir, cmd.Stdout, cmd.Stderr = r.Repo, pw, pw

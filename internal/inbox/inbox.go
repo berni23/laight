@@ -373,6 +373,10 @@ func Redact(s string) string {
 
 // clean replaces control characters (an escape sequence an agent printed, say) with spaces;
 // newlines and tabs are kept when lines is set.
+// Clean strips control characters from s, keeping newlines and tabs: text printed to a terminal
+// must carry no escape sequences.
+func Clean(s string) string { return clean(s, true) }
+
 func clean(s string, lines bool) string {
 	return strings.Map(func(r rune) rune {
 		if lines && (r == '\n' || r == '\t') {

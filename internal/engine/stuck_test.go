@@ -195,11 +195,12 @@ func TestStoppedNudgedThenStuck(t *testing.T) {
 	}
 	stop()
 	tick(t, e, id)
-	time.Sleep(300 * time.Millisecond) // the paste reaches the pane
 	r := load(t, e, id)
-	screen, err := e.Rig.Tmux.Capture(r.Session, "a")
-	if err != nil {
-		t.Fatal(err)
+	var screen string
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if screen, _ = e.Rig.Tmux.Capture(r.Session, "a"); strings.Contains(screen, "laight: Step one is not finished") {
+			break
+		}
 	}
 	if !strings.Contains(screen, "laight: Step one is not finished") || r.Active[0].Nudged.IsZero() {
 		t.Fatalf("not nudged; hop %+v\n%s", r.Active[0], screen)
@@ -275,5 +276,18 @@ func TestAnnounceDenialAtTheEnd(t *testing.T) {
 	}
 	if !strings.Contains(log.String(), "⊘ a denied Bash: touch x") {
 		t.Errorf("not printed:\n%s", log.String())
+	}
+}
+
+// A reminder that can't be pasted fails the hop as stuck at once: the hop is already marked
+// nudged, so nothing else would ever end it in a step without a timeout (#80 review, question 15).
+func TestFailedNudgeFailsHop(t *testing.T) {
+	e, id := hooked(t, two(nil), "a")
+	tick(t, e, id)
+	r := load(t, e, id)
+	e.apply(r, nudge{window: "no-such-window", text: "laight: remind", step: "one", hop: 1})
+	d, err := state.ReadDone(e.Home, id, "one", 1)
+	if err != nil || d == nil || d.Exit != spec.ExitFailed || d.Kind != state.KindStuck {
+		t.Fatalf("done %+v %v", d, err)
 	}
 }
