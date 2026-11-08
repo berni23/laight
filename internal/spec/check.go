@@ -66,7 +66,7 @@ func (c *checker) workflow() {
 		c.template([]string{"env", k}, c.w.Env[k], nil, true)
 	}
 	c.env([]string{"env"}, c.w.Env)
-	c.deny([]string{"permissions", "deny"}, c.w.Permissions.Deny)
+	c.deny([]string{"permissions", "deny"}, c.w.Permissions.Deny, c.exits(""))
 }
 
 func (c *checker) seats() {
@@ -93,15 +93,15 @@ func (c *checker) seats() {
 				c.add(Error, at("guidance"), "guidance file %s not found (paths are relative to .laight/)", s.Guidance)
 			}
 		}
-		c.deny([]string{"seats", name, "permissions", "deny"}, s.Permissions.Deny)
+		c.deny([]string{"seats", name, "permissions", "deny"}, s.Permissions.Deny, c.exits(name))
 		if len(s.Permissions.Deny) > 0 && s.Runtime != "claude-code" {
 			c.add(Warning, at("permissions"), "a deny list only applies to claude-code seats; runtime %s ignores it", s.Runtime)
 		}
-		if s.Permissions.noMode {
+		if s.Permissions.noMode && s.Runtime == "claude-code" {
 			// A seat's `permissions` replaces a shared seat's whole, mode included.
 			c.add(Warning, at("permissions"), "permissions has no mode, so it is default: every prompt is denied; add mode: auto")
 		}
-		if s.Permissions.Mode == "yolo" {
+		if s.Permissions.Mode == "yolo" && s.Runtime == "claude-code" {
 			c.add(Warning, at("permissions"), "yolo: this agent runs every command unasked, with your credentials")
 		}
 		if s.Cwd == "repo" {
@@ -511,16 +511,39 @@ var denyRule = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9_]*|mcp__[A-Za-z0-9_*-]+)
 // permission docs, 2026-11): a deny rule on them would deny nothing.
 var noMatch = map[string]string{"Write": "Edit", "NotebookEdit": "Edit", "Glob": "Read"}
 
-// deny checks a deny list. Claude skips a malformed rule with a warning in a pane nobody reads,
-// so a typo here would quietly allow what the workflow meant to forbid.
-func (c *checker) deny(path []string, rules []string) {
+// exits lists every exit an agent can finish a step with on seat (every claude-code seat when seat
+// is ""), failed included: the `laight done` calls a deny list must leave alone. A seat that runs
+// no claude-code agent step has none: its deny list reaches no agent.
+func (c *checker) exits(seat string) []string {
+	var out []string
+	for _, st := range c.w.Steps {
+		s := c.w.Seats[st.Seat]
+		if st.Type != TypeAgent || s == nil || s.Runtime != "claude-code" || (seat != "" && st.Seat != seat) {
+			continue
+		}
+		if len(out) == 0 {
+			out = append(out, ExitFailed)
+		}
+		for _, e := range st.AllowedExits {
+			if !slices.Contains(out, e) {
+				out = append(out, e)
+			}
+		}
+	}
+	return out
+}
+
+// deny checks a deny list, given the exits its seats finish steps with. Claude skips a malformed
+// rule with a warning in a pane nobody reads, so a typo here would quietly allow what the workflow
+// meant to forbid.
+func (c *checker) deny(path []string, rules []string, exits []string) {
 	for i, r := range rules {
 		at := append(slices.Clone(path), strconv.Itoa(i))
 		m := denyRule.FindStringSubmatch(r)
 		switch {
 		case strings.Contains(r, "{{"):
 			// Deny rules are passed to Claude as written: a template would be literal text.
-			c.add(Error, at, "%q: deny rules are not templates; write the branch or value itself", r)
+			c.add(Error, at, "%q: deny rules are not templates; write the branch or value itself (for a literal {{, use *)", r)
 		case m == nil:
 			c.add(Error, at, "%q is not a permission rule: write Tool or Tool(specifier), e.g. Bash(git push --force:*)", r)
 		case strings.HasPrefix(m[1], "mcp__") && m[2] != "":
@@ -529,12 +552,32 @@ func (c *checker) deny(path []string, rules []string) {
 			c.add(Error, at, "%q never matches: Claude checks paths only on Edit and Read rules; write %s(%s)", r, noMatch[m[1]], m[2])
 		case m[1] == "Bash" && strings.Contains(strings.TrimSuffix(m[2], ":*"), ":*"):
 			c.add(Error, at, "%q: :* only works at the end; use * for a wildcard elsewhere", r)
-		case denies(m, "laight done handoff"):
-			// Deny beats laight's own allow rule: the seat could never finish a step, and the
-			// run would blame the agent (stuck) for the workflow's rule.
-			c.add(Error, at, "%q forbids `laight done`: a seat could never finish its step", r)
+		default:
+			// Deny beats laight's own allow rule: a seat could never finish a step with that
+			// exit, and the run would blame the agent (stuck) for the workflow's rule.
+			for _, e := range exits {
+				if denies(m, "laight done "+e) || denies(m, "laight done "+e+" k=v") || aimsAt(m, "laight done "+e+" ") {
+					c.add(Error, at, "%q forbids `laight done %s`: a seat could never finish its step with it", r, e)
+					break
+				}
+			}
 		}
 	}
+}
+
+// aimsAt reports whether a parsed Bash deny rule is written for commands starting with prefix: its
+// text before the first * starts with it (`Bash(laight done handoff pr=*)` aims at
+// "laight done handoff "). Sample commands can't cover every output an agent may pass.
+func aimsAt(m []string, prefix string) bool {
+	if m[1] != "Bash" || m[2] == "" {
+		return false
+	}
+	pat := m[2]
+	if strings.HasSuffix(pat, ":*") {
+		pat = strings.TrimSuffix(pat, ":*") + " *"
+	}
+	lit, _, _ := strings.Cut(pat, "*")
+	return strings.HasPrefix(lit, prefix)
 }
 
 // denies reports whether a parsed Bash deny rule matches cmd, roughly as Claude matches it (*
