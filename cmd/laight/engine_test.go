@@ -566,7 +566,8 @@ steps:
     run: 'read x < /dev/tty'
 `)
 	e.mustLaight("run", "demo")
-	if r := e.waitFailed(e.onlyRun().ID, state.KindShell); r.Failure.Step != "ask" || !strings.Contains(r.Failure.Reason, "exit code 1") {
+	// The code depends on the shell: 1 from macOS's sh, 2 from dash.
+	if r := e.waitFailed(e.onlyRun().ID, state.KindShell); r.Failure.Step != "ask" || !strings.Contains(r.Failure.Reason, "failed: exit code ") {
 		t.Errorf("failure %+v", r.Failure)
 	}
 }
