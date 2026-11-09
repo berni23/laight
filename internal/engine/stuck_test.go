@@ -118,36 +118,48 @@ func TestQuietStepTimesOut(t *testing.T) {
 }
 
 // A hooked seat whose transcript stays still is quiet, however much its spinner grows the pane
-// log (#72); with no transcript to go by, the pane log still counts.
+// log (#72); with no transcript to go by, the pane log still counts. Times are backdated, never
+// slept through, so a slow runner can't fail it.
 func TestQuietWhileSpinnerRuns(t *testing.T) {
 	steps := two(nil)
-	timeout := spec.Duration(300 * time.Millisecond)
+	timeout := spec.Duration(time.Minute)
 	steps[0].Timeout = &timeout
 	e, id := hooked(t, steps, "a")
 	tick(t, e, id)
+	ago := time.Now().Add(-2 * time.Minute)
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		r.ActiveOn("a").Started = ago
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	seats := filepath.Join(state.Dir(e.Home, id), "seats")
 	transcript := filepath.Join(t.TempDir(), "s.jsonl")
 	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	spin := func() {
-		for range 6 {
-			f, err := os.OpenFile(filepath.Join(seats, "a.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-			if err != nil {
-				t.Fatal(err)
-			}
-			f.WriteString("✻ Waiting for 1 background agent to finish\r")
-			f.Close()
-			time.Sleep(100 * time.Millisecond)
-			tick(t, e, id)
+		f, err := os.OpenFile(filepath.Join(seats, "a.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
 		}
+		f.WriteString("✻ Waiting for 1 background agent to finish\r")
+		f.Close()
+		tick(t, e, id) // a quiet seat fails its hop…
+		tick(t, e, id) // …and the run, once nothing runs
 	}
 	spin() // no transcript in .ready: the moving log keeps the seat busy
 	if f := load(t, e, id).Failure; f != nil {
 		t.Fatalf("timed out while its pane log moved and no transcript was known: %+v", f)
 	}
-	if err := os.WriteFile(filepath.Join(seats, "a.ready"), []byte(`{"transcript_path":"`+transcript+`"}`), 0o600); err != nil {
+	ready := filepath.Join(seats, "a.ready")
+	if err := os.WriteFile(ready, []byte(`{"transcript_path":"`+transcript+`"}`), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	for _, f := range []string{ready, transcript} {
+		if err := os.Chtimes(f, ago, ago); err != nil {
+			t.Fatal(err)
+		}
 	}
 	spin()
 	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindTimeout {
