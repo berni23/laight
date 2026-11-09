@@ -11,7 +11,7 @@ that.
 
 ---
 
-## Last session — 2026-11-08 (2)
+## Last session — 2026-11-09
 
 - **#73 done**: probed Claude Code 2.1.319 on a real session and in its source. `background_tasks`
   lists in-flight work only (`running` or `pending`); a finished, failed or stopped task drops
@@ -23,6 +23,10 @@ that.
   `<session>/subagents/**`), no longer the pane log the spinner keeps growing. Checked on a real
   run (`.laight/workflows/background-hang.yaml`): a background agent stuck in `ping` failed the
   step `timeout` after 2m. Trade-off, in §12.2: one long tool call that writes nothing is quiet.
+- **#85 review answered** (`/cross:fix-cr`): `TestQuietWhileSpinnerRuns` backdates instead of
+  sleeping; the hook writes `.ready`, `.idle` and `.stopped` atomically (`state.WriteFile`);
+  §12.2 says what is quiet now and that only `cwd: worktree` seats get the write backstop. The
+  narrower clock (count an open tool call) is #86.
 
 ---
 

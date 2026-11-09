@@ -638,9 +638,13 @@ seat log grows (~70 B/s, checked on 2.1.319) while a turn hangs or waits on a ba
 that never comes back. The `SessionStart` hook records `transcript_path` in `.ready`; Claude
 writes it with every message and tool call, and its agents' next to it
 (`<session>/subagents/agent-*.jsonl`, a workflow's in folders below), and none of them move with
-the spinner. So the wait is bounded, after `laight done` too. The cost: one long tool call that
-writes nothing (a quiet test suite) is quiet; worktree writes still count. A seat with no
-transcript recorded, or none where it says, falls back to the seat log. Decided in #15 (2026-10-25, revised in the #47 review): the
+the spinner. So the wait is bounded, after `laight done` too. The cost: Claude writes an entry
+once a message part or tool call is finished, so anything long still under way is quiet: a tool
+call that writes nothing (a quiet test suite), one long thinking block or reply (over a minute
+seen), `/compact` while it runs. Writes restart the clock only inside a worktree laight made for
+the seat (`cwd: worktree`); in any other seat, nothing does. So a step's `timeout` must exceed
+its longest quiet command (#86 may count an open tool call). A seat with no transcript recorded,
+or none where it says, falls back to the seat log. Decided in #15 (2026-10-25, revised in the #47 review): the
 choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
 reminder; skipped if it has since reached a permission dialog, whose item already asks) or
 `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog

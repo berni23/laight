@@ -169,8 +169,9 @@ All notable changes to laight are documented here. The format follows
   agent's transcripts (the session's, and its background agents' beside it), which Claude writes
   with every message and tool call, not the pane log, which the spinner keeps growing. A seat
   waiting on a background agent that never comes back now fails `timeout` instead of waiting for
-  ever. One long tool call that writes nothing (a quiet test suite) now counts as quiet; a write
-  in the seat's worktree still restarts the clock.
+  ever. Anything long that writes nothing to them now counts as quiet: one tool call (a quiet
+  test suite), one long thinking block or reply. A write restarts the clock only in a
+  `cwd: worktree` seat's own worktree, so give a step a `timeout` above its longest quiet command.
 - **A turn that ends while a dynamic workflow runs, or with a background agent not yet started,
   is no longer taken for a stop** (#73): the Stop hook counts what Claude's own "Waiting for…"
   line counts, Agent-tool and Workflow-tool runs, `running` or `pending`. Under #63 a false stop
