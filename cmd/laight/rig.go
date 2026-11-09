@@ -239,7 +239,7 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "session-start":
 		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "transcript_path": in.TranscriptPath, "ts": time.Now().UTC()})
-		if err := os.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b, 0o600); err != nil {
+		if err := state.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
 	case "stop":
@@ -335,13 +335,13 @@ func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	}
 	if d != nil {
 		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
-		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+		return state.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"))
 	}
 	if r.ActiveOn(seat) == nil {
 		return nil
 	}
 	if in.StopHookActive { // told once already: the engine takes it from here
-		return os.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+		return state.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"))
 	}
 	laight, err := os.Executable()
 	if err != nil {
