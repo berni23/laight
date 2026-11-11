@@ -557,13 +557,12 @@ func WriteFile(file string, b []byte) error {
 	if err != nil {
 		return err
 	}
+	defer os.Remove(tmp.Name()) // a no-op once renamed; otherwise drops the temp file
 	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
-		os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), file)

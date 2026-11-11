@@ -3,7 +3,8 @@
 # A supervised check of #72: an agent waits on a background agent that never comes back, while
 # Claude's spinner keeps its pane log growing. Expect the run to end red, `kind: timeout`, about
 # two minutes after the agents' transcripts last moved, not to wait for ever.
-# Start it with:  laight run background-hang   (stop the leftover agent with laight abort)
+# Start it with:  laight run background-hang   (going red stops every agent; `laight abort` after
+# that only removes the worktree kept for inspection)
 version: 1
 id: background-hang
 summary: A background agent hangs, and the quiet clock still times the step out.

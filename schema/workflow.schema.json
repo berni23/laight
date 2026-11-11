@@ -56,7 +56,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "step": { "$ref": "#/$defs/duration", "description": "A step quiet this long (no output, no file written) fails with kind timeout; nobody is asked. A step's own timeout wins. Gates are never timed." }
+        "step": { "$ref": "#/$defs/duration", "description": "A step quiet this long fails with kind timeout; nobody is asked. Quiet: an agent wrote nothing to its transcripts (a runtime without hooks: printed nothing) and, in a cwd: worktree seat, no file in its worktree; a shell step printed nothing. A step's own timeout wins. Gates are never timed." }
       }
     },
     "on_finish": {

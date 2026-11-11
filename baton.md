@@ -27,6 +27,10 @@ that.
   sleeping; the hook writes `.ready`, `.idle` and `.stopped` atomically (`state.WriteFile`);
   §12.2 says what is quiet now and that only `cwd: worktree` seats get the write backstop. The
   narrower clock (count an open tool call) is #86.
+- **#85 second review answered** (2026-11-11): the schema's `timeouts.step` says what quiet means
+  now; `background-hang.yaml` no longer tells you to abort (it deletes the kept worktree);
+  `state.WriteFile` drops its temp file when the rename fails. Rejected, with reasons on the PR:
+  the post-done kill, transcript switching, init templates, a second post-done test.
 
 ---
 
