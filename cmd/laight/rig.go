@@ -238,8 +238,8 @@ func cmdHook(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	unread := json.NewDecoder(io.LimitReader(stdin, hookInputMax)).Decode(&in)
 	switch args[0] {
 	case "session-start":
-		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "ts": time.Now().UTC()})
-		if err := os.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b, 0o600); err != nil {
+		b, _ := json.Marshal(map[string]any{"session_id": in.SessionID, "source": in.Source, "transcript_path": in.TranscriptPath, "ts": time.Now().UTC()})
+		if err := state.WriteFile(filepath.Join(state.Dir(home, runID), "seats", seat+".ready"), b); err != nil {
 			fmt.Fprintf(stderr, "laight hook: %v\n", err)
 		}
 	case "stop":
@@ -282,22 +282,24 @@ type hookInput struct {
 	ToolInput      json.RawMessage `json:"tool_input"`
 	TranscriptPath string          `json:"transcript_path"`
 	Reason         string          `json:"reason"` // PermissionDenied: why auto mode refused
-	// BackgroundTasks (Stop, checked on 2.1.316) lists the session's background tasks:
-	// `subagent` and `shell` entries, `running` while they run, dropped once they finish.
+	// BackgroundTasks (Stop) lists the session's in-flight background work (#73, read in Claude
+	// Code 2.1.319's source and seen on a run): status `running` or `pending`, an entry dropped
+	// once it completes, fails or is stopped. Types: `subagent`, `workflow`, `shell` (a Monitor
+	// too), `monitor`, `MCP task`, `teammate`, `cloud session` and a few internal ones.
 	BackgroundTasks []struct {
 		Type   string `json:"type"`
 		Status string `json:"status"`
 	} `json:"background_tasks"`
 }
 
-// waiting counts the background agents still running when the turn ended: each starts a new
-// turn when it finishes. Shells don't count: one may never end (a dev server), and Claude's own
-// "Waiting for N background agents" leaves them out too. Other types and statuses are unchecked
-// (#73), so they don't count either.
+// waiting counts the background work that will start a new turn when it finishes: what Claude's
+// own "Waiting for N background agents and M dynamic workflows" counts, Agent-tool and
+// Workflow-tool runs, running or not yet started (#73). Shells and Monitors don't count: one may
+// never end (a dev server), and Claude's line leaves them out too; nor do the other types.
 func (in hookInput) waiting() int {
 	n := 0
 	for _, t := range in.BackgroundTasks {
-		if t.Type == "subagent" && t.Status == "running" {
+		if (t.Type == "subagent" || t.Type == "workflow") && (t.Status == "running" || t.Status == "pending") {
 			n++
 		}
 	}
@@ -333,13 +335,13 @@ func stopHook(home, runID, seat string, in hookInput, stdout io.Writer) error {
 	}
 	if d != nil {
 		mark := filepath.Join(state.Dir(home, runID), "seats", seat+".idle")
-		return os.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+		return state.WriteFile(mark, []byte(engine.IdleMark(s.Step, s.Hop)+"\n"))
 	}
 	if r.ActiveOn(seat) == nil {
 		return nil
 	}
 	if in.StopHookActive { // told once already: the engine takes it from here
-		return os.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"), 0o600)
+		return state.WriteFile(engine.StoppedMark(home, runID, seat), []byte(engine.IdleMark(s.Step, s.Hop)+"\n"))
 	}
 	laight, err := os.Executable()
 	if err != nil {

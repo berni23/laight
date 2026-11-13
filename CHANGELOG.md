@@ -165,11 +165,21 @@ All notable changes to laight are documented here. The format follows
 
 ### Fixed
 
+- **A hung turn times out even while Claude's spinner runs** (#72). A step's quiet clock reads the
+  agent's transcripts (the session's, and its background agents' beside it), which Claude writes
+  with every message and tool call, not the pane log, which the spinner keeps growing. A seat
+  waiting on a background agent that never comes back now fails `timeout` instead of waiting for
+  ever. Anything long that writes nothing to them now counts as quiet: one tool call (a quiet
+  test suite), one long thinking block or reply. A write restarts the clock only in a
+  `cwd: worktree` seat's own worktree, so give a step a `timeout` above its longest quiet command.
+- **A turn that ends while a dynamic workflow runs, or with a background agent not yet started,
+  is no longer taken for a stop** (#73): the Stop hook counts what Claude's own "Waiting for…"
+  line counts, Agent-tool and Workflow-tool runs, `running` or `pending`. Under #63 a false stop
+  could fail the run.
 - A step whose agent waits on background agents (`/cross:cr`, `/cross:fix-cr`…) is no longer taken
   for a stopped agent: no reminder and no `stuck` item while they run, and the seat gets its next
-  step only once they are back. Background shells (a dev server) don't count. A background agent
-  that never comes back isn't timed out yet: the seat stays busy until `laight abort` (#72). A withdrawn stuck item now
-  logs an `inbox.answered` event (`answer: withdrawn`). (#57)
+  step only once they are back. Background shells (a dev server) don't count. A withdrawn stuck
+  item now logs an `inbox.answered` event (`answer: withdrawn`). (#57)
 - An unquoted integer in `env` (workflow, seat or shell step) reaches the command exactly, even
   above 2^53 (`9007199254740993` was passed on as `9007199254740992`). `validate` warns about an
   unquoted env value YAML rewrites before laight sees it (`0x1F` → `31`, `1.10` → `1.1`, `1e3`)

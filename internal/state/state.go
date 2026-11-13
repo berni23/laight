@@ -544,6 +544,12 @@ func writeJSON(file string, v any) error {
 	if err != nil {
 		return err
 	}
+	return WriteFile(file, append(b, '\n'))
+}
+
+// WriteFile writes b to file atomically (temp + rename), 0600: a reader sees the old file or the
+// new one, never half of it.
+func WriteFile(file string, b []byte) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
@@ -551,13 +557,12 @@ func writeJSON(file string, v any) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tmp.Write(append(b, '\n')); err != nil {
+	defer os.Remove(tmp.Name()) // a no-op once renamed; otherwise drops the temp file
+	if _, err := tmp.Write(b); err != nil {
 		tmp.Close()
-		os.Remove(tmp.Name())
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
 		return err
 	}
 	return os.Rename(tmp.Name(), file)

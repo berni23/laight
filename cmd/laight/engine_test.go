@@ -824,7 +824,11 @@ func TestStopHook(t *testing.T) {
 	// A turn that ends while a background agent runs (input as Claude Code 2.1.316 sends it) is
 	// not a stop: no reminder, no stopped mark, however often it happens (#57).
 	waiting := `{"background_tasks":[{"id":"a3","type":"subagent","status":"running","description":"review"}]}`
-	for _, in := range []string{waiting, strings.Replace(waiting, `{`, `{"stop_hook_active": true,`, 1)} {
+	// So is one that ends while a dynamic workflow runs, or with an agent not yet started: Claude
+	// lists in-flight work only, `running` or `pending` (#73, Claude Code 2.1.319).
+	workflow := `{"background_tasks":[{"type":"shell","status":"running"},{"id":"w1","type":"workflow","status":"running","name":"review"}]}`
+	pending := `{"background_tasks":[{"id":"a4","type":"subagent","status":"pending","description":"fix"}]}`
+	for _, in := range []string{waiting, strings.Replace(waiting, `{`, `{"stop_hook_active": true,`, 1), workflow, pending} {
 		if out := hook(in); out != "" {
 			t.Errorf("stop while a background agent runs blocked: %s", out)
 		}
@@ -833,16 +837,19 @@ func TestStopHook(t *testing.T) {
 		t.Errorf("stopped mark while a background agent runs: %v", err)
 	}
 	var got map[string]string
-	// A background shell is not waited on: it may never end (a dev server), and Claude's own
-	// "Waiting for N background agents" counts agents only (checked on 2.1.316).
-	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"}]}`
+	// A background shell or Monitor is not waited on: it may never end (a dev server), and
+	// Claude's own "Waiting for N background agents" leaves them out (checked on 2.1.316); nor is
+	// any other type, or a finished entry.
+	shell := `{"background_tasks":[{"type":"subagent","status":"completed"},{"type":"shell","status":"running","command":"npm run dev"},{"type":"monitor","status":"running"},{"type":"teammate","status":"running"}]}`
 	if err := json.Unmarshal([]byte(hook(shell)), &got); err != nil || got["decision"] != "block" ||
 		!strings.Contains(got["reason"], " done <exit> [key=value…] (exits: pass, fail)") || !strings.Contains(got["reason"], ` done failed reason="<why>"`) {
 		t.Errorf("first stop: %v %v", got, err)
 	}
-	if out := hook(`{"stop_hook_active": true}`); out != "" {
-		t.Errorf("second stop blocked again: %s", out)
-	}
+	replaced(t, engine.StoppedMark(home, id, "a"), func() {
+		if out := hook(`{"stop_hook_active": true}`); out != "" {
+			t.Errorf("second stop blocked again: %s", out)
+		}
+	})
 	if b, _ := os.ReadFile(engine.StoppedMark(home, id, "a")); string(b) != "verify-3\n" {
 		t.Errorf("stopped mark = %q", b)
 	}
@@ -860,9 +867,11 @@ func TestStopHook(t *testing.T) {
 	if _, err := os.Stat(idle); !os.IsNotExist(err) {
 		t.Errorf("idle while a background agent runs: %v", err)
 	}
-	if out := hook(`{}`); out != "" {
-		t.Errorf("stop after done: %s", out)
-	}
+	replaced(t, idle, func() {
+		if out := hook(`{}`); out != "" {
+			t.Errorf("stop after done: %s", out)
+		}
+	})
 	if b, _ := os.ReadFile(idle); string(b) != "verify-3\n" {
 		t.Errorf("idle = %q", b)
 	}
@@ -877,7 +886,43 @@ func TestStopHook(t *testing.T) {
 			background = append(background, ev.Data["background"])
 		}
 	}
-	if want := []any{1.0, 1.0, nil, nil, 1.0, nil}; fmt.Sprint(background) != fmt.Sprint(want) {
+	if want := []any{1.0, 1.0, 1.0, 1.0, nil, nil, 1.0, nil}; fmt.Sprint(background) != fmt.Sprint(want) {
 		t.Errorf("hook.stop background = %v, want %v", background, want)
+	}
+}
+
+// replaced checks that write replaces file whole (temp + rename, §4), never rewrites it in place,
+// where the engine, which reads it every tick, could see half of it.
+func replaced(t *testing.T, file string, write func()) {
+	t.Helper()
+	if err := os.WriteFile(file, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write()
+	if after, err := os.Stat(file); err != nil || os.SameFile(before, after) {
+		t.Errorf("%s rewritten in place, not replaced: %v", filepath.Base(file), err)
+	}
+}
+
+// The SessionStart hook marks the seat ready, with where its transcript is: the engine's quiet
+// clock reads it, since the spinner keeps the pane log moving (#72).
+func TestSessionStartHook(t *testing.T) {
+	home, id := doneEnv(t)
+	os.MkdirAll(filepath.Join(state.Dir(home, id), "seats"), 0o700)
+	var out, errOut bytes.Buffer
+	in := `{"session_id":"s1","source":"startup","transcript_path":"/x/s1.jsonl"}`
+	replaced(t, filepath.Join(state.Dir(home, id), "seats", "a.ready"), func() {
+		if code := cmdHook([]string{"session-start"}, strings.NewReader(in), &out, &errOut); code != 0 || errOut.Len() > 0 {
+			t.Fatalf("hook: %d %s", code, errOut.String())
+		}
+	})
+	var ready map[string]any
+	b, err := os.ReadFile(filepath.Join(state.Dir(home, id), "seats", "a.ready"))
+	if err != nil || json.Unmarshal(b, &ready) != nil || ready["session_id"] != "s1" || ready["transcript_path"] != "/x/s1.jsonl" {
+		t.Errorf(".ready = %s %v", b, err)
 	}
 }

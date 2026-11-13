@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -108,7 +109,8 @@ func (e *Engine) watchSeat(r *state.Run, name string, now time.Time) (*nudge, []
 	}
 	seats := filepath.Join(state.Dir(e.Home, r.ID), "seats")
 	last := since
-	for _, f := range []string{name + ".log", name + ".ready", name + ".idle", name + ".stopped"} {
+	last = later(last, activity(seats, name))
+	for _, f := range []string{name + ".ready", name + ".idle", name + ".stopped"} {
 		last = later(last, mtime(filepath.Join(seats, f)))
 	}
 	if now.Sub(last) < timeout || now.Before(e.busy[r.ID+"/"+name]) {
@@ -290,6 +292,35 @@ func (e *Engine) announceDenials(r *state.Run) {
 		}
 		e.logf("⊘ %s denied %v: %s (%s)", ev.Seat, ev.Data["tool"], what, by)
 	}
+}
+
+// activity is when the seat's agent last did something. A runtime with hooks says where its
+// session's transcript is (the SessionStart hook, in .ready): Claude writes it with every message
+// and tool call, and its agents' next to it (<session>/subagents/, a workflow's in folders below),
+// while a spinner leaves them alone. The pane log moves with the spinner, so a hung turn, or a
+// background agent that never comes back, would never be quiet (#72). Without a transcript, the
+// pane log is all there is.
+func activity(seats, name string) time.Time {
+	var ready struct {
+		Transcript string `json:"transcript_path"`
+	}
+	b, _ := os.ReadFile(filepath.Join(seats, name+".ready"))
+	if json.Unmarshal(b, &ready) != nil || ready.Transcript == "" {
+		return mtime(filepath.Join(seats, name+".log"))
+	}
+	last := mtime(ready.Transcript)
+	if last.IsZero() { // not where the hook said: trust the pane log rather than time out a busy seat
+		return mtime(filepath.Join(seats, name+".log"))
+	}
+	filepath.WalkDir(filepath.Join(strings.TrimSuffix(ready.Transcript, ".jsonl"), "subagents"), func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, err := d.Info(); err == nil {
+				last = later(last, info.ModTime())
+			}
+		}
+		return nil
+	})
+	return last
 }
 
 // ownWrite is lastWrite in the seat's folder, if it is a worktree laight made for it.

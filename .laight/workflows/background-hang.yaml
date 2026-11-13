@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+#
+# A supervised check of #72: an agent waits on a background agent that never comes back, while
+# Claude's spinner keeps its pane log growing. Expect the run to end red, `kind: timeout`, about
+# two minutes after the agents' transcripts last moved, not to wait for ever.
+# Start it with:  laight run background-hang   (going red stops every agent; `laight abort` after
+# that only removes the worktree kept for inspection)
+version: 1
+id: background-hang
+summary: A background agent hangs, and the quiet clock still times the step out.
+base: main
+
+seats:
+  agent:
+    label: Agent
+    session: resume
+    permissions: auto
+    model: haiku
+
+steps:
+  - id: wait
+    seat: agent
+    objective: |
+      This is a test of how laight sees a hung background agent. Do not change any file.
+      1. Start ONE background agent (Agent tool, run_in_background: true) whose task is: "Run the
+         Bash command `ping -c 900 127.0.0.1 > /dev/null` in the foreground (not in the
+         background, no timeout shorter than 15 minutes), then reply with only: pinged."
+      2. Do NOT wait for it: as soon as it is launched, end your turn with the single word
+         "launched". Do not run laight done yet.
+      3. When its result arrives, finish with: laight done handoff
+
+timeouts: { step: 2m }
