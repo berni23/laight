@@ -314,10 +314,10 @@ pasted into a pane, and panes are logged.
   only for laight's own worktrees; `~/.claude.json` is never written.
 - **Worktrees** start detached at `origin/<base>`; reviewers check PRs out detached.
 - **Who writes what:** only the engine writes `run.json`; `done` and hooks write their own files
-  (`out/<step>-<hop>.json`, first write wins; the Stop hook's `seats/<seat>.idle` and `.stopped`;
-  `inbox/`), which the engine polls (~500 ms). When a hop can't finish otherwise (crashed seat,
-  objective that didn't render), the engine writes its `failed` out file itself, so every ending
-  goes through routing.
+  (`out/<step>-<hop>.json`, first write wins; the SessionStart hook's `seats/<seat>.ready`; the
+  Stop hook's `seats/<seat>.idle` and `.stopped`; `inbox/`), which the engine polls (~500 ms).
+  When a hop can't finish otherwise (crashed seat, objective that didn't render), the engine
+  writes its `failed` out file itself, so every ending goes through routing.
 - **Secrets:** `{{ secret "x" }}` reads env `LAIGHT_SECRET_X`, then the OS keychain (service `laight`).
 - Every runtime is an adapter: `launch`, `ready`, `deliver`, `hooks`, and `detectBlocked(screen)`
   for runtimes without hooks.
@@ -617,8 +617,8 @@ a `capture-pane` snippet check.
 
 Explicit `laight done` plus hooks are the proof. Screen or output silence only ever *adds*
 evidence; it never decides on its own. "Stuck" is computed at each tick from file timestamps
-(`out/`, `.ready`, `.idle`, `.stopped`, `.ack`, the agent's transcripts, worktree writes outside
-`.git/`) against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
+(`out/`, `.ready`, `.idle`, `.stopped`, `.ack` once #8 writes it, the agent's transcripts,
+worktree writes outside `.git/`) against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
 when none of them moved for that long, not when it has run that long. Nothing new is stored but
 the open item and when its clock last restarted, and nothing routes on it. An agent that stops
 without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it

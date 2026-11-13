@@ -31,6 +31,10 @@ that.
   now; `background-hang.yaml` no longer tells you to abort (it deletes the kept worktree);
   `state.WriteFile` drops its temp file when the rename fails. Rejected, with reasons on the PR:
   the post-done kill, transcript switching, init templates, a second post-done test.
+- **#84 review answered** (2026-11-14, `/cross:cr` then `/cross:fix-cr`): the CHANGELOG #57 entry no
+  longer says a stuck background agent isn't timed out; §5 lists `.ready`; §12.2's `.ack` is
+  marked as coming with #8. Compaction moving `transcript_path` rejected (SessionStart rewrites
+  `.ready`). Whether a seat's background processes outlive teardown is #88.
 
 ---
 
@@ -60,3 +64,4 @@ a dry render at `laight run`. Required exactly for steps whose outputs another s
   push protection? `validate` rejects templates in rules for now.
 - Protect `dev` and `main` on GitHub (#76): they aren't today.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
+- #88: on the next supervised `background-hang` run, check `pgrep -fl "ping -c 900"` once it's red.
