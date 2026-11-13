@@ -117,6 +117,101 @@ func TestQuietStepTimesOut(t *testing.T) {
 	}
 }
 
+// A hooked seat whose transcript stays still is quiet, however much its spinner grows the pane
+// log (#72); with no transcript to go by, the pane log still counts. Times are backdated, never
+// slept through, so a slow runner can't fail it.
+func TestQuietWhileSpinnerRuns(t *testing.T) {
+	steps := two(nil)
+	timeout := spec.Duration(time.Minute)
+	steps[0].Timeout = &timeout
+	e, id := hooked(t, steps, "a")
+	tick(t, e, id)
+	ago := time.Now().Add(-2 * time.Minute)
+	if _, err := state.Update(e.Home, id, func(r *state.Run) error {
+		r.ActiveOn("a").Started = ago
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	seats := filepath.Join(state.Dir(e.Home, id), "seats")
+	transcript := filepath.Join(t.TempDir(), "s.jsonl")
+	if err := os.WriteFile(transcript, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spin := func() {
+		f, err := os.OpenFile(filepath.Join(seats, "a.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.WriteString("✻ Waiting for 1 background agent to finish\r")
+		f.Close()
+		tick(t, e, id) // a quiet seat fails its hop…
+		tick(t, e, id) // …and the run, once nothing runs
+	}
+	spin() // no transcript in .ready: the moving log keeps the seat busy
+	if f := load(t, e, id).Failure; f != nil {
+		t.Fatalf("timed out while its pane log moved and no transcript was known: %+v", f)
+	}
+	ready := filepath.Join(seats, "a.ready")
+	if err := os.WriteFile(ready, []byte(`{"transcript_path":"`+transcript+`"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{ready, transcript} {
+		if err := os.Chtimes(f, ago, ago); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spin()
+	if f := load(t, e, id).Failure; f == nil || f.Kind != state.KindTimeout {
+		t.Fatalf("a spinner kept a seat with a still transcript from timing out: %+v", f)
+	}
+}
+
+// activity is the newest of the transcript and its agents' (in folders below too), not the pane
+// log, once the SessionStart hook said where the transcript is; the pane log otherwise.
+func TestActivity(t *testing.T) {
+	seats, dir := t.TempDir(), t.TempDir()
+	base := time.Now().Add(-time.Hour).Truncate(time.Second)
+	at := func(file string, ago time.Duration) {
+		t.Helper()
+		os.MkdirAll(filepath.Dir(file), 0o700)
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		m := base.Add(-ago)
+		if err := os.Chtimes(file, m, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ready := func(s string) {
+		if err := os.WriteFile(filepath.Join(seats, "a.ready"), []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	transcript := filepath.Join(dir, "sess.jsonl")
+	at(filepath.Join(seats, "a.log"), 0)
+	if got := activity(seats, "a"); !got.Equal(base) {
+		t.Errorf("no .ready: %v, want the log's %v", got, base)
+	}
+	ready(`{"session_id":"x","transcript_path":""}`)
+	if got := activity(seats, "a"); !got.Equal(base) {
+		t.Errorf("no transcript: %v, want the log's", got)
+	}
+	ready(`{"transcript_path":"` + transcript + `"}`)
+	if got := activity(seats, "a"); !got.Equal(base) {
+		t.Errorf("transcript missing: %v, want the log's", got)
+	}
+	at(transcript, 10*time.Minute)
+	if got, want := activity(seats, "a"), base.Add(-10*time.Minute); !got.Equal(want) {
+		t.Errorf("transcript: %v, want %v (not the log's)", got, want)
+	}
+	at(filepath.Join(dir, "sess", "subagents", "agent-a1.jsonl"), 5*time.Minute)
+	at(filepath.Join(dir, "sess", "subagents", "wf", "agent-a2.jsonl"), 2*time.Minute)
+	if got, want := activity(seats, "a"), base.Add(-2*time.Minute); !got.Equal(want) {
+		t.Errorf("subagents: %v, want %v", got, want)
+	}
+}
+
 func TestLastLines(t *testing.T) {
 	screen := "a\n\n  b   \n\n\n   \nc\n\n\n"
 	if got := lastLines(screen, 2); got != "  b\nc" {

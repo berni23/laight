@@ -3,6 +3,8 @@ package state
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +127,21 @@ func TestWriteDoneFirstWins(t *testing.T) {
 	d, err := ReadDone(home, id, "s", 1)
 	if won != 1 || err != nil || d == nil || !strings.HasPrefix(d.Exit, "e") {
 		t.Errorf("won %d, done %+v, %v", won, d, err)
+	}
+}
+
+// A write that fails at the rename (here: a directory in the way) leaves no temp file behind.
+func TestWriteFileFailedRenameCleansUp(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "x.idle")
+	if err := os.MkdirAll(filepath.Join(file, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteFile(file, []byte("x")); err == nil {
+		t.Fatal("WriteFile over a non-empty directory succeeded")
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".x.idle-*")); len(left) > 0 {
+		t.Errorf("temp files left behind: %v", left)
 	}
 }
 

@@ -269,6 +269,7 @@ pasted into a pane, and panes are logged.
     out/<step>-<hop>.json             # what `laight done` wrote (or the engine, for shell steps)
     out/<step>-<hop>.log              # a shell step's output, known secrets redacted
     seats/<seat>.log                  # tmux pipe-pane of the seat
+    seats/<seat>.ready                # SessionStart hook: session id, transcript path
     seats/<seat>.idle, .stopped       # Stop hook: turn ended after `done`; stopped twice without it
     worktrees/<seat>/
   inbox/<item-id>.json                # parked (§6.4): one file per pending item
@@ -616,8 +617,8 @@ a `capture-pane` snippet check.
 
 Explicit `laight done` plus hooks are the proof. Screen or output silence only ever *adds*
 evidence; it never decides on its own. "Stuck" is computed at each tick from file timestamps
-(`out/`, `.idle`, `.stopped`, `.ack`, the seat log's mtime, worktree writes outside `.git/`)
-against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
+(`out/`, `.ready`, `.idle`, `.stopped`, `.ack`, the agent's transcripts, worktree writes outside
+`.git/`) against the step's `timeout` (default `timeouts.step`; none means never timed): a step is stuck
 when none of them moved for that long, not when it has run that long. Nothing new is stored but
 the open item and when its clock last restarted, and nothing routes on it. An agent that stops
 without `laight done` gets one reminder (the Stop hook's), and a `stuck` item at once when it
@@ -631,8 +632,19 @@ pane): it lists in-flight work only, status `running` or `pending`, and drops an
 completes, fails or is stopped (#73, read in 2.1.319's source and seen on a run). laight counts
 what Claude's own "Waiting for N background agents and M dynamic workflows" counts: `subagent`
 and `workflow` entries. Background shells and Monitors (`shell`, `monitor`) don't count: one may
-never end (a dev server); nor do the other types (`teammate`, `cloud session`, `MCP task`…). The quiet clock doesn't bound the
-wait yet: the spinner keeps the seat log moving (#72). Decided in #15 (2026-10-25, revised in the #47 review): the
+never end (a dev server); nor do the other types (`teammate`, `cloud session`, `MCP task`…).
+**The agent's transcripts, not its pane, are its clock** (#72): a spinner redraws the pane, so the
+seat log grows (~70 B/s, checked on 2.1.319) while a turn hangs or waits on a background agent
+that never comes back. The `SessionStart` hook records `transcript_path` in `.ready`; Claude
+writes it with every message and tool call, and its agents' next to it
+(`<session>/subagents/agent-*.jsonl`, a workflow's in folders below), and none of them move with
+the spinner. So the wait is bounded, after `laight done` too. The cost: Claude writes an entry
+once a message part or tool call is finished, so anything long still under way is quiet: a tool
+call that writes nothing (a quiet test suite), one long thinking block or reply (over a minute
+seen), `/compact` while it runs. Writes restart the clock only inside a worktree laight made for
+the seat (`cwd: worktree`); in any other seat, nothing does. So a step's `timeout` must exceed
+its longest quiet command (#86 may count an open tool call). A seat with no transcript recorded,
+or none where it says, falls back to the seat log. Decided in #15 (2026-10-25, revised in the #47 review): the
 choices follow what is known about the pane. A stopped agent is at its prompt: `nudge` (paste the
 reminder; skipped if it has since reached a permission dialog, whose item already asks) or
 `fail`; no `wait`, which would wait for ever. A quiet seat may be showing a dialog
@@ -655,8 +667,8 @@ background agents run looks like a stop) is fixed before or with #63.
 Under `human.mode: wait` the `stuck` item is to be raised as above, with `human.timeout` as its
 clock (#64 builds it). A seat whose step is done but whose turn never ends (quiet past its
 timeout after `laight done`) is not freed with a turn still running, which would finish in its
-next step: the engine closes its window, and its next step relaunches it (`--resume`). While a
-spinner runs, the quiet clock can't see a hung turn yet (#72).
+next step: the engine closes its window, and its next step relaunches it (`--resume`). The quiet
+clock reads the transcripts (#72), so a spinner doesn't hide a hung turn.
 
 ### 12.3 One parallel branch fails while others run (#12)
 
