@@ -83,8 +83,6 @@ type Policy struct {
 type Permissions struct {
 	Mode string   `json:"mode"`
 	Deny []string `json:"deny,omitempty"`
-
-	noMode bool // written as a map without a mode: it fell back to default
 }
 
 // UnmarshalJSON implements json.Unmarshaler: a plain string is the mode.
@@ -100,7 +98,6 @@ func (p *Permissions) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*p = Permissions(v)
-	p.noMode = p.Mode == ""
 	return nil
 }
 

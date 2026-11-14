@@ -8,6 +8,10 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **A seat's `permissions` defaults to `auto`** (#74), also when a `permissions` map leaves the
+  mode out. A request that would ask a human is denied at once (#61), so `default` mode refused
+  every call not allowed in advance. `validate` now warns about a claude-code seat in `default`
+  mode instead of about a map with no mode.
 - **A failed run ends red, with a report** (#63). An unrouted `failed` (or a step `max_hops`
   refuses) no longer holds the run on a `failed` inbox item: nothing new starts, the steps
   already running finish and are recorded, and the run ends. `run.json` holds `failure: {step,

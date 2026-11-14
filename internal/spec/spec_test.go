@@ -190,9 +190,9 @@ func TestLoadProblems(t *testing.T) {
 		{"deny laight done by prefix", func(s string) string {
 			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(laight done:*)\"] }", 1)
 		}, `"Bash(laight done:*)" forbids`, 0, false},
-		{"deny without a mode warns", func(s string) string {
-			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
-		}, "permissions has no mode", 0, true},
+		{"default mode warns", func(s string) string {
+			return strings.Replace(s, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { mode: default, deny: [\"Bash(rm *)\"] }\n", 1)
+		}, "permissions default", 0, true},
 		{"bash :* in the middle", func(s string) string {
 			return strings.Replace(s, "base: dev", "base: dev\npermissions: { deny: [\"Bash(git:* push)\"] }", 1)
 		}, ":* only works at the end", 0, false},
@@ -305,20 +305,23 @@ func TestPermissionChecks(t *testing.T) {
 		{"shell seat denying failed", func(s string) string {
 			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: { mode: auto, deny: [\"Bash(laight done failed)\"] }\n", 1)
 		}, "only applies to claude-code", "forbids"},
-		// #78 review 2: any map without a mode, not only one with a deny list.
-		{"empty permissions map warns", func(s string) string {
+		// #74: a map without a mode, or no permissions at all, is auto mode: nothing to warn about.
+		{"empty permissions map stays quiet", func(s string) string {
 			return strings.Replace(s, "permissions: auto", "permissions: {}", 1)
-		}, "permissions has no mode", ""},
-		{"empty deny list without a mode warns", func(s string) string {
+		}, "", "permissions default"},
+		{"empty deny list without a mode stays quiet", func(s string) string {
 			return strings.Replace(s, "permissions: auto", "permissions: { deny: [] }", 1)
-		}, "permissions has no mode", ""},
+		}, "", "permissions default"},
 		{"omitted permissions stay quiet", func(s string) string {
 			return strings.Replace(s, "    permissions: auto\n", "", 1)
-		}, "", "has no mode"},
+		}, "", "permissions default"},
+		{"plain default warns", func(s string) string {
+			return strings.Replace(s, "permissions: auto", "permissions: default", 1)
+		}, "permissions default", ""},
 		// #78 review 3: claude-code advice stays off other runtimes.
-		{"shell seat without a mode", func(s string) string {
-			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
-		}, "only applies to claude-code", "has no mode"},
+		{"shell seat in default mode", func(s string) string {
+			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: { mode: default, deny: [\"Bash(rm *)\"] }\n", 1)
+		}, "only applies to claude-code", "permissions default"},
 		{"shell seat with yolo", func(s string) string {
 			return strings.Replace(s, "seats:\n", "seats:\n"+shellSeat+"    permissions: yolo\n", 1)
 		}, "", "runs every command unasked"},
@@ -824,5 +827,22 @@ permissions: { deny: ["Bash(git push --force:*)", "mcp__github"] }`, 1)
 	var old Seat
 	if err := json.Unmarshal([]byte(`{"permissions":"auto"}`), &old); err != nil || old.Permissions.Mode != "auto" || old.Permissions.Deny != nil {
 		t.Errorf("old snapshot: %+v %v", old.Permissions, err)
+	}
+}
+
+// A claude-code seat that leaves its mode out runs in auto mode (#74): a request that would ask a
+// human is denied at once (#61), so `default` would refuse every call auto mode would allow.
+func TestPermissionsDefaultAuto(t *testing.T) {
+	src := strings.Replace(issueCycle, "    permissions: auto\n", "", 1)
+	src = strings.Replace(src, "    uses: seats/reviewer.yaml\n", "    uses: seats/reviewer.yaml\n    permissions: { deny: [\"Bash(rm *)\"] }\n", 1)
+	dir, file := project(t, src)
+	w, probs := Load(dir, file)
+	if w == nil || HasErrors(probs) {
+		t.Fatalf("load: %v", probs)
+	}
+	for _, name := range []string{"impl", "reviewer"} {
+		if got := w.Seats[name].Permissions.Mode; got != "auto" {
+			t.Errorf("%s mode = %q, want auto", name, got)
+		}
 	}
 }

@@ -107,7 +107,7 @@
         "cwd": { "type": "string", "minLength": 1, "description": "worktree (own per run, default) | repo (the main checkout) | a path." },
         "session": { "enum": ["resume", "fresh"], "description": "fresh restarts the CLI before each step. Default resume." },
         "permissions": {
-          "description": "default | auto | yolo, or { mode, deny }: a deny list added to the workflow's. Default: default. A request that would ask a human is denied at once: nobody watches a run. A seat's `permissions` replaces a shared seat's whole.",
+          "description": "default | auto | yolo, or { mode, deny }: a deny list added to the workflow's. Default: auto (also when a map leaves the mode out). A request that would ask a human is denied at once: nobody watches a run. A seat's `permissions` replaces a shared seat's whole.",
           "oneOf": [
             { "$ref": "#/$defs/permission_mode" },
             {
