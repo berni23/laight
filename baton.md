@@ -13,26 +13,23 @@ that.
 
 ## Last session — 2026-11-14
 
-- **#72 and #73 merged** (PR #84, with #85 merged into it). The #84 review was answered with
-  `/cross:cr` and `/cross:fix-cr`: a stale CHANGELOG caveat removed, §5 lists `.ready`, and
-  §12.2's `.ack` is marked as coming with #8. Whether a seat's background processes outlive
-  teardown is #88.
-- **#74 done** (decided by the user): a seat's `permissions` defaults to `auto`, also when a
-  `permissions` map has no mode. `validate` warns about a claude-code seat in `default` mode
-  instead of about a map with no mode. Spec §3 and §6.1, schema, CHANGELOG.
+- **#67 done**: `laight inbox` is out of `--help` (still works), and `laight run` no longer opens
+  the inbox pane. Until #64, gates and questions are answered with `laight inbox`, which the
+  engine window names. Spec status line and §6.4, CHANGELOG. #55, #59, #49, #26 were already
+  labelled `parked`.
 
 ---
 
 ## Do this next
 
-### 1. #67, park the inbox in code
+### 1. #62, credentials preflight
 
-Hide `laight inbox` and stop opening the inbox pane by default. Only questions still raise items
-(gates too, until #64). Small.
+§10 M3 order. `credentials: { <name>: { check, login?, min_valid? } }`, run before the rig spins
+up; a missing secret becomes failure kind `credential` instead of `crash`.
 
-### 2. #62 (credentials preflight), then #66 (rerun from failed)
+### 2. #66, rerun from failed
 
-§10 M3 order. #66 matters more now that runs fail instead of waiting.
+Matters more now that runs fail instead of waiting.
 
 ### 3. #82, declared step outputs
 
