@@ -97,9 +97,8 @@ func (c *checker) seats() {
 		if len(s.Permissions.Deny) > 0 && s.Runtime != "claude-code" {
 			c.add(Warning, at("permissions"), "a deny list only applies to claude-code seats; runtime %s ignores it", s.Runtime)
 		}
-		if s.Permissions.noMode && s.Runtime == "claude-code" {
-			// A seat's `permissions` replaces a shared seat's whole, mode included.
-			c.add(Warning, at("permissions"), "permissions has no mode, so it is default: every prompt is denied; add mode: auto")
+		if s.Permissions.Mode == "default" && s.Runtime == "claude-code" {
+			c.add(Warning, at("permissions"), "permissions default: every call not allowed in advance would ask, and is denied; auto, the default, judges them")
 		}
 		if s.Permissions.Mode == "yolo" && s.Runtime == "claude-code" {
 			c.add(Warning, at("permissions"), "yolo: this agent runs every command unasked, with your credentials")

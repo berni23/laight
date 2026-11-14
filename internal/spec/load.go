@@ -408,7 +408,7 @@ func applyDefaults(w *Workflow) {
 			s.Session = "resume"
 		}
 		if s.Permissions.Mode == "" {
-			s.Permissions.Mode = "default"
+			s.Permissions.Mode = "auto" // #74: nobody answers a prompt, so `default` denies them all
 		}
 	}
 	for _, st := range w.Steps {

@@ -11,30 +11,15 @@ that.
 
 ---
 
-## Last session — 2026-11-09
+## Last session — 2026-11-14
 
-- **#73 done**: probed Claude Code 2.1.319 on a real session and in its source. `background_tasks`
-  lists in-flight work only (`running` or `pending`); a finished, failed or stopped task drops
-  out. `waiting()` now counts `subagent` and `workflow` entries, what Claude's own "Waiting for N
-  background agents and M dynamic workflows" counts; shells and Monitors (both `shell`) don't.
-  Details on #73; spec §12.2 updated.
-- **#72 done**: the quiet clock reads the agent's transcripts (the
-  SessionStart hook now records `transcript_path` in `.ready`; the session's and
-  `<session>/subagents/**`), no longer the pane log the spinner keeps growing. Checked on a real
-  run (`.laight/workflows/background-hang.yaml`): a background agent stuck in `ping` failed the
-  step `timeout` after 2m. Trade-off, in §12.2: one long tool call that writes nothing is quiet.
-- **#85 review answered** (`/cross:fix-cr`): `TestQuietWhileSpinnerRuns` backdates instead of
-  sleeping; the hook writes `.ready`, `.idle` and `.stopped` atomically (`state.WriteFile`);
-  §12.2 says what is quiet now and that only `cwd: worktree` seats get the write backstop. The
-  narrower clock (count an open tool call) is #86.
-- **#85 second review answered** (2026-11-11): the schema's `timeouts.step` says what quiet means
-  now; `background-hang.yaml` no longer tells you to abort (it deletes the kept worktree);
-  `state.WriteFile` drops its temp file when the rename fails. Rejected, with reasons on the PR:
-  the post-done kill, transcript switching, init templates, a second post-done test.
-- **#84 review answered** (2026-11-14, `/cross:cr` then `/cross:fix-cr`): the CHANGELOG #57 entry no
-  longer says a stuck background agent isn't timed out; §5 lists `.ready`; §12.2's `.ack` is
-  marked as coming with #8. Compaction moving `transcript_path` rejected (SessionStart rewrites
-  `.ready`). Whether a seat's background processes outlive teardown is #88.
+- **#72 and #73 merged** (PR #84, with #85 merged into it). The #84 review was answered with
+  `/cross:cr` and `/cross:fix-cr`: a stale CHANGELOG caveat removed, §5 lists `.ready`, and
+  §12.2's `.ack` is marked as coming with #8. Whether a seat's background processes outlive
+  teardown is #88.
+- **#74 done** (decided by the user): a seat's `permissions` defaults to `auto`, also when a
+  `permissions` map has no mode. `validate` warns about a claude-code seat in `default` mode
+  instead of about a map with no mode. Spec §3 and §6.1, schema, CHANGELOG.
 
 ---
 
@@ -58,10 +43,8 @@ a dry render at `laight run`. Required exactly for steps whose outputs another s
 
 ## Waiting on the user
 
-- #74: should a seat's `permissions` default to `auto`? In `default` mode every prompt is now
-  denied.
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
-  push protection? `validate` rejects templates in rules for now.
+  push protection? Still undecided (2026-11-14); `validate` rejects templates in rules for now.
 - Protect `dev` and `main` on GitHub (#76): they aren't today.
 - #17 (shell step `cwd`) waits for a workflow that needs it.
 - #88: on the next supervised `background-hang` run, check `pgrep -fl "ping -c 900"` once it's red.
