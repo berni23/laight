@@ -185,11 +185,11 @@ steps:
 	if err != nil || strings.Join(ws, " ") != "engine a b" {
 		t.Errorf("windows = %v, %v", ws, err)
 	}
-	// The engine window holds the run's inbox in a second pane, under the engine (#55).
+	// The engine window is the engine alone: the inbox pane is parked (#67).
 	panes, err := exec.Command("tmux", "-L", e.srv.Socket, "list-panes", "-t", r.Session+":"+rig.EngineWindow,
 		"-F", "#{pane_start_command}").Output()
-	if p := strings.Split(strings.TrimSpace(string(panes)), "\n"); err != nil || len(p) != 2 ||
-		!strings.Contains(p[0], " engine "+r.ID) || !strings.Contains(p[1], " inbox --follow "+r.ID) {
+	if p := strings.Split(strings.TrimSpace(string(panes)), "\n"); err != nil || len(p) != 1 ||
+		!strings.Contains(p[0], " engine "+r.ID) {
 		t.Errorf("engine window panes: %q, %v", panes, err)
 	}
 	wt := r.Seats["a"].Dir
