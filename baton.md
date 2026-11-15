@@ -13,11 +13,11 @@ that.
 
 ## Last session — 2026-11-15
 
-- **#62 built** (not closed: its done-when needs a real AWS SSO run, below): `credentials:
-  { <name>: { check, login? } }`, the preflight in `laight run` (secrets the env names, then every
-  check; a failing one's login in the terminal), and `kind: credential` for a missing secret and
-  for a step that fails the run while a check fails (the engine re-checks outside the lock).
-  Decisions on #62 and in spec §6.1; `min_valid` split off to #91.
+- **#62 done**: `credentials: { <name>: { check, login? } }`, the preflight in `laight run`
+  (secrets the env names, then every check; a failing one's login in the terminal), and `kind:
+  credential` for a missing secret and for a step that fails the run while a check fails.
+  Verified on a real run: an expired AWS SSO profile, logged in from the preflight, then used
+  from a seat (shell runtime). `min_valid` split off to #91.
 - **#92's review answered**: the engine now gets `laight run`'s environment (a 0600 file), the
   re-check runs checks in parallel and keeps the run live until the next tick, a check's leftover
   children are stopped, a rig-start missing secret names its seat, and Ctrl-C stops the
@@ -51,8 +51,6 @@ Next in §10's M3 order after #66.
 
 ## Waiting on the user
 
-- #62's done-when: run a workflow with an expired AWS SSO credential from a terminal, check the
-  login prompts before any seat starts and a seat then uses the profile; close #62 if it does.
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
   push protection? Still undecided (2026-11-14); `validate` rejects templates in rules for now.
 - Protect `dev` and `main` on GitHub (#76): they aren't today.

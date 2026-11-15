@@ -129,7 +129,9 @@ with a narrow permission set), never your own SSO role: an agent with a shell ca
 `~/.aws/sso/cache`, and that token reaches every role your user has. Use an `sso-session`
 profile, so the CLI renews role credentials silently until the portal session ends (8 h by
 default, up to 90 days, set by your admin). For no browser at all, IAM Roles Anywhere through
-`credential_process`, an instance role or OIDC in CI are just a `check` with no `login`.
+`credential_process`, an instance role or OIDC in CI are just a `check` with no `login`. If your
+default browser isn't the one signed in to your SSO portal, use `aws sso login --no-browser`: it
+prints a link and a code to open in the right one.
 
 ## Seeing what happens
 
