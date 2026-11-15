@@ -5,9 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
+	"regexp"
 	goruntime "runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -75,4 +79,34 @@ func Secret(name string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("secret %q not found: set %s or add it to the OS keychain (service laight, account %s): %w", name, env, name, ErrNoSecret)
+}
+
+// secretCall is a `secret "name"` call in a template.
+var secretCall = regexp.MustCompile(`\bsecret\s+("(?:[^"\\]|\\.)*"|` + "`[^`]*`" + `)`)
+
+// SecretNames is every secret the workflow's env reads by a literal name (the workflow's, the
+// seats' and the shell steps'), sorted, each once: what `laight run` looks up before the rig
+// starts.
+func (w *Workflow) SecretNames() []string {
+	seen := map[string]bool{}
+	add := func(env StringMap) {
+		for _, v := range env {
+			if !strings.Contains(v, "{{") {
+				continue
+			}
+			for _, m := range secretCall.FindAllStringSubmatch(v, -1) {
+				if name, err := strconv.Unquote(m[1]); err == nil {
+					seen[name] = true
+				}
+			}
+		}
+	}
+	add(w.Env)
+	for _, s := range w.Seats {
+		add(s.Env)
+	}
+	for _, st := range w.Steps {
+		add(st.Env)
+	}
+	return slices.Sorted(maps.Keys(seen))
 }

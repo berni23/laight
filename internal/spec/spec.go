@@ -34,18 +34,19 @@ const (
 
 // Workflow is one workflow file after `uses:` and defaults are applied.
 type Workflow struct {
-	Version     int              `json:"version"`
-	ID          string           `json:"id"`
-	Summary     string           `json:"summary"`
-	Base        string           `json:"base"`
-	Inputs      map[string]Input `json:"inputs"`
-	Env         StringMap        `json:"env"`
-	Permissions Policy           `json:"permissions"`
-	Seats       map[string]*Seat `json:"seats"`
-	Steps       []*Step          `json:"steps"`
-	LoopGuards  LoopGuards       `json:"loop_guards"`
-	Timeouts    Timeouts         `json:"timeouts"`
-	OnFinish    OnFinish         `json:"on_finish"`
+	Version     int                   `json:"version"`
+	ID          string                `json:"id"`
+	Summary     string                `json:"summary"`
+	Base        string                `json:"base"`
+	Inputs      map[string]Input      `json:"inputs"`
+	Env         StringMap             `json:"env"`
+	Permissions Policy                `json:"permissions"`
+	Credentials map[string]Credential `json:"credentials"`
+	Seats       map[string]*Seat      `json:"seats"`
+	Steps       []*Step               `json:"steps"`
+	LoopGuards  LoopGuards            `json:"loop_guards"`
+	Timeouts    Timeouts              `json:"timeouts"`
+	OnFinish    OnFinish              `json:"on_finish"`
 
 	// File is the path the workflow was loaded from.
 	File string `json:"-"`
@@ -76,6 +77,13 @@ type Seat struct {
 // Policy is the workflow's `permissions`: what no seat may ever do.
 type Policy struct {
 	Deny []string `json:"deny,omitempty"`
+}
+
+// Credential is access the run needs, checked before the rig starts (CLAUDE.md §6.1): Check
+// exits 0 when it works; Login, run in the user's terminal, makes it work.
+type Credential struct {
+	Check string `json:"check"`
+	Login string `json:"login,omitempty"`
 }
 
 // Permissions is a seat's `permissions`: a mode alone (`auto`), or a mode and a deny list that

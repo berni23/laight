@@ -95,8 +95,11 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 	var stops []string
 	var nudges []nudge
 	var events []state.Event
+	failed := false // the run failed this tick
 	r, err := state.Update(e.Home, id, func(r *state.Run) error {
 		starts, stops, nudges, events = nil, nil, nil, nil
+		had := r.Failure != nil
+		defer func() { failed = !had && r.Failure != nil }()
 		if !r.Live() {
 			status, reason = r.Status, r.Error
 			return errors.New("not live") // nothing to save
@@ -113,6 +116,11 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 		events = append(events, evs...)
 		return nil
 	})
+	if failed && err == nil {
+		if why, ok := e.recheck(ctx, r); ok && status != "" {
+			reason = why
+		}
+	}
 	if status != "" {
 		for _, ev := range events {
 			e.event(ev)
@@ -487,11 +495,11 @@ func (e configError) Unwrap() error { return e.error }
 
 // kindOf is the failure kind of an error that kept a step from starting. A secret that can't be
 // found is not config, even inside a template: the workflow is right, the access is missing
-// (CircleCI's model; crash until #62 gives it kind credential).
+// (CircleCI's model).
 func kindOf(err error) string {
 	var ce configError
 	if errors.Is(err, spec.ErrNoSecret) {
-		return state.KindCrash
+		return state.KindCredential
 	}
 	if errors.As(err, &ce) {
 		return state.KindConfig

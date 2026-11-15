@@ -51,6 +51,10 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if _, err := tmux.Version(); err != nil {
 		return fail(stderr, "%v", err)
 	}
+	if err := preflight(w, p.Root, interactive(), stdout); err != nil {
+		fmt.Fprintln(stderr, err)
+		return fail(stderr, "the run didn't start: it needs the access above")
+	}
 	home, laight, err := homeAndBinary()
 	if err != nil {
 		return fail(stderr, "%v", err)
@@ -179,6 +183,14 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "\n✕ %v\n", err)
 		reason, _, _ := strings.Cut(err.Error(), "\n") // the screen excerpt stays out of run.json
+		// A seat's secret, gone since the preflight: access is missing, not the rig.
+		if errors.Is(err, spec.ErrNoSecret) {
+			now := time.Now().UTC()
+			state.Update(home, id, func(r *state.Run) error {
+				r.Failure = &state.Failure{Kind: state.KindCredential, Reason: reason, At: now}
+				return nil
+			})
+		}
 		if err := g.Down(id, state.Failed, reason); err != nil {
 			fmt.Fprintf(stdout, "teardown: %v\n", err)
 		}

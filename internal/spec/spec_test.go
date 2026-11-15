@@ -846,3 +846,47 @@ func TestPermissionsDefaultAuto(t *testing.T) {
 		}
 	}
 }
+
+// Credentials (#62): check is required, login optional, min_valid not yet (#91), and neither
+// command is a template: both run before a run exists, as written.
+func TestCredentials(t *testing.T) {
+	ok := strings.Replace(issueCycle, "base: dev", `base: dev
+credentials:
+  aws-dev: { check: aws sts get-caller-identity --profile agents, login: aws sso login --profile agents }
+  github: { check: gh auth status }`, 1)
+	dir, file := project(t, ok)
+	w, probs := Load(dir, file)
+	if w == nil || HasErrors(probs) {
+		t.Fatalf("load: %v", probs)
+	}
+	if c := w.Credentials["aws-dev"]; c.Check != "aws sts get-caller-identity --profile agents" || c.Login != "aws sso login --profile agents" || w.Credentials["github"].Login != "" {
+		t.Errorf("credentials %+v", w.Credentials)
+	}
+	for _, c := range []struct{ yaml, want string }{
+		{`{ login: gh auth login }`, "check"},
+		{`{ check: gh auth status, min_valid: 4h }`, "min_valid"},
+		{`{ check: "aws sts get-caller-identity --profile {{ .inputs.issue }}" }`, "not templates"},
+		{`{ check: gh auth status, login: "gh auth login -h {{ .base }}" }`, "not templates"},
+	} {
+		dir, file := project(t, strings.Replace(issueCycle, "base: dev", "base: dev\ncredentials:\n  gh: "+c.yaml, 1))
+		_, probs := Load(dir, file)
+		if !HasErrors(probs) || !strings.Contains(fmt.Sprint(probs), c.want) {
+			t.Errorf("%s: %v", c.yaml, probs)
+		}
+	}
+}
+
+// SecretNames lists every secret the env reads by name, from the workflow, its seats (shared
+// ones too) and its shell steps: what the preflight looks up.
+func TestSecretNames(t *testing.T) {
+	src := strings.Replace(issueCycle, "base: dev", "base: dev\nenv: { A: '{{ secret \"aws-key\" }}{{ secret \"gh\" }}', B: plain }", 1)
+	src = strings.Replace(src, "    run: gh pr merge", "    env: { T: '{{ secret `npm.token` }}x{{ secret \"slack\" | printf \"%s\" }}' }\n    run: gh pr merge", 1)
+	dir, file := project(t, src)
+	w, probs := Load(dir, file)
+	if w == nil || HasErrors(probs) {
+		t.Fatalf("load: %v", probs)
+	}
+	if got := w.SecretNames(); !slices.Equal(got, []string{"aws-key", "gh", "npm.token", "slack"}) {
+		t.Errorf("secret names %q", got)
+	}
+}

@@ -68,6 +68,7 @@ const (
 	KindConfig     = "config"     // a template in the workflow didn't render: fix the YAML (#82)
 	KindMaxHops    = "max_hops"   // loop_guards.max_hops refused a step
 	KindAborted    = "aborted"    // `laight abort`, or the engine interrupted
+	KindCredential = "credential" // a secret not found, or a step failed while a credential's check fails
 )
 
 // Failure is why a run failed: the first step that failed with no route, or what else ended it.

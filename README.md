@@ -11,8 +11,8 @@ you before the run, and get a green or red result, CircleCI-style.**
 > `matrix` for one agent per item), runs shell steps and gates, routes on their exits (loops
 > included), and tears the rig down. **The design just changed to unattended by design**
 > ([#68](https://github.com/berni23/laight/issues/68)): deny lists are in (a permission prompt is
-> denied at once and recorded), and a failed run ends red with a report naming the step and why;
-> a credentials preflight and rerun-from-failed are next (M3, see the
+> denied at once and recorded), a failed run ends red with a report naming the step and why, and
+> credentials are checked (and logged into) before any agent starts; rerun-from-failed is next (M3, see the
 > [milestones](CLAUDE.md#10-milestones)); until the `human:` policy lands, questions still go to a
 > (now parked) inbox.
 > The specification is in [CLAUDE.md](CLAUDE.md).
@@ -111,7 +111,7 @@ human: { mode: assume }        # assume (default) | fail | wait | supervisor
 permissions:
   deny: ["Bash(git push --force:*)", "Bash(terraform apply:*)"]
 credentials:
-  aws-dev: { check: "aws sts get-caller-identity", login: "aws sso login" }
+  aws-dev: { check: "aws sts get-caller-identity --profile agents", login: "aws sso login --profile agents" }
 ```
 
 - **Questions**: by default the agent picks the most reasonable answer, records the assumption and
@@ -119,8 +119,17 @@ credentials:
   you in the agent's pane, or let a supervisor agent with the run's context answer.
 - **Permissions** are never asked mid-run: a deny rule blocks, auto mode judges the rest, and a
   request that would need a human is denied and recorded.
-- **Logins** happen in your terminal before the agents start, not halfway through.
+- **Logins** happen in your terminal before the agents start, not halfway through: `laight run`
+  runs every `check`, and the `login` of any that fails. A step that fails mid-run while a check
+  fails says so: the run's report blames the credential, not the agent.
 - **Gates** you declare still ask you; with no one around they take their `default:`.
+
+With AWS, give the agents a profile of their own (ideally a dedicated IAM Identity Center user
+with a narrow permission set), never your own SSO role: an agent with a shell can read
+`~/.aws/sso/cache`, and that token reaches every role your user has. Use an `sso-session`
+profile, so the CLI renews role credentials silently until the portal session ends (8 h by
+default, up to 90 days, set by your admin). For no browser at all, IAM Roles Anywhere through
+`credential_process`, an instance role or OIDC in CI are just a `check` with no `login`.
 
 ## Seeing what happens
 

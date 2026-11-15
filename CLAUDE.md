@@ -18,7 +18,8 @@ passed (#11: two real issues to merged PRs, one review/fix round each); `questio
 deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists are in (#61: a
 permission is denied at once and recorded, never an inbox item), and so is the failure report
 (#63: a failed run ends red, nobody is asked about a stuck step), and the inbox is parked in
-code (#67: hidden, no pane); the credentials preflight (#62) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+code (#67: hidden, no pane); the credentials preflight is in too (#62: `laight run` checks,
+and logs in, before the rig starts); rerun from failed (#66) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
 question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
@@ -116,6 +117,8 @@ inputs:
 human: { mode: assume }           # assume (default) | fail | wait | supervisor: §6 (#64)
 permissions:                      # what no seat may ever do; auto mode judges the rest (#61)
   deny: ["Bash(git push --force:*)", "Bash(gh pr merge:*)"]
+credentials:                      # checked (and logged into) before the rig starts (#62)
+  github: { check: gh auth status, login: gh auth login }
 
 seats:                            # the rig: exactly these agents are started for a run
   impl:
@@ -354,10 +357,22 @@ an entry point (issue, ticket, prompt) into a brief, deny lists and credentials 
   `default` mode, where every call not allowed in advance is denied. A seat with no mode, or a
   `permissions` map without one, runs in `auto` (#74). A deny list is a backstop,
   not a fence: a command has many spellings (#76), so the forge protects the base branch too.
-- **Credentials are a preflight** (#62): `credentials: { <name>: { check, login?, min_valid? } }`.
-  `laight run` runs every `check` before the rig spins up; a failing one with a `login` runs it in
-  the user's terminal (the one human moment, at the start) and checks again; otherwise the run
-  doesn't start. A credential that expires mid-run fails its step, never hangs.
+- **Credentials are a preflight** (#62): `credentials: { <name>: { check, login? } }`.
+  `laight run` looks up every secret the env names (`{{ secret "x" }}` with a literal name) and
+  runs every `check` before the rig spins up; a failing one with a `login` runs it in the user's
+  terminal (the one human moment, at the start) and checks again; otherwise the run doesn't
+  start. Without a terminal there is no login: the check must already pass. A check runs as
+  written (no templates: `validate` rejects them), with `sh -c` in the repo's main checkout, with
+  the user's environment, no terminal (a check that prompts fails instead of hanging) and 30 s
+  to answer: name the profile or account in the command. laight knows no tool: `gh`, `aws`,
+  `gcloud`, `kubectl` are all a check and a login. **Mid-run**, a credential that expires fails
+  whatever step needed it, as that step fails (an exit, a timeout…); so when a step fails the run,
+  the engine re-runs every check, outside the run's lock, and the first that fails turns the
+  failure into `kind: credential`, its reason first (not for `config`, `max_hops` or `aborted`).
+  Nothing runs while the run is healthy, and there are no per-seat lists: a check is cheap, and a
+  credential failing when a step fails is the likeliest cause either way. `min_valid` (refuse to
+  start when a credential expires too soon) is deferred to #91: laight has no generic way to
+  read a credential's lifetime. Decided on #62 (2026-11-15).
 - **Declared gates stay**: they are decisions the YAML asks for, not gaps in the spec.
 
 ### 6.2 During the run: the `human:` policy (#64)
@@ -395,10 +410,11 @@ twice without `laight done`, and again after the engine's reminder), `crash` (a 
 engine died, or the step couldn't be delivered), `config` (a template in the workflow didn't
 render: an objective, `run:`, a shell step's or the workflow's `env`, a gate's `ask`, matrix
 values; CircleCI's "errored, type config"; declared outputs, #82, catch most before the run; a
-secret that can't be found is access, not config: `crash` until `credential`; no `detail`, since
+secret that can't be found is access, not config: `credential`; no `detail`, since
 nothing reached the pane; routed like any `failed`, so a loop that keeps hitting it ends as
-`max_hops`), `max_hops`, `shell`, `aborted`; later
-`question` (#64) and `credential` (#62). The first failure is the report: later ones, and an
+`max_hops`), `max_hops`, `shell`, `aborted`, `credential` (#62: a secret that can't be found,
+or a step that failed the run while a credential's check fails, §6.1); later
+`question` (#64). The first failure is the report: later ones, and an
 abort that follows, don't replace it. `reason` and `detail` (the last lines of the pane or the
 shell step's log) are redacted and stripped of control characters (§12.4). A `run.failed` event
 carries the same.
