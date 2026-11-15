@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -35,7 +36,11 @@ func CheckCredential(ctx context.Context, dir string, c spec.Credential) error {
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
 	err := cmd.Run()
-	if err == nil {
+	if cmd.Process != nil {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // whatever it left behind
+	}
+	// Exited 0, but something it started still held its output: the check itself passed.
+	if err == nil || errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState.Success() {
 		return nil
 	}
 	msg := err.Error()
@@ -64,51 +69,58 @@ func lastLine(s string) string {
 
 // expiredCredential re-runs every credential's check after a step failed, and returns the first
 // that fails, by name, with why. A step that failed while one fails is blamed on the access, not
-// the agent: kind credential (CLAUDE.md §6.1). Run outside the run.json lock: a check takes a
-// while.
-func (e *Engine) expiredCredential(ctx context.Context, r *state.Run) (string, error) {
-	for _, name := range slices.Sorted(maps.Keys(r.Spec.Credentials)) {
-		if err := CheckCredential(ctx, r.Repo, r.Spec.Credentials[name]); err != nil {
-			return name, err
+// the agent: kind credential (CLAUDE.md §6.1). Run outside the run.json lock, all at once: the
+// run waits for them, a CheckTimeout at most.
+func expiredCredential(ctx context.Context, r *state.Run) (string, error) {
+	names := slices.Sorted(maps.Keys(r.Spec.Credentials))
+	errs := make([]error, len(names))
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Go(func() { errs[i] = CheckCredential(ctx, r.Repo, r.Spec.Credentials[name]) })
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			return names[i], err
 		}
 	}
 	return "", nil
 }
 
-// recheck turns a failure this tick recorded into kind credential when a credential's check
-// fails now. Only failures access could explain: not a template that didn't render, a loop
-// guard, an abort, or a secret already missing.
-func (e *Engine) recheck(ctx context.Context, r *state.Run) (string, bool) {
-	f := r.Failure
-	if f == nil || len(r.Spec.Credentials) == 0 {
-		return "", false
+// rechecks reports whether the run's failure is one access could explain, and there are
+// credentials to check: not a template that didn't render, a loop guard, an abort, or a secret
+// already missing.
+func rechecks(r *state.Run) bool {
+	if r.Failure == nil || len(r.Spec.Credentials) == 0 {
+		return false
 	}
-	switch f.Kind {
+	switch r.Failure.Kind {
 	case state.KindConfig, state.KindMaxHops, state.KindAborted, state.KindCredential:
-		return "", false
+		return false
 	}
-	name, err := e.expiredCredential(ctx, r)
+	return true
+}
+
+// recheck turns the run's failure into kind credential when a credential's check fails now.
+func (e *Engine) recheck(ctx context.Context, r *state.Run) {
+	f := r.Failure
+	name, err := expiredCredential(ctx, r)
 	if name == "" || ctx.Err() != nil {
-		return "", false
+		return
 	}
 	nf := *f
 	nf.Kind = state.KindCredential
 	nf.Reason = fmt.Sprintf("credential %s fails its check (%v); %s", name, err, f.Reason)
 	e.redact(r, &nf)
-	e.logf("✕ %s", nf.Reason)
-	updated := false
-	if _, uerr := state.Update(e.Home, r.ID, func(r *state.Run) error {
+	if _, err := state.Update(e.Home, r.ID, func(r *state.Run) error {
 		if r.Failure == nil || r.Failure.Step != f.Step || r.Failure.Hop != f.Hop || r.Failure.Kind != f.Kind {
 			return errors.New("not the same failure") // nothing to save
 		}
 		r.Failure.Kind, r.Failure.Reason = nf.Kind, nf.Reason
-		if r.Status == state.Failed {
-			r.Error = nf.Reason
-		}
-		updated = true
 		return nil
-	}); uerr != nil && !updated {
-		return "", false
+	}); err != nil {
+		e.logf("warning: credential %s fails its check, but the failure keeps its kind: %v", name, err)
+		return
 	}
-	return nf.Reason, true
+	e.logf("✕ %s", nf.Reason)
 }

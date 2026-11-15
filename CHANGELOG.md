@@ -13,7 +13,8 @@ All notable changes to laight are documented here. The format follows
   that fails runs its `login` in your terminal, then checks again; one still failing (or with no
   login, or no terminal) keeps the run from starting. A step that fails the run while a check
   fails ends it with failure kind `credential`, and so does a secret that can't be found (was
-  `crash`). `validate` rejects templates in credential commands.
+  `crash`). `validate` rejects templates in credential commands. The engine now runs with the
+  environment of the `laight run` that started it, not the tmux server's.
 
 ### Changed
 

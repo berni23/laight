@@ -2,13 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/berni23/laight/internal/spec"
+	"github.com/berni23/laight/internal/state"
+	"github.com/berni23/laight/internal/tmux"
 )
 
 // The preflight (#62): a failing check with a login runs it (in the terminal) and checks again;
@@ -44,7 +48,7 @@ func TestPreflight(t *testing.T) {
 			logins = nil
 			w := &spec.Workflow{Credentials: map[string]spec.Credential{"aws": c.cred, "gh": {Check: "true"}}}
 			var out bytes.Buffer
-			err := preflight(w, repo, c.terminal, &out)
+			err := preflight(context.Background(), w, repo, c.terminal, &out)
 			if len(logins) != c.logins {
 				t.Errorf("logins %q", logins)
 			}
@@ -60,12 +64,12 @@ func TestPreflight(t *testing.T) {
 	t.Setenv("LAIGHT_SECRET_LAIGHT_TEST_FOUND", "x")
 	w := &spec.Workflow{Env: spec.StringMap{"A": `{{ secret "laight-test-found" }}`, "B": `{{ secret "laight-test-no-such-secret" }}`}}
 	var out bytes.Buffer
-	err := preflight(w, repo, true, &out)
+	err := preflight(context.Background(), w, repo, true, &out)
 	if err == nil || !strings.Contains(err.Error(), `secret "laight-test-no-such-secret" not found`) ||
 		!strings.Contains(out.String(), "✓ secret laight-test-found") || !strings.Contains(out.String(), "✕ secret laight-test-no-such-secret") {
 		t.Errorf("secrets: %v\n%s", err, out.String())
 	}
-	if err := preflight(&spec.Workflow{}, repo, true, &out); err != nil {
+	if err := preflight(context.Background(), &spec.Workflow{}, repo, true, &out); err != nil {
 		t.Errorf("nothing to check: %v", err)
 	}
 }
@@ -98,5 +102,78 @@ func TestRunRefusedByPreflight(t *testing.T) {
 	}
 	if runs, _ := filepath.Glob(filepath.Join(home, "runs", "*")); len(runs) > 0 {
 		t.Errorf("a run was created: %v", runs)
+	}
+}
+
+// A seat whose secret can't be found at rig start (here named by an expression, which the
+// preflight can't look up) fails the run as credential, naming the seat, its reason scrubbed.
+func TestEngineSeatSecretMissing(t *testing.T) {
+	e := newRigEnv(t, "")
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a:
+    runtime: shell
+    command: sh
+    cwd: repo
+    env: { TOK: '{{ secret (print "laight-test-no-" "such-secret") }}' }
+steps:
+  - { id: one, seat: a, objective: '"$L" done handoff' }
+`))
+	e.mustLaight("run", "demo")
+	r := e.waitFailed(e.onlyRun().ID, state.KindCredential)
+	if r.Failure.Seat != "a" || !strings.Contains(r.Failure.Reason, `secret "laight-test-no-such-secret" not found`) {
+		t.Errorf("failure %+v", r.Failure)
+	}
+}
+
+// Ctrl-C during a check stops the check and the preflight at once; nothing is left running.
+func TestPreflightInterrupted(t *testing.T) {
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	w := &spec.Workflow{Credentials: map[string]spec.Credential{"slow": {Check: "echo $$ > " + pidFile + "; exec sleep 30"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- preflight(ctx, w, t.TempDir(), true, &bytes.Buffer{}) }()
+	for range 100 {
+		if _, err := os.Stat(pidFile); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "interrupted") {
+			t.Errorf("err %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the preflight kept waiting for the check")
+	}
+	waitGone(t, readPid(t, pidFile))
+}
+
+// The engine runs with the environment `laight run` saw (and the preflight checked), even when
+// laight's tmux server was started from another shell: a secret exported for this run reaches
+// its seats.
+func TestEngineGetsRunEnv(t *testing.T) {
+	e := newRigEnv(t, "")
+	// The server is already up, started without the secret.
+	if err := e.srv.NewSession("other", tmux.Window{Name: "x", Cmd: "sleep 600"}); err != nil {
+		t.Fatal(err)
+	}
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: repo, env: { TOK: '{{ secret "laight-test-run-env" }}' } }
+steps:
+  - { id: one, seat: a, objective: 'test "$TOK" = from-this-shell && "$L" done handoff || "$L" done failed' }
+`))
+	c := exec.Command(e.bin, "run", "demo")
+	c.Dir = e.repo
+	c.Env = append(os.Environ(), "LAIGHT_HOME="+e.home, "LAIGHT_SECRET_LAIGHT_TEST_RUN_ENV=from-this-shell", "BAD-NAME=x")
+	if out, err := c.CombinedOutput(); err != nil || !strings.Contains(string(out), "✓ secret laight-test-run-env") {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	if r := e.waitEnded(e.onlyRun().ID); r.Status != state.Succeeded {
+		t.Fatalf("status %s, failure %+v", r.Status, r.Failure)
+	}
+	if _, err := os.Stat(filepath.Join(state.Dir(e.home, e.onlyRun().ID), "engine.env")); !os.IsNotExist(err) {
+		t.Errorf("engine.env left behind: %v", err)
 	}
 }

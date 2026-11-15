@@ -24,8 +24,9 @@ var loginCmd = func(dir, command string) error {
 // preflight checks what a run needs access to before its rig starts (CLAUDE.md §6.1): every
 // secret its env names, then every credential's check. A check that fails runs its login, when
 // it has one and there is a terminal to log in from (the one human moment, at the start), and is
-// checked again. Any that still fails keeps the run from starting.
-func preflight(w *spec.Workflow, repo string, canLogin bool, stdout io.Writer) error {
+// checked again. Any that still fails keeps the run from starting. When ctx ends (Ctrl-C), the
+// check under way is stopped and so is the preflight.
+func preflight(ctx context.Context, w *spec.Workflow, repo string, canLogin bool, stdout io.Writer) error {
 	names := slices.Sorted(maps.Keys(w.Credentials))
 	secrets := w.SecretNames()
 	if len(names) == 0 && len(secrets) == 0 {
@@ -43,13 +44,21 @@ func preflight(w *spec.Workflow, repo string, canLogin bool, stdout io.Writer) e
 	}
 	for _, name := range names {
 		c := w.Credentials[name]
-		err := engine.CheckCredential(context.Background(), repo, c)
+		err := engine.CheckCredential(ctx, repo, c)
+		if ctx.Err() != nil {
+			return fmt.Errorf("preflight interrupted at credential %s", name)
+		}
 		if err != nil && c.Login != "" && canLogin {
 			fmt.Fprintf(stdout, "  ✕ credential %s: %v\n    logging in: %s\n", name, err, c.Login)
 			if lerr := loginCmd(repo, c.Login); lerr != nil {
 				fmt.Fprintf(stdout, "    login: %v\n", lerr)
 			}
-			err = engine.CheckCredential(context.Background(), repo, c)
+			if ctx.Err() == nil {
+				err = engine.CheckCredential(ctx, repo, c)
+			}
+			if ctx.Err() != nil {
+				return fmt.Errorf("preflight interrupted at credential %s", name)
+			}
 		}
 		if err != nil {
 			fmt.Fprintf(stdout, "  ✕ credential %s: %v\n", name, err)

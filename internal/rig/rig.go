@@ -84,11 +84,21 @@ func (g *Rig) Up(ctx context.Context, id string) error {
 			continue
 		}
 		if err := g.seatUp(ctx, r, name); err != nil {
-			return fmt.Errorf("seat %s: %w", name, err)
+			return &SeatError{Seat: name, Err: err}
 		}
 	}
 	return nil
 }
+
+// SeatError is a seat that couldn't start, so a failure report can name it.
+type SeatError struct {
+	Seat string
+	Err  error
+}
+
+func (e *SeatError) Error() string { return "seat " + e.Seat + ": " + e.Err.Error() }
+
+func (e *SeatError) Unwrap() error { return e.Err }
 
 func needsWorktree(w *spec.Workflow) bool {
 	for _, s := range w.Seats {

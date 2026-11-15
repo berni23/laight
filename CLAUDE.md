@@ -283,7 +283,10 @@ pasted into a pane, and panes are logged.
 - Run ids are ULIDs. Writes are atomic (temp + rename). The only lock is `flock` on `run.json`.
 - **The engine** is `laight engine <run>` in window 0 of the rig's tmux session: a loop of read
   state → act → append event → sleep. When the run finishes it applies `on_finish`, stops the seats
-  and kills the session.
+  and kills the session. It runs with the environment of the `laight run` that started it (minus
+  `TMUX*`, `TERM` and the like), handed over in a 0600 file that its window deletes once read: a
+  window otherwise has the tmux server's, which is another shell's once laight's server is up for
+  an earlier run, and the preflight must check what the engine will use.
 - **When the engine dies**, the run is lost, not resumed: `attach` and `abort` report "engine
   died", `laight abort` cleans up, worktrees follow `on_finish.failure`, a new run starts over.
   **Resume is deferred (#8)**: rerun from failed (#66) comes first and may later cover a dead
@@ -364,11 +367,14 @@ an entry point (issue, ticket, prompt) into a brief, deny lists and credentials 
   start. Without a terminal there is no login: the check must already pass. A check runs as
   written (no templates: `validate` rejects them), with `sh -c` in the repo's main checkout, with
   the user's environment, no terminal (a check that prompts fails instead of hanging) and 30 s
-  to answer: name the profile or account in the command. laight knows no tool: `gh`, `aws`,
+  to answer, after which its whole process group is stopped (so is whatever a passing check
+  left behind, and the check under way on Ctrl-C): name the profile or account in the command. laight knows no tool: `gh`, `aws`,
   `gcloud`, `kubectl` are all a check and a login. **Mid-run**, a credential that expires fails
   whatever step needed it, as that step fails (an exit, a timeout…); so when a step fails the run,
-  the engine re-runs every check, outside the run's lock, and the first that fails turns the
-  failure into `kind: credential`, its reason first (not for `config`, `max_hops` or `aborted`).
+  the engine re-runs every check, all at once and outside the run's lock, and the first that
+  fails (in name order) turns the failure into `kind: credential`, its reason first (not for
+  `config`, `max_hops` or `aborted`). The run stays live while they run (a 30 s wait at most), so
+  `laight abort` and a dead engine are handled as for any live run; the next tick ends it.
   Nothing runs while the run is healthy, and there are no per-seat lists: a check is cheap, and a
   credential failing when a step fails is the likeliest cause either way. `min_valid` (refuse to
   start when a credential expires too soon) is deferred to #91: laight has no generic way to
@@ -546,6 +552,9 @@ laight done <exit> [k=v…]            for agents: finish the current step (the 
 
 Run arguments take an id prefix, or nothing when exactly one run of the project is live. Every
 command with side effects outside the run asks first and lists what it will do; `--yes` skips it.
+That is laight's own side effects (deleting worktrees, stopping a session): what the workflow
+declares (a credential's `login`, a seat's `setup`, a shell step) runs as declared, since the
+YAML already says it, and the preflight prints a `login` before running it.
 
 ## 9. Implementation
 

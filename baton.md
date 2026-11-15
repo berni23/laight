@@ -18,6 +18,11 @@ that.
   check; a failing one's login in the terminal), and `kind: credential` for a missing secret and
   for a step that fails the run while a check fails (the engine re-checks outside the lock).
   Decisions on #62 and in spec §6.1; `min_valid` split off to #91.
+- **#92's review answered**: the engine now gets `laight run`'s environment (a 0600 file), the
+  re-check runs checks in parallel and keeps the run live until the next tick, a check's leftover
+  children are stopped, a rig-start missing secret names its seat, and Ctrl-C stops the
+  preflight. Spec §4, §6.1, §8. Older defects it surfaced: #93 (seat env and secrets in the tmux
+  server's env), #94 (keychain prompts), #95 (seat `setup` leftovers).
 
 ---
 
@@ -28,12 +33,17 @@ that.
 §10 M3 order. Matters more now that runs fail instead of waiting. The rerun should run the
 preflight too (`preflight` in `cmd/laight/credentials.go`).
 
-### 2. #82, declared step outputs
+### 2. #93, seat windows and the tmux server's environment
+
+A §12.4 leak (a `LAIGHT_SECRET_*` value in tmux's global env reaches every later seat), and the
+seat half of what #92 fixed for the engine. Small, and the pattern is already there.
+
+### 3. #82, declared step outputs
 
 Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
 a dry render at `laight run`. Required exactly for steps whose outputs another step reads.
 
-### 3. #64, the `human:` policy and gate defaults
+### 4. #64, the `human:` policy and gate defaults
 
 Next in §10's M3 order after #66.
 

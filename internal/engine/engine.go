@@ -99,12 +99,19 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 	r, err := state.Update(e.Home, id, func(r *state.Run) error {
 		starts, stops, nudges, events = nil, nil, nil, nil
 		had := r.Failure != nil
-		defer func() { failed = !had && r.Failure != nil }()
 		if !r.Live() {
 			status, reason = r.Status, r.Error
 			return errors.New("not live") // nothing to save
 		}
 		status, reason, starts, stops, events = e.advance(r)
+		failed = !had && r.Failure != nil
+		if status == state.Failed && failed && rechecks(r) {
+			// Not over yet: the re-check below may relabel the failure, and until the run ends it
+			// stays live, so `laight abort` and a dead engine are handled as for any live run. The
+			// next tick ends it, with the failure as run.json holds it then.
+			status, reason = "", ""
+			return nil
+		}
 		if status != "" {
 			// Saved with the state that implies it: an engine that dies before the teardown
 			// must not find an empty queue later and call a failed run a success.
@@ -116,10 +123,8 @@ func (e *Engine) tick(ctx context.Context, id string) (status, reason string, er
 		events = append(events, evs...)
 		return nil
 	})
-	if failed && err == nil {
-		if why, ok := e.recheck(ctx, r); ok && status != "" {
-			reason = why
-		}
+	if failed && err == nil && rechecks(r) {
+		e.recheck(ctx, r)
 	}
 	if status != "" {
 		for _, ev := range events {
