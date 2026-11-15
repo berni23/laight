@@ -8,6 +8,10 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **The inbox is parked** (#67): `laight inbox` is gone from `laight --help` but still works,
+  and `laight run` no longer opens the inbox pane under the engine. Until the `human:` policy
+  (#64), a gate or a question an agent asks is answered with `laight inbox`, which the engine
+  window names.
 - **A seat's `permissions` defaults to `auto`** (#74), also when a `permissions` map leaves the
   mode out. A request that would ask a human is denied at once (#61), so `default` mode refused
   every call not allowed in advance. `validate` now warns about a claude-code seat in `default`

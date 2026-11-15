@@ -17,8 +17,8 @@ passed (#11: two real issues to merged PRs, one review/fix round each); `questio
 (#55). **Direction change (#68, 2026-11-02): unattended by design.** The inbox is parked, not
 deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists are in (#61: a
 permission is denied at once and recorded, never an inbox item), and so is the failure report
-(#63: a failed run ends red, nobody is asked about a stuck step); the credentials preflight (#62)
-is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+(#63: a failed run ends red, nobody is asked about a stuck step), and the inbox is parked in
+code (#67: hidden, no pane); the credentials preflight (#62) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
 question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
@@ -410,7 +410,8 @@ prints the report. Every run's report also lists the denied requests and the ass
 The inbox, M3's first design, is **parked, not deleted**: it may come back (phone, Slack, a team
 inbox) once runs are unattended by default. Its code stays, builds and passes its tests, and its
 hooks are what #61, #64 and the supervisor start from. `laight inbox` is hidden (out of `--help`,
-the README and §8) but still works, and `laight run` stops opening the inbox pane by default (#67).
+the README and §8) but still works, and `laight run` no longer opens the inbox pane (#67); until
+#64, a gate or a question is answered with `laight inbox`, which the engine window names.
 What follows is the design as built, kept as the reference for those hooks.
 
 | Kind | Source | Answer goes back via |
@@ -461,7 +462,7 @@ once it is answered. It is redacted, then the last 1500 bytes are kept (a cut se
 matches, so whatever cuts text before the queue scrubs it first); like any detail it never leaves
 the machine.
 
-**The run's inbox pane** (#55): `laight run` splits the engine window and runs
+**The run's inbox pane** (#55; no longer opened, #67): `laight run` used to split the engine window and run
 `laight inbox --follow <run>` under the engine, with the focus. It prints each of the run's items
 in full as it arrives, and answers the oldest with each line typed (another one when the line
 starts with its id; a choice may be shortened to `y`, `a`…). When the item the prompt named goes
