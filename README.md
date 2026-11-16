@@ -12,9 +12,9 @@ you before the run, and get a green or red result, CircleCI-style.**
 > included), and tears the rig down. **The design just changed to unattended by design**
 > ([#68](https://github.com/berni23/laight/issues/68)): deny lists are in (a permission prompt is
 > denied at once and recorded), a failed run ends red with a report naming the step and why, and
-> credentials are checked (and logged into) before any agent starts; rerun-from-failed is next (M3, see the
-> [milestones](CLAUDE.md#10-milestones)); until the `human:` policy lands, questions still go to a
-> (now parked) inbox.
+> credentials are checked (and logged into) before any agent starts, and a red run is rerun from
+> the step that failed (`laight run --from-failed`); the `human:` policy is next (M3, see the
+> [milestones](CLAUDE.md#10-milestones)); until it lands, questions still go to a (now parked) inbox.
 > The specification is in [CLAUDE.md](CLAUDE.md).
 > Feedback on the design is very welcome: open an [issue](https://github.com/berni23/laight/issues) or a
 > [discussion](https://github.com/berni23/laight/discussions).

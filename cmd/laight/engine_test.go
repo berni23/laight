@@ -926,3 +926,59 @@ func TestSessionStartHook(t *testing.T) {
 		t.Errorf(".ready = %s %v", b, err)
 	}
 }
+
+// Rerun from failed (#66): a run that fails at its second step is rerun once the workflow is
+// fixed. The first step doesn't run again; its output and the file it left in the worktree are
+// still there, in the same worktree; the old run hands its worktrees over and says so.
+func TestRerunFromFailed(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(check string) string {
+		return fakeWorkflow(e.bin, `seats:
+  impl: { runtime: shell, command: sh }
+steps:
+  - id: implement
+    seat: impl
+    objective: 'echo work > made && "$L" done handoff pr=42'
+    next_hop: { on: { handoff: check } }
+  - id: check
+    seat: impl
+    objective: '`+check+`'
+on_finish: { success: keep, failure: keep }
+`)
+	}
+	writeWorkflow(t, e, wf(`"$L" done failed reason=broken`))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	if old.Failure.Step != "check" {
+		t.Fatalf("failure %+v", old.Failure)
+	}
+	writeWorkflow(t, e, wf(`[ -e made ] && [ "{{ .steps.implement.out.pr }}" = 42 ] && "$L" done handoff || "$L" done failed`))
+	out := e.mustLaight("run", "--from-failed", old.Short())
+	if !strings.Contains(out, "rerun of "+old.Short()+": starts again at check; keeps implement; worktrees of impl") {
+		t.Errorf("output: %s", out)
+	}
+	runs, _ := state.List(e.home)
+	if len(runs) != 2 {
+		t.Fatalf("runs %v", runs)
+	}
+	r := e.waitEnded(runs[0].ID)
+	if r.Status != state.Succeeded || r.RerunOf != old.ID {
+		t.Fatalf("rerun %s %q, rerun of %q; steps %v", r.Status, r.Error, r.RerunOf, e.stepsDone(r.ID))
+	}
+	if got := strings.Join(e.stepsDone(r.ID), " "); got != "check:handoff" {
+		t.Errorf("rerun's steps %s; want check:handoff", got)
+	}
+	if r.Hops != 3 || r.Seats["impl"].Dir != old.Seats["impl"].Dir {
+		t.Errorf("hops %d, impl at %s (was %s)", r.Hops, r.Seats["impl"].Dir, old.Seats["impl"].Dir)
+	}
+	old, _ = state.Load(e.home, old.ID)
+	if old.RerunAs != r.ID || len(e.rigWorktrees(old)) != 0 || len(e.rigWorktrees(r)) != 1 {
+		t.Errorf("hand-over: rerun as %q, old lists %v, rerun lists %v", old.RerunAs, e.rigWorktrees(old), e.rigWorktrees(r))
+	}
+	if out, err := e.laight("run", "--from-failed", old.Short()); err == nil || !strings.Contains(out, "was rerun already") {
+		t.Errorf("second rerun of the same run: %v %s", err, out)
+	}
+	if out, err := e.laight("run", "--from-failed", r.Short()); err == nil || !strings.Contains(out, "only a failed or aborted run") {
+		t.Errorf("rerun of a green run: %v %s", err, out)
+	}
+}

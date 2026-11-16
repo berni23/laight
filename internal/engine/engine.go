@@ -85,6 +85,7 @@ func (e *Engine) Run(ctx context.Context, id string) (status, reason string, err
 type start struct {
 	hop     state.Hop
 	restart bool // relaunch the seat first (session: fresh, or its pane died)
+	note    bool // the seat's conversation comes from the run this one reruns: say so first
 }
 
 // tick does one round: finish the hops that are done, route them, close the seat instances that
@@ -367,7 +368,8 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 		}
 		restart := !s.Up || (r.Spec.SeatOf(seat).Session == "fresh" && s.Given > 0)
 		s.Step, s.Hop, s.Turn, s.Given = st.ID, h.N, true, s.Given+1
-		starts = append(starts, start{hop: *h, restart: restart})
+		starts = append(starts, start{hop: *h, restart: restart, note: s.Rerun})
+		s.Rerun = false
 	}
 	busy := func(seat string) bool {
 		s := r.Seats[seat]
@@ -550,6 +552,15 @@ func (e *Engine) deliver(ctx context.Context, r *state.Run, s start) error {
 		if err := e.Rig.Tmux.Paste(r.Session, r.Seats[seat].Window, "/compact"); err != nil {
 			return err
 		}
+	}
+	if rt, err := runtime.For(r.Spec.SeatOf(seat).Runtime); s.note && err == nil && rt.Hooks() {
+		// An agent CLI, not a command that reads its input as a script (runtime: shell).
+		old, err := state.Load(e.Home, r.RerunOf)
+		var f *state.Failure
+		if err == nil {
+			f = old.Failure
+		}
+		text = RerunNote(r.RerunOf, f) + text
 	}
 	return e.Rig.Tmux.Paste(r.Session, r.Seats[seat].Window, strings.TrimRight(text, "\n"))
 }

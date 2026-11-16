@@ -19,7 +19,8 @@ deleted (§6.4, #67), and **M3** is now the unattended model (§10): deny lists 
 permission is denied at once and recorded, never an inbox item), and so is the failure report
 (#63: a failed run ends red, nobody is asked about a stuck step), and the inbox is parked in
 code (#67: hidden, no pane); the credentials preflight is in too (#62: `laight run` checks,
-and logs in, before the rig starts); rerun from failed (#66) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+and logs in, before the rig starts), and so is rerun from failed (#66: `laight run --from-failed`);
+the `human:` policy (#64) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
 question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
@@ -267,7 +268,7 @@ pasted into a pane, and panes are logged.
   projects.json
   runs/<run-id>/
     run.json                          # spec snapshot, inputs, status, current step, hops,
-                                      #   and a red run's `failure` (§6.3)
+                                      #   a red run's `failure` (§6.3), `rerun_of`/`rerun_as`
     events.jsonl                      # append-only, the source of truth for observability
     out/<step>-<hop>.json             # what `laight done` wrote (or the engine, for shell steps)
     out/<step>-<hop>.log              # a shell step's output, known secrets redacted
@@ -288,9 +289,9 @@ pasted into a pane, and panes are logged.
   window otherwise has the tmux server's, which is another shell's once laight's server is up for
   an earlier run, and the preflight must check what the engine will use.
 - **When the engine dies**, the run is lost, not resumed: `attach` and `abort` report "engine
-  died", `laight abort` cleans up, worktrees follow `on_finish.failure`, a new run starts over.
-  **Resume is deferred (#8)**: rerun from failed (#66) comes first and may later cover a dead
-  engine too; the state stays in files so it remains possible.
+  died", `laight abort` ends it (red, `kind: crash`), worktrees follow `on_finish.failure`, and
+  `laight run --from-failed` goes on from what it left unfinished (§6.3). **Resume in place is
+  deferred (#8)**: the state stays in files so it remains possible.
 
 ## 5. Driving a seat
 
@@ -426,6 +427,23 @@ shell step's log) are redacted and stripped of control characters (§12.4). A `r
 carries the same.
 `laight watch` shows ✕ and the reason on the failed step, and `laight run` exits non-zero and
 prints the report. Every run's report also lists the denied requests and the assumptions made.
+
+**Rerun from failed** (#66, decided there 2026-11-16): `laight run --from-failed <run>`, after
+fixing the cause, is a new run (own id, session, state folder) of the red run's workflow **as the
+file is now**, with the red run's inputs (an input added since takes its default), after the same
+preflight. It keeps what the red run finished: each step's latest result (`.steps.<id>`), the hop
+count (so `max_hops` stays a guard across reruns: a run red on `max_hops` reruns once the YAML
+raises it), `base`, and each seat's worktree **in place** (`runs/<old>/worktrees/<seat>`, since
+`claude --resume` finds a conversation by its folder) and, for a `session: resume` seat, its
+conversation, with a note on why it starts again pasted before its first step. It starts again
+what the red run left unfinished: the step that failed, the steps routed to but not started,
+hops an abort cut short, and a matrix step's copies that failed or never ran (same expansion;
+the others keep their results). A red run that never got to its first hop starts over. Anything
+in the workflow may change; the rerun is refused only when the carried state no longer fits (a
+step it keeps or restarts is gone, a step changed between matrix and plain), and a seat whose
+runtime or `cwd` changed, or whose worktree is gone, starts fresh. The red run records
+`rerun_as` and hands its worktrees over (it no longer lists or deletes them; a run is rerun
+once, then its rerun is); the rerun records `rerun_of`. Failed and aborted runs can be rerun.
 
 ### 6.4 Parked: the inbox (#67)
 

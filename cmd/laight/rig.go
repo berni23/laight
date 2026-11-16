@@ -28,8 +28,11 @@ import (
 // cmdRun validates a workflow, creates the run and starts its engine in a new tmux session,
 // then follows it when there's a terminal to follow it in.
 func cmdRun(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "--from-failed" {
+		return cmdRerun(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return fail(stderr, "usage: laight run <workflow> [key=value…]")
+		return fail(stderr, "usage: laight run <workflow> [key=value…]\n       laight run --from-failed <run>")
 	}
 	p, err := spec.FindProject(".")
 	if err != nil {
@@ -50,17 +53,8 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}
-	if _, err := tmux.Version(); err != nil {
-		return fail(stderr, "%v", err)
-	}
-	// Ctrl-C reaches the login (it shares the terminal), not a check (its own session): this
-	// stops the check, instead of leaving it behind with its timeout.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	err = preflight(ctx, w, p.Root, interactive(), stdout)
-	stop()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return fail(stderr, "the run didn't start: it needs the access above")
+	if code := beforeRun(w, p.Root, stdout, stderr); code != 0 {
+		return code
 	}
 	home, laight, err := homeAndBinary()
 	if err != nil {
@@ -79,14 +73,38 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if err := state.Create(home, r); err != nil {
 		return fail(stderr, "%v", err)
 	}
+	return startRun(home, laight, r, stdout, stderr)
+}
+
+// beforeRun is what every run needs before it is created: tmux, and the credentials preflight.
+func beforeRun(w *spec.Workflow, root string, stdout, stderr io.Writer) int {
+	if _, err := tmux.Version(); err != nil {
+		return fail(stderr, "%v", err)
+	}
+	// Ctrl-C reaches the login (it shares the terminal), not a check (its own session): this
+	// stops the check, instead of leaving it behind with its timeout.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := preflight(ctx, w, root, interactive(), stdout)
+	stop()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return fail(stderr, "the run didn't start: it needs the access above")
+	}
+	return 0
+}
+
+// startRun starts a created run's engine in a new tmux session, and follows it when there's a
+// terminal to follow it in.
+func startRun(home, laight string, r *state.Run, stdout, stderr io.Writer) int {
+	id := r.ID
 	srv := tmux.Server{Socket: state.Socket(home)}
 	// The engine gets the environment the preflight checked with: a window has the tmux server's,
 	// which is another shell's once laight's server is up for another run.
 	envFile := filepath.Join(state.Dir(home, id), "engine.env")
-	err = tmux.WriteEnv(envFile, engineEnv(os.Environ(), home))
+	err := tmux.WriteEnv(envFile, engineEnv(os.Environ(), home))
 	if err == nil {
 		err = srv.NewSession(r.Session, tmux.Window{
-			Name: rig.EngineWindow, Dir: p.Root,
+			Name: rig.EngineWindow, Dir: r.Repo,
 			Cmd: tmux.EnvCmd(envFile, tmux.Join([]string{laight, "engine", id})),
 		})
 	}
@@ -95,7 +113,7 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		state.Update(home, id, func(r *state.Run) error { r.Status, r.Error = state.Failed, err.Error(); return nil })
 		return fail(stderr, "%v", err)
 	}
-	fmt.Fprintf(stdout, "run %s: %s started (tmux session %s)\n", r.Short(), w.ID, r.Session)
+	fmt.Fprintf(stdout, "run %s: %s started (tmux session %s)\n", r.Short(), r.Workflow, r.Session)
 	if !interactive() {
 		fmt.Fprintf(stdout, "follow it: laight attach %s\n", r.Short())
 		return 0
@@ -209,7 +227,11 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 	}
 	if r.Status == state.Starting {
 		state.Update(home, id, func(r *state.Run) error { r.Status = state.Running; return nil })
-		state.Append(home, state.Event{Run: id, Type: "run.started", Data: map[string]any{"workflow": r.Workflow, "repo": r.Repo}})
+		data := map[string]any{"workflow": r.Workflow, "repo": r.Repo}
+		if r.RerunOf != "" {
+			data["rerun_of"] = r.RerunOf
+		}
+		state.Append(home, state.Event{Run: id, Type: "run.started", Data: data})
 	}
 	if err := g.Up(ctx, id); err != nil {
 		if ctx.Err() != nil {

@@ -148,7 +148,9 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	}
 	switch seat.Cwd {
 	case "worktree":
-		st.Dir, st.Worktree = filepath.Join(runDir, "worktrees", name), true
+		if !st.Worktree { // a rerun's seat keeps the worktree of the run it reruns, where it is
+			st.Dir, st.Worktree = filepath.Join(runDir, "worktrees", name), true
+		}
 		if _, err := os.Stat(st.Dir); errors.Is(err, os.ErrNotExist) {
 			// Recorded before it exists, so an abort or a failure in between still finds it.
 			if err := save(); err != nil {
@@ -460,8 +462,12 @@ func endFailure(r *state.Run, status, reason string, at time.Time) *state.Failur
 	return f
 }
 
-// Worktrees returns the run's worktrees that still exist.
+// Worktrees returns the run's worktrees that still exist. A run that was rerun has none: they
+// went to the rerun, which works in them.
 func (g *Rig) Worktrees(r *state.Run) []string {
+	if r.RerunAs != "" {
+		return nil
+	}
 	var dirs []string
 	for _, s := range r.Seats {
 		if s.Worktree {

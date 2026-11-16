@@ -12,7 +12,7 @@ import (
 )
 
 // A red run's report names the step, hop, seat, kind and reason, quotes the end of the pane,
-// lists the requests its seats were denied, and says the worktrees were kept. A green run's
+// lists the requests its seats were denied, says the worktrees were kept and how to rerun it. A green run's
 // report still lists its denials.
 func TestReport(t *testing.T) {
 	home := t.TempDir()
@@ -38,10 +38,20 @@ func TestReport(t *testing.T) {
 		"    │ no pull requests found\n" +
 		"  ⊘ 1 request(s) denied:\n" +
 		"    implement (impl) Bash: git push --force (nobody to ask)\n" +
-		"  1 worktree(s) kept (on_finish.failure: keep); laight abort " + r.Short() + " deletes them\n"
+		"  1 worktree(s) kept (on_finish.failure: keep); laight abort " + r.Short() + " deletes them\n" +
+		"  fix the cause, then go on from where it failed: laight run --from-failed " + r.Short() + "\n"
 	if out.String() != want {
 		t.Errorf("report:\n%s\nwant:\n%s", out.String(), want)
 	}
+
+	// Rerun: its worktrees went with the rerun, which is where to go on from.
+	r.RerunAs = state.NewID(time.Now())
+	out.Reset()
+	report(&out, home, r)
+	if got := out.String(); !strings.HasSuffix(got, "  rerun as "+state.Short(r.RerunAs)+"\n") || strings.Contains(got, "kept") {
+		t.Errorf("report of a run that was rerun:\n%s", got)
+	}
+	r.RerunAs = ""
 
 	r.Seats["rev"].Dir = filepath.Join(home, "gone") // removed: nothing to say about it
 	out.Reset()

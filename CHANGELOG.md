@@ -8,6 +8,11 @@ All notable changes to laight are documented here. The format follows
 
 ### Added
 
+- **Rerun from failed** (#66): `laight run --from-failed <run>` goes on from where a failed or
+  aborted run stopped, with the workflow as it is now (fix the cause first). It keeps the
+  outputs of the steps that finished, the hop count, and each seat's worktree and Claude
+  conversation, and starts again only the failed step, the steps waiting to start and the
+  matrix copies that failed or never ran. A red run's report says how.
 - **Credentials preflight** (#62): a workflow's `credentials: { <name>: { check, login? } }` is
   checked by `laight run` before the rig starts, along with every secret the env reads. A check
   that fails runs its `login` in your terminal, then checks again; one still failing (or with no
