@@ -114,14 +114,18 @@ func TestRerunMatrixCopies(t *testing.T) {
 	}
 }
 
-// A run that failed before its first hop starts over; one that left nothing unfinished can't be
-// rerun.
+// A run that failed before its first hop starts over, in the worktrees it made (it hands them
+// over: left behind, no run would list them); one that left nothing unfinished can't be rerun.
 func TestRerunStartOverOrNothing(t *testing.T) {
 	old, w := redRun(t)
 	old.Hops, old.Steps, old.Failure = 0, nil, &state.Failure{Kind: state.KindCredential, Reason: "no secret"}
+	old.Seats["impl"].Given, old.Seats["rev"].Given = 0, 0 // spin-up gave them sessions, no steps
 	r, err := Rerun(old, w, old.Inputs, "NEW", time.Now())
-	if err != nil || len(r.Queue) != 0 || r.Hops != 0 || len(r.Seats) != 0 {
+	if err != nil || len(r.Queue) != 0 || r.Hops != 0 {
 		t.Fatalf("start over: %+v, %v", r, err)
+	}
+	if s := r.Seats["impl"]; s == nil || s.Dir != old.Seats["impl"].Dir || !s.Worktree || s.SessionID != "" || s.Rerun {
+		t.Errorf("impl on start-over: %+v", s)
 	}
 
 	old, w = redRun(t)
@@ -180,6 +184,9 @@ func TestRerunSeats(t *testing.T) {
 	if s := r.Seats["impl"]; s.Worktree || s.Dir != "" || s.SessionID != "" {
 		t.Errorf("impl moved to the repo kept %+v", s)
 	}
+	if !slices.Equal(r.Kept, []string{old.Seats["impl"].Dir}) { // the rerun cleans it up
+		t.Errorf("kept %v; want impl's old worktree", r.Kept)
+	}
 
 	old, w = redRun(t)
 	old.Seats["impl"].Dir = filepath.Join(t.TempDir(), "gone")
@@ -191,8 +198,17 @@ func TestRerunSeats(t *testing.T) {
 	old, w = redRun(t)
 	old.Seats["old"] = &state.Seat{Window: "old", Dir: t.TempDir(), Worktree: true, SessionID: "x"}
 	r, _ = Rerun(old, w, old.Inputs, "NEW", time.Now())
-	if s := r.Seats["old"]; s == nil || !s.Worktree || s.SessionID != "" {
-		t.Errorf("dropped seat: %+v", s)
+	if s := r.Seats["old"]; s != nil || !slices.Contains(r.Kept, old.Seats["old"].Dir) {
+		t.Errorf("dropped seat: %+v, kept %v", s, r.Kept)
+	}
+
+	// A seat never given a step had no conversation: it gets no note.
+	old, w = redRun(t)
+	old.Seats["rev"].Given = 0
+	w.Seats["rev"].Session = "resume"
+	r, _ = Rerun(old, w, old.Inputs, "NEW", time.Now())
+	if s := r.Seats["rev"]; s.SessionID != "" || s.Rerun {
+		t.Errorf("rev, never given a step: %+v", s)
 	}
 }
 

@@ -19,6 +19,12 @@ that.
   integration test (`TestRerunFromFailed`). Also verified on a real Haiku run: it failed on a
   deny rule, the rule was dropped, and the rerun resumed the same Claude session in the kept
   worktree, got the note and went green without rerunning step one.
+- **#97's review answered** (all 8 findings held, all fixed): every worktree is handed over,
+  start-over included; one no seat uses any more goes on the rerun's `kept` list;
+  `RemoveWorktrees` works under the run's lock, and a recreated worktree reruns `setup:`; the note
+  only reaches seats that had a step; a rerun is refused before the preflight; the hand-over
+  undoes itself if recording it fails; spec §6.3/§7 updated. Not covered by a test: the hand-over
+  undoing itself (it needs a failing write).
 
 ---
 

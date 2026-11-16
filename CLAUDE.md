@@ -442,8 +442,13 @@ the others keep their results). A red run that never got to its first hop starts
 in the workflow may change; the rerun is refused only when the carried state no longer fits (a
 step it keeps or restarts is gone, a step changed between matrix and plain), and a seat whose
 runtime or `cwd` changed, or whose worktree is gone, starts fresh. The red run records
-`rerun_as` and hands its worktrees over (it no longer lists or deletes them; a run is rerun
-once, then its rerun is); the rerun records `rerun_of`. Failed and aborted runs can be rerun.
+`rerun_as` and hands **every** worktree over, under its lock (so an abort deletes it or the rerun
+gets it, never both): it no longer lists or deletes them, and is rerun once, then its rerun is.
+A worktree no seat works in any more (the seat was dropped, or its `cwd` changed) goes on the
+rerun's `kept` list, which `on_finish` and `laight abort` clean up like a seat's. The rerun
+records `rerun_of`. Failed and aborted runs can be rerun. A rerun takes the red run's inputs and
+no others: a required input added since needs a default. It is refused before the preflight, so
+nobody logs in for a rerun that can't happen.
 
 ### 6.4 Parked: the inbox (#67)
 
@@ -538,7 +543,8 @@ it, and an expired item fell back to *deny*, never allow.
 ## 7. Observability
 
 - `events.jsonl` per run: `ts, run, type, step?, seat?, hop?, data`. Types:
-  `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3),
+  `run.started|finished|failed|aborted` (`failed` carries the failure report, §6.3; `started`
+  carries `rerun_of` for a rerun), `run.rerun` (on a red run, after its end: `as`, the rerun),
   `step.started|done|skipped|timeout|nudged`, `seat.up|down|crashed`, `permission.denied` (#61: `tool`,
   `input` redacted and cut, `by` laight or auto mode, auto mode's `reason`; the engine window
   prints each) and `assumption` (#64), `inbox.raised|answered` (parked; `answered` also covers an item that

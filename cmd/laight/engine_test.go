@@ -982,3 +982,67 @@ on_finish: { success: keep, failure: keep }
 		t.Errorf("rerun of a green run: %v %s", err, out)
 	}
 }
+
+// A rerun that can't happen is refused before the preflight, so nobody logs in for it, and a
+// required input added since says how to rerun anyway (#97 review).
+func TestRerunRefusedBeforePreflight(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(extra string) string {
+		return fakeWorkflow(e.bin, extra+`seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - { id: one, seat: a, objective: '"$L" done failed reason=broken' }
+`)
+	}
+	writeWorkflow(t, e, wf(""))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+
+	checked := filepath.Join(e.repo, "checked")
+	writeWorkflow(t, e, wf("inputs: { issue: { required: true } }\ncredentials: { c: { check: touch checked } }\n"))
+	out, err := e.laight("run", "--from-failed", old.Short())
+	if err == nil || !strings.Contains(out, "input issue is required and new since run "+old.Short()+": give it a default") {
+		t.Errorf("new required input: %v %s", err, out)
+	}
+	writeWorkflow(t, e, strings.Replace(wf("credentials: { c: { check: touch checked } }\n"), "id: one", "id: uno", 1))
+	if out, err := e.laight("run", "--from-failed", old.Short()); err == nil || !strings.Contains(out, "step one is no longer in the workflow") {
+		t.Errorf("step gone: %v %s", err, out)
+	}
+	if _, err := os.Stat(checked); !os.IsNotExist(err) {
+		t.Errorf("the preflight ran for a refused rerun: %v", err)
+	}
+	if r, _ := state.Load(e.home, old.ID); r.RerunAs != "" {
+		t.Errorf("a refused rerun took the run over: %q", r.RerunAs)
+	}
+}
+
+// A worktree whose seat moved to the repo stays with the rerun, which cleans it up (#97 review).
+func TestRerunKeptWorktreeCleanedUp(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(cwd, objective string) string {
+		return fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: `+cwd+` }
+steps:
+  - { id: one, seat: a, objective: '`+objective+`' }
+`)
+	}
+	writeWorkflow(t, e, wf("worktree", `"$L" done failed`))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	wt := old.Seats["a"].Dir
+	writeWorkflow(t, e, wf("repo", `"$L" done failed`))
+	e.mustLaight("run", "--from-failed", old.Short())
+	runs, _ := state.List(e.home)
+	r := e.waitFailed(runs[0].ID, state.KindExit)
+	repo, _ := filepath.EvalSymlinks(e.repo)
+	if got := e.rigWorktrees(r); !slices.Equal(got, []string{wt}) || r.Seats["a"].Dir != repo {
+		t.Fatalf("rerun lists %v (want %s), works in %s", got, wt, r.Seats["a"].Dir)
+	}
+	e.mustLaight("abort", r.Short(), "--yes")
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("kept worktree not removed: %v", err)
+	}
+	if _, err := os.Stat(e.repo); err != nil {
+		t.Errorf("the main checkout: %v", err)
+	}
+}

@@ -39,7 +39,8 @@ func Rerun(old *state.Run, w *spec.Workflow, inputs map[string]string, id string
 		Seats: map[string]*state.Seat{}, Created: now.UTC(), RerunOf: old.ID,
 	}
 	if old.Hops == 0 && len(old.Matrix) == 0 {
-		return r, nil // nothing ran: start over (rule 1)
+		carrySeats(old, r) // nothing ran: start over (rule 1), in the worktrees it made
+		return r, nil
 	}
 	r.Hops = old.Hops
 	var problems []string
@@ -121,36 +122,42 @@ func Rerun(old *state.Run, w *spec.Workflow, inputs map[string]string, id string
 		return nil, fmt.Errorf("run %s can't be rerun with the workflow as it is now:\n  %s", old.Short(), strings.Join(problems, "\n  "))
 	}
 
-	for name, prev := range old.Seats {
-		if s := carrySeat(old, w, name, prev); s != nil {
-			r.Seats[name] = s
-		}
-	}
+	carrySeats(old, r)
 	return r, nil
 }
 
-// carrySeat is what a rerun keeps of a seat: its worktree, where it still is and the seat still
-// works in one, and its conversation, where it resumes in the same folder with the same runtime.
-// A seat the workflow dropped keeps only its worktree, so the rerun still cleans it up.
-func carrySeat(old *state.Run, w *spec.Workflow, name string, prev *state.Seat) *state.Seat {
-	was, now := old.Spec.SeatOf(name), w.SeatOf(name)
-	s := &state.Seat{Window: name}
-	if prev.Worktree {
-		if _, err := os.Stat(prev.Dir); err == nil && (now == nil || now.Cwd == "worktree") {
-			s.Dir, s.Worktree, s.SetupDone = prev.Dir, true, prev.SetupDone
+// carrySeats is what a rerun keeps of the red run's seats: each worktree, where it still is and
+// its seat still works in one, and each conversation, where the seat resumes it in the same
+// folder with the same runtime. A worktree no seat works in any more (the seat was dropped, or
+// its cwd changed) goes on r.Kept: the red run hands every worktree over, so the rerun owns its
+// cleanup. Never a seat's Dir: that seat may now work in the main checkout, which a cleanup
+// would delete.
+func carrySeats(old *state.Run, r *state.Run) {
+	r.Kept = slices.Clone(old.Kept)
+	for _, name := range slices.Sorted(maps.Keys(old.Seats)) {
+		prev := old.Seats[name]
+		was, now := old.Spec.SeatOf(name), r.Spec.SeatOf(name)
+		s := &state.Seat{Window: name}
+		if prev.Worktree {
+			if _, err := os.Stat(prev.Dir); err == nil {
+				if now != nil && now.Cwd == "worktree" {
+					s.Dir, s.Worktree, s.SetupDone = prev.Dir, true, prev.SetupDone
+				} else {
+					r.Kept = append(r.Kept, prev.Dir)
+				}
+			}
 		}
-	}
-	if now == nil || was == nil {
-		if !s.Worktree {
-			return nil
+		if now == nil || was == nil {
+			continue
 		}
-		return s
+		sameDir := s.Worktree || (!prev.Worktree && was.Cwd == now.Cwd)
+		// Only a seat that was given a step has a conversation: spin-up gives every seat a session
+		// id, used or not.
+		if sameDir && was.Runtime == now.Runtime && now.Session != "fresh" && prev.SessionID != "" && prev.Given > 0 {
+			s.SessionID, s.Rerun = prev.SessionID, true
+		}
+		r.Seats[name] = s
 	}
-	sameDir := s.Worktree || (!prev.Worktree && was.Cwd == now.Cwd)
-	if sameDir && was.Runtime == now.Runtime && now.Session != "fresh" && prev.SessionID != "" {
-		s.SessionID, s.Rerun = prev.SessionID, true
-	}
-	return s
 }
 
 // RerunNote is pasted before the first step a resumed seat gets in a rerun: its conversation goes

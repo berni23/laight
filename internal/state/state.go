@@ -50,6 +50,7 @@ type Run struct {
 	Finished *time.Time        `json:"finished,omitempty"`
 	RerunOf  string            `json:"rerun_of,omitempty"` // the red run this one continues (#66)
 	RerunAs  string            `json:"rerun_as,omitempty"` // the run that continues this one: its worktrees went with it
+	Kept     []string          `json:"kept,omitempty"`     // worktrees handed over by the run this one reruns that no seat works in
 
 	// The engine's progress.
 	Hops   int                    `json:"hops"`             // step starts so far (loop_guards.max_hops)

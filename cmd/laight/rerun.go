@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -63,6 +64,20 @@ func cmdRerun(args []string, stdout, stderr io.Writer) int {
 	}
 	inputs, err := parseInputs(w, given)
 	if err != nil {
+		var missing []string
+		for _, k := range slices.Sorted(maps.Keys(w.Inputs)) {
+			if _, had := old.Inputs[k]; !had && w.Inputs[k].Required && w.Inputs[k].Default == nil {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) > 0 { // a rerun takes the red run's inputs, and no others
+			return fail(stderr, "input %s is required and new since run %s: give it a default in the workflow to rerun it", strings.Join(missing, ", "), old.Short())
+		}
+		return fail(stderr, "%v", err)
+	}
+	// Refused before the preflight, which may ask for a login: a rerun that can't happen must not.
+	id := state.NewID(time.Now())
+	if _, err := engine.Rerun(old, w, inputs, id, time.Now()); err != nil {
 		return fail(stderr, "%v", err)
 	}
 	if code := beforeRun(w, p.Root, stdout, stderr); code != 0 {
@@ -70,9 +85,10 @@ func cmdRerun(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Built and created under the red run's lock, which records the hand-over: two reruns of one
-	// run can't both take its worktrees.
-	id := state.NewID(time.Now())
+	// run can't both take its worktrees, nor can an abort delete them as they go. If recording it
+	// fails, the new run goes: its worktrees are still the red run's.
 	var r *state.Run
+	created := false
 	if _, err := state.Update(home, old.ID, func(o *state.Run) error {
 		var err error
 		if r, err = engine.Rerun(o, w, inputs, id, time.Now()); err != nil {
@@ -82,9 +98,12 @@ func cmdRerun(args []string, stdout, stderr io.Writer) int {
 		if err := state.Create(home, r); err != nil {
 			return err
 		}
-		o.RerunAs = id
+		created, o.RerunAs = true, id
 		return nil
 	}); err != nil {
+		if created {
+			os.RemoveAll(state.Dir(home, id))
+		}
 		return fail(stderr, "%v", err)
 	}
 	state.Append(home, state.Event{Run: old.ID, Type: "run.rerun", Data: map[string]any{"as": id}})
