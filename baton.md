@@ -23,6 +23,10 @@ that.
   children are stopped, a rig-start missing secret names its seat, and Ctrl-C stops the
   preflight. Spec §4, §6.1, §8. Older defects it surfaced: #93 (seat env and secrets in the tmux
   server's env), #94 (keychain prompts), #95 (seat `setup` leftovers).
+- **#92's fixes re-checked** (2026-11-16, `/cross:fix-cr`, two planners): all hold. Two gaps
+  fixed: the engine's env file drops names bash's sh holds read-only (`SHELLOPTS`, `EUID`…,
+  which aborted the engine window), and `engine.env` is removed when the session can't start.
+  `rig.Down`'s raw `error` field: #96 (older than #92).
 
 ---
 
@@ -36,7 +40,9 @@ preflight too (`preflight` in `cmd/laight/credentials.go`).
 ### 2. #93, seat windows and the tmux server's environment
 
 A §12.4 leak (a `LAIGHT_SECRET_*` value in tmux's global env reaches every later seat), and the
-seat half of what #92 fixed for the engine. Small, and the pattern is already there.
+seat half of what #92 fixed for the engine. Small, and the pattern is already there: reuse
+`engineEnv`'s filter (read-only names included) for seats. Take #96 (scrub the reason in
+`rig.Down`) alongside: as small.
 
 ### 3. #82, declared step outputs
 

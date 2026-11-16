@@ -91,6 +91,7 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		})
 	}
 	if err != nil {
+		os.Remove(envFile) // the whole environment, secrets included: no window will read it
 		state.Update(home, id, func(r *state.Run) error { r.Status, r.Error = state.Failed, err.Error(); return nil })
 		return fail(stderr, "%v", err)
 	}
@@ -103,8 +104,8 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 }
 
 // engineEnv is the environment of `laight run` for its engine, minus what belongs to this shell
-// or terminal (the engine's tmux window sets its own TERM, TMUX and TMUX_PANE) and names sh
-// can't export.
+// or terminal (the engine's tmux window sets its own TERM, TMUX and TMUX_PANE), names sh can't
+// export and names it holds read-only.
 func engineEnv(environ []string, home string) map[string]string {
 	env := map[string]string{}
 	for _, kv := range environ {
@@ -112,6 +113,8 @@ func engineEnv(environ []string, home string) map[string]string {
 		switch k {
 		case "TMUX", "TMUX_PANE", "TERM", "COLUMNS", "LINES", "PWD", "OLDPWD", "SHLVL", "_":
 			continue
+		case "SHELLOPTS", "BASHOPTS", "BASH_VERSINFO", "UID", "EUID", "PPID":
+			continue // read-only in bash's sh: assigning one aborts the env file, and the engine with it
 		}
 		if shellName.MatchString(k) {
 			env[k] = v

@@ -177,3 +177,17 @@ steps:
 		t.Errorf("engine.env left behind: %v", err)
 	}
 }
+
+// The engine's env file loads in sh whatever `laight run` inherited: a name bash's sh holds
+// read-only would abort it, and the engine window with it.
+func TestEngineEnvLoads(t *testing.T) {
+	env := engineEnv([]string{"SHELLOPTS=braceexpand", "BASHOPTS=x", "UID=1", "EUID=1", "PPID=1", "FOO=bar", "BAD-NAME=x", "TMUX=/s,1,0"}, "/h")
+	file := filepath.Join(t.TempDir(), "engine.env")
+	if err := tmux.WriteEnv(file, env); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("sh", "-c", tmux.EnvCmd(file, `echo "$FOO $LAIGHT_HOME"`)).CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "bar /h" {
+		t.Fatalf("env file didn't load: %v\n%s", err, out)
+	}
+}
