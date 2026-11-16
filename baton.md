@@ -11,30 +11,47 @@ that.
 
 ---
 
-## Last session — 2026-11-14
+## Last session — 2026-11-15
 
-- **#67 done**: `laight inbox` is out of `--help` (still works), and `laight run` no longer opens
-  the inbox pane. Until #64, gates and questions are answered with `laight inbox`, which the
-  engine window names. Spec status line and §6.4, CHANGELOG. #55, #59, #49, #26 were already
-  labelled `parked`.
+- **#62 done**: `credentials: { <name>: { check, login? } }`, the preflight in `laight run`
+  (secrets the env names, then every check; a failing one's login in the terminal), and `kind:
+  credential` for a missing secret and for a step that fails the run while a check fails.
+  Verified on a real run: an expired AWS SSO profile, logged in from the preflight, then used
+  from a seat (shell runtime). `min_valid` split off to #91.
+- **#92's review answered**: the engine now gets `laight run`'s environment (a 0600 file), the
+  re-check runs checks in parallel and keeps the run live until the next tick, a check's leftover
+  children are stopped, a rig-start missing secret names its seat, and Ctrl-C stops the
+  preflight. Spec §4, §6.1, §8. Older defects it surfaced: #93 (seat env and secrets in the tmux
+  server's env), #94 (keychain prompts), #95 (seat `setup` leftovers).
+- **#92's fixes re-checked** (2026-11-16, `/cross:fix-cr`, two planners): all hold. Two gaps
+  fixed: the engine's env file drops names bash's sh holds read-only (`SHELLOPTS`, `EUID`…,
+  which aborted the engine window), and `engine.env` is removed when the session can't start.
+  `rig.Down`'s raw `error` field: #96 (older than #92).
 
 ---
 
 ## Do this next
 
-### 1. #62, credentials preflight
+### 1. #66, rerun from failed
 
-§10 M3 order. `credentials: { <name>: { check, login?, min_valid? } }`, run before the rig spins
-up; a missing secret becomes failure kind `credential` instead of `crash`.
+§10 M3 order. Matters more now that runs fail instead of waiting. The rerun should run the
+preflight too (`preflight` in `cmd/laight/credentials.go`).
 
-### 2. #66, rerun from failed
+### 2. #93, seat windows and the tmux server's environment
 
-Matters more now that runs fail instead of waiting.
+A §12.4 leak (a `LAIGHT_SECRET_*` value in tmux's global env reaches every later seat), and the
+seat half of what #92 fixed for the engine. Small, and the pattern is already there: reuse
+`engineEnv`'s filter (read-only names included) for seats. Take #96 (scrub the reason in
+`rig.Down`) alongside: as small.
 
 ### 3. #82, declared step outputs
 
 Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
 a dry render at `laight run`. Required exactly for steps whose outputs another step reads.
+
+### 4. #64, the `human:` policy and gate defaults
+
+Next in §10's M3 order after #66.
 
 ---
 

@@ -10,12 +10,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/berni23/laight/internal/engine"
+	"github.com/berni23/laight/internal/inbox"
 	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/spec"
 	"github.com/berni23/laight/internal/state"
@@ -51,6 +53,15 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	if _, err := tmux.Version(); err != nil {
 		return fail(stderr, "%v", err)
 	}
+	// Ctrl-C reaches the login (it shares the terminal), not a check (its own session): this
+	// stops the check, instead of leaving it behind with its timeout.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err = preflight(ctx, w, p.Root, interactive(), stdout)
+	stop()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return fail(stderr, "the run didn't start: it needs the access above")
+	}
 	home, laight, err := homeAndBinary()
 	if err != nil {
 		return fail(stderr, "%v", err)
@@ -69,11 +80,18 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, "%v", err)
 	}
 	srv := tmux.Server{Socket: state.Socket(home)}
-	err = srv.NewSession(r.Session, tmux.Window{
-		Name: rig.EngineWindow, Dir: p.Root,
-		Cmd: tmux.Join([]string{"env", "LAIGHT_HOME=" + home, laight, "engine", id}),
-	})
+	// The engine gets the environment the preflight checked with: a window has the tmux server's,
+	// which is another shell's once laight's server is up for another run.
+	envFile := filepath.Join(state.Dir(home, id), "engine.env")
+	err = tmux.WriteEnv(envFile, engineEnv(os.Environ(), home))
+	if err == nil {
+		err = srv.NewSession(r.Session, tmux.Window{
+			Name: rig.EngineWindow, Dir: p.Root,
+			Cmd: tmux.EnvCmd(envFile, tmux.Join([]string{laight, "engine", id})),
+		})
+	}
 	if err != nil {
+		os.Remove(envFile) // the whole environment, secrets included: no window will read it
 		state.Update(home, id, func(r *state.Run) error { r.Status, r.Error = state.Failed, err.Error(); return nil })
 		return fail(stderr, "%v", err)
 	}
@@ -84,6 +102,29 @@ func cmdRun(args []string, stdout, stderr io.Writer) int {
 	}
 	return follow(srv, home, r, "", stdout, stderr)
 }
+
+// engineEnv is the environment of `laight run` for its engine, minus what belongs to this shell
+// or terminal (the engine's tmux window sets its own TERM, TMUX and TMUX_PANE), names sh can't
+// export and names it holds read-only.
+func engineEnv(environ []string, home string) map[string]string {
+	env := map[string]string{}
+	for _, kv := range environ {
+		k, v, _ := strings.Cut(kv, "=")
+		switch k {
+		case "TMUX", "TMUX_PANE", "TERM", "COLUMNS", "LINES", "PWD", "OLDPWD", "SHLVL", "_":
+			continue
+		case "SHELLOPTS", "BASHOPTS", "BASH_VERSINFO", "UID", "EUID", "PPID":
+			continue // read-only in bash's sh: assigning one aborts the env file, and the engine with it
+		}
+		if shellName.MatchString(k) {
+			env[k] = v
+		}
+	}
+	env["LAIGHT_HOME"] = home
+	return env
+}
+
+var shellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // parseInputs turns key=value arguments into the run's inputs, with defaults, and checks them.
 func parseInputs(w *spec.Workflow, args []string) (map[string]string, error) {
@@ -179,6 +220,20 @@ func cmdEngine(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "\n✕ %v\n", err)
 		reason, _, _ := strings.Cut(err.Error(), "\n") // the screen excerpt stays out of run.json
+		// A seat's secret, gone since the preflight (or named by no literal it could look up):
+		// access is missing, not the rig. Redacted like any failure, and only if it is the first.
+		if errors.Is(err, spec.ErrNoSecret) {
+			f := &state.Failure{Kind: state.KindCredential, Reason: inbox.Scrub(inbox.Clean(reason)), At: time.Now().UTC()}
+			if se := (*rig.SeatError)(nil); errors.As(err, &se) {
+				f.Seat = se.Seat
+			}
+			state.Update(home, id, func(r *state.Run) error {
+				if r.Failure == nil {
+					r.Failure = f
+				}
+				return nil
+			})
+		}
 		if err := g.Down(id, state.Failed, reason); err != nil {
 			fmt.Fprintf(stdout, "teardown: %v\n", err)
 		}

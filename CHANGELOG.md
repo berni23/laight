@@ -6,6 +6,16 @@ All notable changes to laight are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Credentials preflight** (#62): a workflow's `credentials: { <name>: { check, login? } }` is
+  checked by `laight run` before the rig starts, along with every secret the env reads. A check
+  that fails runs its `login` in your terminal, then checks again; one still failing (or with no
+  login, or no terminal) keeps the run from starting. A step that fails the run while a check
+  fails ends it with failure kind `credential`, and so does a secret that can't be found (was
+  `crash`). `validate` rejects templates in credential commands. The engine now runs with the
+  environment of the `laight run` that started it, not the tmux server's.
+
 ### Changed
 
 - **The inbox is parked** (#67): `laight inbox` is gone from `laight --help` but still works,
@@ -24,7 +34,7 @@ All notable changes to laight are documented here. The format follows
   log, and every request a seat was denied, on green runs too) and exit non-zero. Kinds: `exit`
   (`laight done failed reason="…"`), `permission` (the same after a denied request), `shell`,
   `timeout`, `stuck`, `crash` (a dead engine too), `config` (a template that didn't render, a shell step's `env` included; a missing secret
-  stays `crash`),
+  is `credential`, #62),
   `max_hops`, `aborted`. The reason and detail
   are redacted and stripped of control characters. An open gate doesn't keep a failed run alive.
 - **A stuck step no longer asks anyone** (#63). An agent that stops twice without `laight done`

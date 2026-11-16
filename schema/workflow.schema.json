@@ -34,6 +34,20 @@
         "deny": { "$ref": "#/$defs/deny" }
       }
     },
+    "credentials": {
+      "type": "object",
+      "description": "What the run needs access to, checked before the rig starts. `laight run` runs every check; one that fails runs its login in your terminal, then checks again; still failing, the run doesn't start. A step that fails mid-run while a check fails ends the run with kind credential.",
+      "propertyNames": { "$ref": "#/$defs/ident" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["check"],
+        "additionalProperties": false,
+        "properties": {
+          "check": { "type": "string", "minLength": 1, "description": "A command that exits 0 when the credential works, e.g. aws sts get-caller-identity --profile agents. Runs as written (no templates) in the repo, with your environment and no terminal." },
+          "login": { "type": "string", "minLength": 1, "description": "Optional: an interactive command that makes the check pass, run in your terminal when it fails, e.g. aws sso login --profile agents." }
+        }
+      }
+    },
     "seats": {
       "type": "object",
       "description": "The rig: exactly these agents are started for a run.",

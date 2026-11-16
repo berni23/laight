@@ -678,7 +678,7 @@ func TestDeliverCompactFirst(t *testing.T) {
 }
 
 // A shell step's env that doesn't render is the workflow's fault (config), the step's or the
-// workflow's env alike; a secret that can't be found is not (crash, until #62's credential).
+// workflow's env alike; a secret that can't be found is not: access is missing (credential).
 func TestShellEnvRenderKind(t *testing.T) {
 	for _, c := range []struct {
 		name     string
@@ -688,7 +688,7 @@ func TestShellEnvRenderKind(t *testing.T) {
 	}{
 		{"step env", nil, spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, state.KindConfig},
 		{"workflow env", spec.StringMap{"PR": "{{ .steps.x.out.pr }}"}, nil, state.KindConfig},
-		{"missing secret", nil, spec.StringMap{"TOK": `{{ secret "laight-test-no-such-secret" }}`}, state.KindCrash},
+		{"missing secret", nil, spec.StringMap{"TOK": `{{ secret "laight-test-no-such-secret" }}`}, state.KindCredential},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e, id := hooked(t, []*spec.Step{{ID: "s", Type: spec.TypeShell, Run: "true", Env: c.stepEnv}})

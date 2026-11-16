@@ -67,6 +67,15 @@ func (c *checker) workflow() {
 	}
 	c.env([]string{"env"}, c.w.Env)
 	c.deny([]string{"permissions", "deny"}, c.w.Permissions.Deny, c.exits(""))
+	for _, name := range sortedKeys(c.w.Credentials) {
+		cr := c.w.Credentials[name]
+		for _, f := range [][2]string{{"check", cr.Check}, {"login", cr.Login}} {
+			if field, cmd := f[0], f[1]; strings.Contains(cmd, "{{") {
+				// Run before any run exists, as written: there is nothing to render them with.
+				c.add(Error, []string{"credentials", name, field}, "%q: credential commands are not templates; write the profile or account itself", cmd)
+			}
+		}
+	}
 }
 
 func (c *checker) seats() {
