@@ -3,13 +3,13 @@
 package rig
 
 import (
-	"cmp"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -185,11 +185,19 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 		}
 	}
 
-	// How it starts.
-	env, err := seatEnv(r, seat)
+	// How it starts: from the run's environment (the engine's), not the tmux server's, which is
+	// some other shell's; minus secrets, which reach a seat only through its env (§12.4).
+	own, err := seatEnv(r, seat)
 	if err != nil {
 		return err
 	}
+	env := tmux.Environ(os.Environ())
+	for k := range env {
+		if strings.HasPrefix(k, tmux.SecretPrefix) || k == inbox.RedactEnv {
+			delete(env, k)
+		}
+	}
+	maps.Copy(env, own)
 	env["LAIGHT_RUN"], env["LAIGHT_SEAT"], env["LAIGHT_HOME"] = r.ID, name, g.Home
 	if g.Laight != "" {
 		// Agents learn `laight done`: the binary running this rig is the one they find first,
@@ -203,7 +211,7 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 		if err := os.Symlink(g.Laight, filepath.Join(bin, "laight")); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
 		}
-		env["PATH"] = bin + string(os.PathListSeparator) + cmp.Or(env["PATH"], os.Getenv("PATH"))
+		env["PATH"] = bin + string(os.PathListSeparator) + env["PATH"]
 	}
 	if st.SessionID == "" {
 		st.SessionID = uuid()
@@ -223,7 +231,11 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 
 	g.Tmux.KillWindow(r.Session, name) // a dead pane left from a crash
 	envFile := filepath.Join(runDir, "seats", name+".env")
-	if err := tmux.WriteEnv(envFile, env); err != nil {
+	stale, err := g.Tmux.Stale(env)
+	if err != nil {
+		return err
+	}
+	if err := tmux.WriteEnv(envFile, env, stale); err != nil {
 		return err
 	}
 	if err := g.Tmux.NewWindow(r.Session, tmux.Window{Name: name, Dir: st.Dir, Cmd: tmux.EnvCmd(envFile, rt.Command(l))}); err != nil {
@@ -373,6 +385,8 @@ var bootTime = proc.BootTime // a test can make it fail
 // window Down itself runs in (the engine, or a seat where someone typed `laight abort`) is
 // spared until then, so Down always gets to finish. status is Succeeded, Failed or Aborted.
 func (g *Rig) Down(id, status, reason string) error {
+	// Callers pass raw text (an error, a line of output): it goes to run.json and an event.
+	reason = inbox.Scrub(inbox.Clean(reason))
 	r, err := state.Load(g.Home, id)
 	if err != nil {
 		return err
@@ -450,7 +464,7 @@ const EngineDied = "its engine died"
 // endFailure is the failure report of a run that ends red without a step failing: an abort, or
 // the rig or engine failing. It names the steps that were running.
 func endFailure(r *state.Run, status, reason string, at time.Time) *state.Failure {
-	f := &state.Failure{Kind: state.KindCrash, Reason: inbox.Scrub(inbox.Clean(reason)), At: at}
+	f := &state.Failure{Kind: state.KindCrash, Reason: reason, At: at}
 	if status == state.Aborted && reason != EngineDied {
 		f.Kind = state.KindAborted
 		if f.Reason == "" {
@@ -555,6 +569,8 @@ func setup(ctx context.Context, dir, cmd, logFile string) error {
 	defer f.Close()
 	c := exec.CommandContext(ctx, "sh", "-c", cmd)
 	c.Dir, c.Stdout, c.Stderr = dir, f, f
+	// Its log is not redacted: no secret, as for the seat (§12.4).
+	c.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool { return strings.HasPrefix(kv, tmux.SecretPrefix) })
 	if err := c.Run(); err != nil {
 		b, _ := os.ReadFile(logFile)
 		return fmt.Errorf("setup %q failed (%v):\n%s", cmd, err, tail(string(b), 15))

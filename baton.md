@@ -11,44 +11,31 @@ that.
 
 ---
 
-## Last session — 2026-11-16
+## Last session — 2026-11-17
 
-- **#66 done**: `laight run --from-failed <run>`. Decisions recorded on #66 and in spec §6.3
-  (shape-only strictness, the hop count carries over, worktrees reused in place and handed over
-  via `rerun_as`). Covered by unit tests (`internal/engine/rerun_test.go`) and the fake-runtime
-  integration test (`TestRerunFromFailed`). Also verified on a real Haiku run: it failed on a
-  deny rule, the rule was dropped, and the rerun resumed the same Claude session in the kept
-  worktree, got the note and went green without rerunning step one.
-- **#97's review answered** (all 8 findings held, all fixed): every worktree is handed over,
-  start-over included; one no seat uses any more goes on the rerun's `kept` list;
-  `RemoveWorktrees` works under the run's lock, and a recreated worktree reruns `setup:`; the note
-  only reaches seats that had a step; a rerun is refused before the preflight; the hand-over
-  undoes itself if recording it fails; spec §6.3/§7 updated. Not covered by a test: the hand-over
-  undoing itself (it needs a failing write).
-- **#97's review re-checked (2026-11-17)**: every fix holds at f0fe4f3. The reviewer's dropped
-  #10 was real after all: a run red after a matrix step expanded but before any copy started has
-  no hops, and `rerunPlan` printed "starts over" while the rerun carries the matrix. Fixed,
-  pinned by `TestRerunPlanMatrixBeforeFirstHop`.
-- **A rerun resolves its base again** (decided 2026-11-17): it no longer carries the red run's
-  base ref, so `rig.Up` fetches `origin/<base>` as for any run; a seat that starts fresh gets a
-  fix pushed to base since, and a `base:` changed in the YAML. Spec §6.3 updated.
+- **#93 done**: seat windows start from the run's environment (the engine's), minus every
+  `LAIGHT_SECRET_*`, through their env file, which also unsets what laight's tmux server holds
+  and the run doesn't; the tmux client never hands the server a secret; a seat's `setup:` gets
+  no secret either. Spec §5 and §12.4 updated. Pinned by `TestSeatGetsRunEnv` (stale server) and
+  `TestServerEnv`, both checked red with the fix mutated away; verified on a real Haiku run.
+  Its review answered (all 6 findings fixed): the caller's Claude Code session and git's
+  repo-local variables no longer reach the engine or seats; `Stale` fails on a tmux error and
+  removes an old server's secrets; a seat's `setup:` gets no secret, now pinned. Filed #102
+  (`laight run`'s own git calls). Real Haiku run from inside Claude Code: the seat holds its own
+  session id, not the caller's.
+- **#96 done**: `rig.Down` scrubs its reason once, so `run.json`'s `error` and the run event are
+  redacted too. Pinned by `TestDownScrubsReason` (checked red without the fix).
 
 ---
 
 ## Do this next
 
-### 1. #93, seat windows and the tmux server's environment
-
-A §12.4 leak (a `LAIGHT_SECRET_*` value in tmux's global env reaches every later seat), and the
-seat half of what #92 fixed for the engine. Reuse `engineEnv`'s filter (read-only names
-included) for seats. Take #96 (scrub the reason in `rig.Down`) alongside: it's just as small.
-
-### 2. #82, declared step outputs
+### 1. #82, declared step outputs
 
 Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
 a dry render at `laight run` (and at `--from-failed`, against the carried outputs).
 
-### 3. #64, the `human:` policy and gate defaults
+### 2. #64, the `human:` policy and gate defaults
 
 Next in §10's M3 order now that #66 is in.
 
