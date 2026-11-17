@@ -188,6 +188,14 @@ All notable changes to laight are documented here. The format follows
 
 ### Fixed
 
+- **Seats get the run's environment, and never a secret they don't use** (#93). A seat window
+  starts from the environment of `laight run`, like the engine, not from laight's tmux server's
+  (another shell's, when the server was up for an earlier run): a variable exported for this run
+  reaches its agents, and one only that other shell had doesn't. A `LAIGHT_SECRET_*` you export
+  reaches a seat (or its `setup:`) only through a `{{ secret }}` in its `env`, and laight's tmux
+  server never holds one.
+- **A run's end reason is redacted** (#96) in `run.json`'s `error` and the `run.failed` /
+  `run.aborted` event, as it already was in the failure report.
 - **A hung turn times out even while Claude's spinner runs** (#72). A step's quiet clock reads the
   agent's transcripts (the session's, and its background agents' beside it), which Claude writes
   with every message and tool call, not the pane log, which the spinner keeps growing. A seat

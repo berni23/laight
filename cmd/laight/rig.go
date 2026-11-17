@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -101,7 +100,8 @@ func startRun(home, laight string, r *state.Run, stdout, stderr io.Writer) int {
 	// The engine gets the environment the preflight checked with: a window has the tmux server's,
 	// which is another shell's once laight's server is up for another run.
 	envFile := filepath.Join(state.Dir(home, id), "engine.env")
-	err := tmux.WriteEnv(envFile, engineEnv(os.Environ(), home))
+	env := engineEnv(os.Environ(), home)
+	err := tmux.WriteEnv(envFile, env, srv.Stale(env))
 	if err == nil {
 		err = srv.NewSession(r.Session, tmux.Window{
 			Name: rig.EngineWindow, Dir: r.Repo,
@@ -121,28 +121,13 @@ func startRun(home, laight string, r *state.Run, stdout, stderr io.Writer) int {
 	return follow(srv, home, r, "", stdout, stderr)
 }
 
-// engineEnv is the environment of `laight run` for its engine, minus what belongs to this shell
-// or terminal (the engine's tmux window sets its own TERM, TMUX and TMUX_PANE), names sh can't
-// export and names it holds read-only.
+// engineEnv is the environment of `laight run` for its engine (tmux.Environ), secrets included:
+// the engine renders the seats' `{{ secret }}` env.
 func engineEnv(environ []string, home string) map[string]string {
-	env := map[string]string{}
-	for _, kv := range environ {
-		k, v, _ := strings.Cut(kv, "=")
-		switch k {
-		case "TMUX", "TMUX_PANE", "TERM", "COLUMNS", "LINES", "PWD", "OLDPWD", "SHLVL", "_":
-			continue
-		case "SHELLOPTS", "BASHOPTS", "BASH_VERSINFO", "UID", "EUID", "PPID":
-			continue // read-only in bash's sh: assigning one aborts the env file, and the engine with it
-		}
-		if shellName.MatchString(k) {
-			env[k] = v
-		}
-	}
+	env := tmux.Environ(environ)
 	env["LAIGHT_HOME"] = home
 	return env
 }
-
-var shellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // parseInputs turns key=value arguments into the run's inputs, with defaults, and checks them.
 func parseInputs(w *spec.Workflow, args []string) (map[string]string, error) {

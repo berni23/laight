@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -40,8 +41,10 @@ func Version() (string, error) {
 
 func (s Server) cmd(args ...string) *exec.Cmd {
 	c := exec.Command("tmux", append([]string{"-L", s.Socket}, args...)...)
-	// Run the client outside any tmux the caller is in, so tmux never refuses to nest.
-	c.Env = withoutTMUX(os.Environ())
+	// Run the client outside any tmux the caller is in, so tmux never refuses to nest. Without
+	// secrets either: a client that starts the server gives it its environment, which every
+	// later window of every run would inherit (§12.4).
+	c.Env = clientEnv(os.Environ())
 	return c
 }
 
@@ -102,6 +105,49 @@ func windowArgs(w Window) []string {
 	return args
 }
 
+// SecretPrefix starts the name of every environment variable that holds a secret.
+const SecretPrefix = "LAIGHT_SECRET_"
+
+// Environ returns environ as a window's environment, for WriteEnv: minus what belongs to the
+// caller's shell or terminal (tmux sets a window's own TERM, TMUX and TMUX_PANE), names sh can't
+// export and names it holds read-only.
+func Environ(environ []string) map[string]string {
+	env := map[string]string{}
+	for _, kv := range environ {
+		k, v, _ := strings.Cut(kv, "=")
+		if shellName.MatchString(k) && !tmuxOwned[k] && !readOnly[k] {
+			env[k] = v
+		}
+	}
+	return env
+}
+
+var (
+	shellName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	tmuxOwned = map[string]bool{"TMUX": true, "TMUX_PANE": true, "TERM": true, "TERM_PROGRAM": true,
+		"TERM_PROGRAM_VERSION": true, "COLUMNS": true, "LINES": true, "PWD": true, "OLDPWD": true, "SHLVL": true, "_": true}
+	// Read-only in bash's sh: assigning or unsetting one aborts the env file, and the window with it.
+	readOnly = map[string]bool{"SHELLOPTS": true, "BASHOPTS": true, "BASH_VERSINFO": true, "UID": true, "EUID": true, "PPID": true}
+)
+
+// Stale returns the names in the server's global environment that env doesn't set, for WriteEnv
+// to unset: a window starts from the server's environment, which is that of whichever shell
+// started it, maybe for another run. None when the server isn't running.
+func (s Server) Stale(env map[string]string) []string {
+	out, err := s.run("show-environment", "-g")
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		k, _, ok := strings.Cut(line, "=")
+		if _, set := env[k]; ok && !set && shellName.MatchString(k) && !tmuxOwned[k] && !readOnly[k] {
+			names = append(names, k)
+		}
+	}
+	return names
+}
+
 // EnvCmd returns a command line that exports the variables in envFile (written by WriteEnv),
 // deletes the file and then runs cmd (the user's shell when cmd is empty). It runs under sh,
 // whatever the user's default shell is.
@@ -113,14 +159,18 @@ func EnvCmd(envFile, cmd string) string {
 	return Join([]string{"sh", "-c", "set -a && . " + f + " && set +a && rm -f " + f + " && exec " + cmd})
 }
 
-// WriteEnv writes env as an sh script readable only by the user, for EnvCmd.
-func WriteEnv(file string, env map[string]string) error {
+// WriteEnv writes env as an sh script readable only by the user, for EnvCmd. The script unsets
+// the names in unset first (see Stale).
+func WriteEnv(file string, env map[string]string, unset []string) error {
 	keys := make([]string, 0, len(env))
 	for k := range env {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	var b strings.Builder
+	for _, k := range unset {
+		fmt.Fprintf(&b, "unset %s\n", k)
+	}
 	for _, k := range keys {
 		fmt.Fprintf(&b, "%s=%s\n", k, Quote(env[k]))
 	}
@@ -315,10 +365,10 @@ func Join(argv []string) string {
 	return strings.Join(q, " ")
 }
 
-func withoutTMUX(env []string) []string {
+func clientEnv(env []string) []string {
 	out := env[:0:0]
 	for _, e := range env {
-		if !strings.HasPrefix(e, "TMUX=") && !strings.HasPrefix(e, "TMUX_PANE=") {
+		if !strings.HasPrefix(e, "TMUX=") && !strings.HasPrefix(e, "TMUX_PANE=") && !strings.HasPrefix(e, SecretPrefix) {
 			out = append(out, e)
 		}
 	}
