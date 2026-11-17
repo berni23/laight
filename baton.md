@@ -11,47 +11,43 @@ that.
 
 ---
 
-## Last session — 2026-11-15
+## Last session — 2026-11-16
 
-- **#62 done**: `credentials: { <name>: { check, login? } }`, the preflight in `laight run`
-  (secrets the env names, then every check; a failing one's login in the terminal), and `kind:
-  credential` for a missing secret and for a step that fails the run while a check fails.
-  Verified on a real run: an expired AWS SSO profile, logged in from the preflight, then used
-  from a seat (shell runtime). `min_valid` split off to #91.
-- **#92's review answered**: the engine now gets `laight run`'s environment (a 0600 file), the
-  re-check runs checks in parallel and keeps the run live until the next tick, a check's leftover
-  children are stopped, a rig-start missing secret names its seat, and Ctrl-C stops the
-  preflight. Spec §4, §6.1, §8. Older defects it surfaced: #93 (seat env and secrets in the tmux
-  server's env), #94 (keychain prompts), #95 (seat `setup` leftovers).
-- **#92's fixes re-checked** (2026-11-16, `/cross:fix-cr`, two planners): all hold. Two gaps
-  fixed: the engine's env file drops names bash's sh holds read-only (`SHELLOPTS`, `EUID`…,
-  which aborted the engine window), and `engine.env` is removed when the session can't start.
-  `rig.Down`'s raw `error` field: #96 (older than #92).
+- **#66 done**: `laight run --from-failed <run>`. Decisions recorded on #66 and in spec §6.3
+  (shape-only strictness, the hop count carries over, worktrees reused in place and handed over
+  via `rerun_as`). Covered by unit tests (`internal/engine/rerun_test.go`) and the fake-runtime
+  integration test (`TestRerunFromFailed`). Also verified on a real Haiku run: it failed on a
+  deny rule, the rule was dropped, and the rerun resumed the same Claude session in the kept
+  worktree, got the note and went green without rerunning step one.
+- **#97's review answered** (all 8 findings held, all fixed): every worktree is handed over,
+  start-over included; one no seat uses any more goes on the rerun's `kept` list;
+  `RemoveWorktrees` works under the run's lock, and a recreated worktree reruns `setup:`; the note
+  only reaches seats that had a step; a rerun is refused before the preflight; the hand-over
+  undoes itself if recording it fails; spec §6.3/§7 updated. Not covered by a test: the hand-over
+  undoing itself (it needs a failing write).
+- **#97's review re-checked (2026-11-17)**: every fix holds at f0fe4f3. The reviewer's dropped
+  #10 was real after all: a run red after a matrix step expanded but before any copy started has
+  no hops, and `rerunPlan` printed "starts over" while the rerun carries the matrix. Fixed,
+  pinned by `TestRerunPlanMatrixBeforeFirstHop`.
 
 ---
 
 ## Do this next
 
-### 1. #66, rerun from failed
-
-§10 M3 order. Matters more now that runs fail instead of waiting. The rerun should run the
-preflight too (`preflight` in `cmd/laight/credentials.go`).
-
-### 2. #93, seat windows and the tmux server's environment
+### 1. #93, seat windows and the tmux server's environment
 
 A §12.4 leak (a `LAIGHT_SECRET_*` value in tmux's global env reaches every later seat), and the
-seat half of what #92 fixed for the engine. Small, and the pattern is already there: reuse
-`engineEnv`'s filter (read-only names included) for seats. Take #96 (scrub the reason in
-`rig.Down`) alongside: as small.
+seat half of what #92 fixed for the engine. Reuse `engineEnv`'s filter (read-only names
+included) for seats. Take #96 (scrub the reason in `rig.Down`) alongside: it's just as small.
 
-### 3. #82, declared step outputs
+### 2. #82, declared step outputs
 
 Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
-a dry render at `laight run`. Required exactly for steps whose outputs another step reads.
+a dry render at `laight run` (and at `--from-failed`, against the carried outputs).
 
-### 4. #64, the `human:` policy and gate defaults
+### 3. #64, the `human:` policy and gate defaults
 
-Next in §10's M3 order after #66.
+Next in §10's M3 order now that #66 is in.
 
 ---
 

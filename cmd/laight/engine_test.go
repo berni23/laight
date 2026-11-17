@@ -926,3 +926,123 @@ func TestSessionStartHook(t *testing.T) {
 		t.Errorf(".ready = %s %v", b, err)
 	}
 }
+
+// Rerun from failed (#66): a run that fails at its second step is rerun once the workflow is
+// fixed. The first step doesn't run again; its output and the file it left in the worktree are
+// still there, in the same worktree; the old run hands its worktrees over and says so.
+func TestRerunFromFailed(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(check string) string {
+		return fakeWorkflow(e.bin, `seats:
+  impl: { runtime: shell, command: sh }
+steps:
+  - id: implement
+    seat: impl
+    objective: 'echo work > made && "$L" done handoff pr=42'
+    next_hop: { on: { handoff: check } }
+  - id: check
+    seat: impl
+    objective: '`+check+`'
+on_finish: { success: keep, failure: keep }
+`)
+	}
+	writeWorkflow(t, e, wf(`"$L" done failed reason=broken`))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	if old.Failure.Step != "check" {
+		t.Fatalf("failure %+v", old.Failure)
+	}
+	writeWorkflow(t, e, wf(`[ -e made ] && [ "{{ .steps.implement.out.pr }}" = 42 ] && "$L" done handoff || "$L" done failed`))
+	out := e.mustLaight("run", "--from-failed", old.Short())
+	if !strings.Contains(out, "rerun of "+old.Short()+": starts again at check; keeps implement; worktrees of impl") {
+		t.Errorf("output: %s", out)
+	}
+	runs, _ := state.List(e.home)
+	if len(runs) != 2 {
+		t.Fatalf("runs %v", runs)
+	}
+	r := e.waitEnded(runs[0].ID)
+	if r.Status != state.Succeeded || r.RerunOf != old.ID {
+		t.Fatalf("rerun %s %q, rerun of %q; steps %v", r.Status, r.Error, r.RerunOf, e.stepsDone(r.ID))
+	}
+	if got := strings.Join(e.stepsDone(r.ID), " "); got != "check:handoff" {
+		t.Errorf("rerun's steps %s; want check:handoff", got)
+	}
+	if r.Hops != 3 || r.Seats["impl"].Dir != old.Seats["impl"].Dir {
+		t.Errorf("hops %d, impl at %s (was %s)", r.Hops, r.Seats["impl"].Dir, old.Seats["impl"].Dir)
+	}
+	old, _ = state.Load(e.home, old.ID)
+	if old.RerunAs != r.ID || len(e.rigWorktrees(old)) != 0 || len(e.rigWorktrees(r)) != 1 {
+		t.Errorf("hand-over: rerun as %q, old lists %v, rerun lists %v", old.RerunAs, e.rigWorktrees(old), e.rigWorktrees(r))
+	}
+	if out, err := e.laight("run", "--from-failed", old.Short()); err == nil || !strings.Contains(out, "was rerun already") {
+		t.Errorf("second rerun of the same run: %v %s", err, out)
+	}
+	if out, err := e.laight("run", "--from-failed", r.Short()); err == nil || !strings.Contains(out, "only a failed or aborted run") {
+		t.Errorf("rerun of a green run: %v %s", err, out)
+	}
+}
+
+// A rerun that can't happen is refused before the preflight, so nobody logs in for it, and a
+// required input added since says how to rerun anyway (#97 review).
+func TestRerunRefusedBeforePreflight(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(extra string) string {
+		return fakeWorkflow(e.bin, extra+`seats:
+  a: { runtime: shell, command: sh, cwd: repo }
+steps:
+  - { id: one, seat: a, objective: '"$L" done failed reason=broken' }
+`)
+	}
+	writeWorkflow(t, e, wf(""))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+
+	checked := filepath.Join(e.repo, "checked")
+	writeWorkflow(t, e, wf("inputs: { issue: { required: true } }\ncredentials: { c: { check: touch checked } }\n"))
+	out, err := e.laight("run", "--from-failed", old.Short())
+	if err == nil || !strings.Contains(out, "input issue is required and new since run "+old.Short()+": give it a default") {
+		t.Errorf("new required input: %v %s", err, out)
+	}
+	writeWorkflow(t, e, strings.Replace(wf("credentials: { c: { check: touch checked } }\n"), "id: one", "id: uno", 1))
+	if out, err := e.laight("run", "--from-failed", old.Short()); err == nil || !strings.Contains(out, "step one is no longer in the workflow") {
+		t.Errorf("step gone: %v %s", err, out)
+	}
+	if _, err := os.Stat(checked); !os.IsNotExist(err) {
+		t.Errorf("the preflight ran for a refused rerun: %v", err)
+	}
+	if r, _ := state.Load(e.home, old.ID); r.RerunAs != "" {
+		t.Errorf("a refused rerun took the run over: %q", r.RerunAs)
+	}
+}
+
+// A worktree whose seat moved to the repo stays with the rerun, which cleans it up (#97 review).
+func TestRerunKeptWorktreeCleanedUp(t *testing.T) {
+	e := newRigEnv(t, "")
+	wf := func(cwd, objective string) string {
+		return fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, cwd: `+cwd+` }
+steps:
+  - { id: one, seat: a, objective: '`+objective+`' }
+`)
+	}
+	writeWorkflow(t, e, wf("worktree", `"$L" done failed`))
+	e.mustLaight("run", "demo")
+	old := e.waitFailed(e.onlyRun().ID, state.KindExit)
+	wt := old.Seats["a"].Dir
+	writeWorkflow(t, e, wf("repo", `"$L" done failed`))
+	e.mustLaight("run", "--from-failed", old.Short())
+	runs, _ := state.List(e.home)
+	r := e.waitFailed(runs[0].ID, state.KindExit)
+	repo, _ := filepath.EvalSymlinks(e.repo)
+	if got := e.rigWorktrees(r); !slices.Equal(got, []string{wt}) || r.Seats["a"].Dir != repo {
+		t.Fatalf("rerun lists %v (want %s), works in %s", got, wt, r.Seats["a"].Dir)
+	}
+	e.mustLaight("abort", r.Short(), "--yes")
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Errorf("kept worktree not removed: %v", err)
+	}
+	if _, err := os.Stat(e.repo); err != nil {
+		t.Errorf("the main checkout: %v", err)
+	}
+}

@@ -21,6 +21,7 @@ Usage:
   laight init                          create .laight/
   laight validate [workflow…]          check the workflows: schema, routes, seats, templates
   laight run <workflow> [key=value…]   spin up the rig of a new run and follow it
+  laight run --from-failed <run>       after fixing the cause, go on from where a red run failed
   laight attach [run] [seat]           jump into a run's tmux session, or one seat's window
   laight abort [run] [--yes]           stop a live run; on a finished one, delete its worktrees
   laight done <exit> [key=value…]      for agents: finish the current step

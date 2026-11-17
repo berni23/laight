@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -148,8 +149,11 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 	}
 	switch seat.Cwd {
 	case "worktree":
-		st.Dir, st.Worktree = filepath.Join(runDir, "worktrees", name), true
+		if !st.Worktree { // a rerun's seat keeps the worktree of the run it reruns, where it is
+			st.Dir, st.Worktree = filepath.Join(runDir, "worktrees", name), true
+		}
 		if _, err := os.Stat(st.Dir); errors.Is(err, os.ErrNotExist) {
+			st.SetupDone = false // a new tree: a rerun's may have been deleted since it was handed over
 			// Recorded before it exists, so an abort or a failure in between still finds it.
 			if err := save(); err != nil {
 				return err
@@ -460,27 +464,40 @@ func endFailure(r *state.Run, status, reason string, at time.Time) *state.Failur
 	return f
 }
 
-// Worktrees returns the run's worktrees that still exist.
+// Worktrees returns the run's worktrees that still exist. A run that was rerun has none: they
+// went to the rerun, which works in them.
 func (g *Rig) Worktrees(r *state.Run) []string {
+	if r.RerunAs != "" {
+		return nil
+	}
 	var dirs []string
 	for _, s := range r.Seats {
 		if s.Worktree {
-			if _, err := os.Stat(s.Dir); err == nil {
-				dirs = append(dirs, s.Dir)
-			}
+			dirs = append(dirs, s.Dir)
 		}
 	}
+	dirs = append(dirs, r.Kept...) // handed over by the run this one reruns, no seat's any more
 	sort.Strings(dirs)
-	return dirs
+	dirs = slices.Compact(dirs)
+	return slices.DeleteFunc(dirs, func(d string) bool { _, err := os.Stat(d); return err != nil })
 }
 
 // RemoveWorktrees deletes the run's worktrees, uncommitted changes included, and returns the ones
-// it removed.
+// it removed. It holds the run's lock, under which a rerun takes them over: a worktree is either
+// handed over or deleted, never both.
 func (g *Rig) RemoveWorktrees(id string) ([]string, []error) {
-	r, err := state.Load(g.Home, id)
-	if err != nil {
-		return nil, []error{err}
+	var removed []string
+	var errs []error
+	if _, err := state.Update(g.Home, id, func(r *state.Run) error {
+		removed, errs = g.removeWorktrees(r)
+		return nil
+	}); err != nil {
+		errs = append(errs, err)
 	}
+	return removed, errs
+}
+
+func (g *Rig) removeWorktrees(r *state.Run) ([]string, []error) {
 	var removed []string
 	var errs []error
 	ctx := context.Background()

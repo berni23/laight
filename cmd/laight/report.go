@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
+	"github.com/berni23/laight/internal/rig"
 	"github.com/berni23/laight/internal/state"
 )
 
@@ -65,13 +65,18 @@ func report(w io.Writer, home string, r *state.Run) {
 			fmt.Fprintf(w, "    %s\n", d)
 		}
 	}
-	kept := 0
-	for _, s := range r.Seats {
-		if _, err := os.Stat(s.Dir); s.Worktree && err == nil {
-			kept++
-		}
+	if r.RerunOf != "" {
+		fmt.Fprintf(w, "  a rerun of run %s\n", state.Short(r.RerunOf))
 	}
+	if r.RerunAs != "" { // its worktrees went with the rerun
+		fmt.Fprintf(w, "  rerun as %s\n", state.Short(r.RerunAs))
+		return
+	}
+	kept := len(rig.New(home, "", nil).Worktrees(r))
 	if r.Status != state.Succeeded && kept > 0 {
 		fmt.Fprintf(w, "  %d worktree(s) kept (on_finish.failure: keep); laight abort %s deletes them\n", kept, r.Short())
+	}
+	if r.Status == state.Failed || r.Status == state.Aborted {
+		fmt.Fprintf(w, "  fix the cause, then go on from where it failed: laight run --from-failed %s\n", r.Short())
 	}
 }
