@@ -231,7 +231,11 @@ func (g *Rig) seatUp(ctx context.Context, r *state.Run, name string) error {
 
 	g.Tmux.KillWindow(r.Session, name) // a dead pane left from a crash
 	envFile := filepath.Join(runDir, "seats", name+".env")
-	if err := tmux.WriteEnv(envFile, env, g.Tmux.Stale(env)); err != nil {
+	stale, err := g.Tmux.Stale(env)
+	if err != nil {
+		return err
+	}
+	if err := tmux.WriteEnv(envFile, env, stale); err != nil {
 		return err
 	}
 	if err := g.Tmux.NewWindow(r.Session, tmux.Window{Name: name, Dir: st.Dir, Cmd: tmux.EnvCmd(envFile, rt.Command(l))}); err != nil {

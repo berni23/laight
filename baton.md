@@ -18,6 +18,11 @@ that.
   and the run doesn't; the tmux client never hands the server a secret; a seat's `setup:` gets
   no secret either. Spec §5 and §12.4 updated. Pinned by `TestSeatGetsRunEnv` (stale server) and
   `TestServerEnv`, both checked red with the fix mutated away; verified on a real Haiku run.
+  Its review answered (all 6 findings fixed): the caller's Claude Code session and git's
+  repo-local variables no longer reach the engine or seats; `Stale` fails on a tmux error and
+  removes an old server's secrets; a seat's `setup:` gets no secret, now pinned. Filed #102
+  (`laight run`'s own git calls). Real Haiku run from inside Claude Code: the seat holds its own
+  session id, not the caller's.
 - **#96 done**: `rig.Down` scrubs its reason once, so `run.json`'s `error` and the run event are
   redacted too. Pinned by `TestDownScrubsReason` (checked red without the fix).
 

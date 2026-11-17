@@ -101,7 +101,10 @@ func startRun(home, laight string, r *state.Run, stdout, stderr io.Writer) int {
 	// which is another shell's once laight's server is up for another run.
 	envFile := filepath.Join(state.Dir(home, id), "engine.env")
 	env := engineEnv(os.Environ(), home)
-	err := tmux.WriteEnv(envFile, env, srv.Stale(env))
+	stale, err := srv.Stale(env)
+	if err == nil {
+		err = tmux.WriteEnv(envFile, env, stale)
+	}
 	if err == nil {
 		err = srv.NewSession(r.Session, tmux.Window{
 			Name: rig.EngineWindow, Dir: r.Repo,

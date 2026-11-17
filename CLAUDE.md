@@ -301,7 +301,12 @@ pasted into a pane, and panes are logged.
   `laight done`, installed or not; nothing else from its folder), and a generated per-seat
   settings file with laight's hooks. The rest of its env is the engine's (the run's, as for the
   engine) minus every `LAIGHT_SECRET_*`, in a 0600 file its window deletes once read, which also
-  unsets what the tmux server's environment holds and the run's doesn't (#93). Ready when the `SessionStart` hook reports it (fallback:
+  unsets what the tmux server's environment holds and the run's doesn't (#93). Neither the
+  engine's env nor a seat's carries what belongs to the session `laight run` was started from:
+  Claude Code's session variables (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, its messaging token…;
+  not the user's `CLAUDE_CODE_*` settings) and git's repo-local ones (`git rev-parse
+  --local-env-vars`), which would make a seat a child of the caller's session or point its git
+  at the caller's repo. Ready when the `SessionStart` hook reports it (fallback:
   prompt glyph via `capture-pane`, timeout).
 - **Give a step:** `tmux load-buffer` + `paste-buffer -p` (bracketed paste) + `Enter`. Never
   `send-keys` long text.
@@ -740,7 +745,7 @@ Secrets reach an agent or a shell step only as env vars (seat `env`, or a shell 
 never in a rendered prompt or command line. A `LAIGHT_SECRET_*` the user exported reaches the
 credential checks (run with the user's environment) and the engine, which renders `{{ secret }}`;
 never a seat window, a seat's `setup`, a shell step or laight's tmux server, whose environment
-every later window would inherit (#93). Redact by key name and by pattern in `events.jsonl` and
+every later window would inherit (#93; one an older laight's server holds is removed from it). Redact by key name and by pattern in `events.jsonl` and
 inbox details; a bare long run counts only when it mixes upper case, lower case and digits, so
 commit SHAs and branch names survive. Known secret values can also be stripped from the pane log as
 it is written (`pipe-pane` through a filter). **Raw pane logs can't be fully redacted** (an agent
