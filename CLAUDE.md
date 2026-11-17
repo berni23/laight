@@ -433,9 +433,11 @@ fixing the cause, is a new run (own id, session, state folder) of the red run's 
 file is now**, with the red run's inputs (an input added since takes its default), after the same
 preflight. It keeps what the red run finished: each step's latest result (`.steps.<id>`), the hop
 count (so `max_hops` stays a guard across reruns: a run red on `max_hops` reruns once the YAML
-raises it), `base`, and each seat's worktree **in place** (`runs/<old>/worktrees/<seat>`, since
+raises it), and each seat's worktree **in place** (`runs/<old>/worktrees/<seat>`, since
 `claude --resume` finds a conversation by its folder) and, for a `session: resume` seat, its
-conversation, with a note on why it starts again pasted before its first step. It starts again
+conversation, with a note on why it starts again pasted before its first step. Its base ref is
+resolved again, as for any run (a fetch of `origin/<base>`), so a seat that starts fresh gets a
+fix pushed to base since; kept worktrees stay where they are. It starts again
 what the red run left unfinished: the step that failed, the steps routed to but not started,
 hops an abort cut short, and a matrix step's copies that failed or never ran (same expansion;
 the others keep their results). A red run that never got to its first hop starts over. Anything

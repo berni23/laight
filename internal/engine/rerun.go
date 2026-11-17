@@ -35,7 +35,7 @@ func Rerun(old *state.Run, w *spec.Workflow, inputs map[string]string, id string
 	}
 	r := &state.Run{
 		ID: id, Workflow: w.ID, Repo: old.Repo, Session: state.SessionName(w.ID, id),
-		Inputs: inputs, Spec: w, SpecDir: old.SpecDir, Base: old.Base, Status: state.Starting,
+		Inputs: inputs, Spec: w, SpecDir: old.SpecDir, Status: state.Starting,
 		Seats: map[string]*state.Seat{}, Created: now.UTC(), RerunOf: old.ID,
 	}
 	if old.Hops == 0 && len(old.Matrix) == 0 {

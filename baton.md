@@ -29,6 +29,9 @@ that.
   #10 was real after all: a run red after a matrix step expanded but before any copy started has
   no hops, and `rerunPlan` printed "starts over" while the rerun carries the matrix. Fixed,
   pinned by `TestRerunPlanMatrixBeforeFirstHop`.
+- **A rerun resolves its base again** (decided 2026-11-17): it no longer carries the red run's
+  base ref, so `rig.Up` fetches `origin/<base>` as for any run; a seat that starts fresh gets a
+  fix pushed to base since, and a `base:` changed in the YAML. Spec §6.3 updated.
 
 ---
 
