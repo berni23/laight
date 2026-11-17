@@ -48,7 +48,7 @@ func TestRerunFromFailedStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(r.Queue, []string{"fix"}) || r.Hops != 3 || r.RerunOf != old.ID || r.Base != old.Base {
+	if !slices.Equal(r.Queue, []string{"fix"}) || r.Hops != 3 || r.RerunOf != old.ID || r.Base != "" { // base is fetched again, as for any run
 		t.Errorf("queue %v, hops %d, rerun of %q, base %q", r.Queue, r.Hops, r.RerunOf, r.Base)
 	}
 	if len(r.Steps) != 2 || r.Steps["implement"].Out["pr"] != "42" || r.Steps["fix"] != nil {
