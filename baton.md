@@ -25,6 +25,10 @@ that.
   only reaches seats that had a step; a rerun is refused before the preflight; the hand-over
   undoes itself if recording it fails; spec §6.3/§7 updated. Not covered by a test: the hand-over
   undoing itself (it needs a failing write).
+- **#97's review re-checked (2026-11-17)**: every fix holds at f0fe4f3. The reviewer's dropped
+  #10 was real after all: a run red after a matrix step expanded but before any copy started has
+  no hops, and `rerunPlan` printed "starts over" while the rerun carries the matrix. Fixed,
+  pinned by `TestRerunPlanMatrixBeforeFirstHop`.
 
 ---
 

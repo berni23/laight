@@ -113,7 +113,7 @@ func cmdRerun(args []string, stdout, stderr io.Writer) int {
 
 // rerunPlan says what a rerun keeps and what it starts again.
 func rerunPlan(r *state.Run) string {
-	if r.Hops == 0 {
+	if r.Hops == 0 && len(r.Matrix) == 0 { // as engine.Rerun decides it
 		return "it failed before its first step, so it starts over"
 	}
 	var again []string

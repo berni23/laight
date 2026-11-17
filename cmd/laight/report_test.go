@@ -67,3 +67,17 @@ func TestReport(t *testing.T) {
 		t.Errorf("green report:\n%s", got)
 	}
 }
+
+// A run that went red after a matrix step expanded but before any copy started has no hops, yet
+// its rerun carries the matrix: the plan says which copies start again, not "starts over" (#97).
+func TestRerunPlanMatrixBeforeFirstHop(t *testing.T) {
+	r := &state.Run{Matrix: map[string]*state.MatrixRun{
+		"build": {Copies: make([]map[string]any, 2), Pending: []int{1, 2}},
+	}}
+	if got := rerunPlan(r); !strings.Contains(got, "build (copies 1, 2 of 2)") {
+		t.Errorf("rerunPlan = %q, want the matrix copies", got)
+	}
+	if got := rerunPlan(&state.Run{}); !strings.Contains(got, "starts over") {
+		t.Errorf("rerunPlan(nothing ran) = %q, want it to start over", got)
+	}
+}
