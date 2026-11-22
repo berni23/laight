@@ -3,7 +3,10 @@ package rig
 import (
 	"errors"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -98,6 +101,37 @@ func TestDownWithdrawsLateItems(t *testing.T) {
 	}
 	if items, _ := inbox.Pending(home); len(items) != 0 {
 		t.Errorf("left behind: %+v", items[0])
+	}
+}
+
+// Down's reason is raw text from its caller: it reaches run.json's error and the run event
+// redacted and without control characters, like the failure report (#96).
+func TestDownScrubsReason(t *testing.T) {
+	home := t.TempDir()
+	r := &state.Run{ID: state.NewID(time.Now()), Workflow: "demo", Status: state.Running, Session: "laight-demo-x",
+		Spec: &spec.Workflow{OnFinish: spec.OnFinish{Success: "destroy", Failure: "keep"}}}
+	if err := state.Create(home, r); err != nil {
+		t.Fatal(err)
+	}
+	const token = "ghp_Abc123Def456Ghi789Jkl012Mno345Pqr678"
+	if err := New(home, "laight", io.Discard).Down(r.ID, state.Failed, "engine: token "+token+" \x1b[31mred"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := state.Load(home, r.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := os.ReadFile(filepath.Join(state.Dir(home, r.ID), "events.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for what, s := range map[string]string{"error": got.Error, "failure": got.Failure.Reason, "events": string(events)} {
+		if strings.Contains(s, token) || strings.Contains(s, "\x1b") || strings.Contains(s, `\u001b`) {
+			t.Errorf("%s not scrubbed: %q", what, s)
+		}
+	}
+	if !strings.Contains(got.Error, "engine: token") {
+		t.Errorf("error = %q", got.Error)
 	}
 }
 

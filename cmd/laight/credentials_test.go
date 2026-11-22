@@ -178,12 +178,43 @@ steps:
 	}
 }
 
+// A seat starts from the environment of `laight run`, not from the tmux server's: what the
+// server's shell had and this run's doesn't is gone, and no secret reaches the seat's window or
+// its setup unless its env names it (#93, §12.4); nor does the caller's Claude Code session or
+// git state.
+func TestSeatGetsRunEnv(t *testing.T) {
+	e := newRigEnv(t, "")
+	// The server is already up, started from another shell with a secret and a stale value.
+	other := exec.Command("tmux", "-L", e.srv.Socket, "new-session", "-d", "-s", "other", "sleep 600")
+	other.Env = append(os.Environ(), "LAIGHT_SECRET_OLD=old-secret", "LAIGHT_TEST_STALE=old")
+	if out, err := other.CombinedOutput(); err != nil {
+		t.Fatalf("tmux: %v\n%s", err, out)
+	}
+	// A worktree seat, so its setup runs: its log isn't redacted, so it gets no secret either.
+	writeWorkflow(t, e, fakeWorkflow(e.bin, `seats:
+  a: { runtime: shell, command: sh, setup: '[ -z "$LAIGHT_SECRET_LAIGHT_TEST_NEW" ]' }
+steps:
+  - { id: one, seat: a, objective: '[ -z "$LAIGHT_SECRET_OLD$LAIGHT_SECRET_LAIGHT_TEST_NEW$LAIGHT_TEST_STALE$CLAUDECODE$CLAUDE_CODE_SESSION_ID$GIT_INDEX_FILE" ] && [ "$LAIGHT_TEST_FRESH$CLAUDE_CODE_USE_BEDROCK" = new1 ] && "$L" done handoff || "$L" done failed' }
+`))
+	c := exec.Command(e.bin, "run", "demo")
+	c.Dir = e.repo
+	// Started from inside a Claude Code session, or a git hook: none of that is the seat's.
+	c.Env = append(os.Environ(), "LAIGHT_HOME="+e.home, "LAIGHT_SECRET_LAIGHT_TEST_NEW=new-secret", "LAIGHT_TEST_FRESH=new",
+		"CLAUDECODE=1", "CLAUDE_CODE_SESSION_ID=caller", "CLAUDE_CODE_USE_BEDROCK=1", "GIT_INDEX_FILE="+filepath.Join(t.TempDir(), "index"))
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+	if r := e.waitEnded(e.onlyRun().ID); r.Status != state.Succeeded {
+		t.Fatalf("status %s, failure %+v", r.Status, r.Failure)
+	}
+}
+
 // The engine's env file loads in sh whatever `laight run` inherited: a name bash's sh holds
 // read-only would abort it, and the engine window with it.
 func TestEngineEnvLoads(t *testing.T) {
 	env := engineEnv([]string{"SHELLOPTS=braceexpand", "BASHOPTS=x", "UID=1", "EUID=1", "PPID=1", "FOO=bar", "BAD-NAME=x", "TMUX=/s,1,0"}, "/h")
 	file := filepath.Join(t.TempDir(), "engine.env")
-	if err := tmux.WriteEnv(file, env); err != nil {
+	if err := tmux.WriteEnv(file, env, nil); err != nil {
 		t.Fatal(err)
 	}
 	out, err := exec.Command("sh", "-c", tmux.EnvCmd(file, `echo "$FOO $LAIGHT_HOME"`)).CombinedOutput()
