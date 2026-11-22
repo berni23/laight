@@ -11,6 +11,7 @@ import (
 
 	"github.com/berni23/laight/internal/scaffold"
 	"github.com/berni23/laight/internal/spec"
+	"github.com/berni23/laight/schema"
 )
 
 // cmdInit creates .laight/ at the root of the current git repo.
@@ -29,7 +30,7 @@ func cmdInit(args []string, stdout, stderr io.Writer) int {
 	}
 	base := defaultBranch(root)
 
-	files, err := scaffold.Files(base)
+	files, err := scaffold.Files(base, schema.WorkflowURLFor(buildVersion()))
 	if err != nil {
 		return fail(stderr, "%v", err)
 	}

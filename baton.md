@@ -27,6 +27,11 @@ that.
   `env: { PR: … }` + `"$PR"`. New cases in `TestLoadProblems` / `TestMatrixErrors`, all checked
   red with the check disabled. `TestEngineShellRenderFailure` now fails on `.steps.two.exit`
   (a step that hasn't run), since `.out` in `run:` no longer gets past `validate`.
+- **#108 done**: `laight init` writes the schema URL at the release's tag
+  (`schema.WorkflowURLFor`; `main` for dev, snapshot, pseudo-version and dirty builds), and
+  `laight version` reads the module version of a `go install …@vX.Y.Z` build. The schemas'
+  `$id` stays on main: it only names the embedded copy, nothing fetches it. A tag's URL only
+  resolves once the tag exists: check it in #113's release candidate.
 
 ---
 
@@ -36,17 +41,12 @@ Work **#115** top to bottom: it is the order. Pick the first unchecked item that
 maintainer's decision; a `contract` change says in its PR how v1 files stay compatible.
 #64 waits on the maintainer's call on the default, so:
 
-### 1. #108, pin the editor schema URL to the binary's version
-
-`laight init` writes `…/laight/main/schema/…`; write the version tag instead (`dev` builds keep
-`main`), and the schemas' `$id`.
-
-### 2. #109, version the run format
+### 1. #109, version the run format
 
 A format version in `run.json` and the events; `--from-failed` and `abort` refuse a format they
 don't know.
 
-### 3. #107, don't ship unbuilt or parked surface
+### 2. #107, don't ship unbuilt or parked surface
 
 The parked `config.yaml` / `laight.yaml` schema, and anything still pointing users at the inbox.
 

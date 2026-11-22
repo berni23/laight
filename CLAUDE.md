@@ -92,7 +92,9 @@ file, it's a bug in laight.
 OpenRig's vocabulary for seats and routing (`objective`, `allowed_exits`, `next_hop.on`,
 `loop_guards.max_hops`); CircleCI / GitHub Actions conventions for the rest (`needs`, `matrix`,
 `env`, `timeout`, `if`). Templates use `{{ }}` (Go `text/template`). JSON Schemas in `schema/`
-(draft 2020-12), referenced from generated files with `# yaml-language-server: $schema=…`.
+(draft 2020-12), referenced from generated files with `# yaml-language-server: $schema=…`, at
+the binary's release tag (`main` for a build that isn't a release, #108), so an editor checks
+what that `laight validate` checks.
 `laight validate` uses them plus semantic checks (unknown seat, unreachable step, exit without a
 route, `needs` cycle, missing guidance file).
 
