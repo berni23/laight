@@ -171,7 +171,8 @@ steps:
 
   - id: merge
     type: shell                   # deterministic step, no agent
-    run: gh pr merge {{ .steps.implement.out.pr }} --squash && gh issue close {{ .steps.implement.out.issue }}
+    env: { PR: "{{ .steps.implement.out.pr }}", ISSUE: "{{ .steps.implement.out.issue }}" }
+    run: gh pr merge "$PR" --squash && gh issue close "$ISSUE"
 
 loop_guards: { max_hops: 11 }     # exceeding it fails the run (rule 4)
 timeouts: { step: 90m }           # a step quiet this long is stuck: it fails (§12.2)
@@ -246,7 +247,10 @@ own session with no terminal (a command that prompts fails instead of hanging), 
 and the step's `env`. Whatever it leaves running is stopped when `sh` exits or the run ends. Output
 goes to `out/<step>-<hop>.log` with known secrets redacted; the exit code is `.steps.<id>.out.code`.
 **A step's `env` exists only on shell steps** (#16): an agent's env is its seat's. Secrets reach a
-shell command only through `env`, never spliced into `run:` (§12.4). An unquoted env value is
+shell command only through `env`, never spliced into `run:` (§12.4), and so does anything an
+agent wrote (#41): `validate` rejects `.steps.<id>.out` (or `.steps`, `.`, `$` whole) and a
+`.matrix` value rendered from a template in `run:`; pass them as `env: { PR: "{{ … }}" }` and
+quote them (`"$PR"`). `.exit`, `.inputs`, `.base`, `.run` and literal matrix lists are fine there. An unquoted env value is
 passed on as YAML read it: integers exactly, but `0x1F` as `31` and `1.10` as `1.1`, so quote a
 value you need verbatim (`validate` warns).
 **`compact: true`** on an agent step pastes `/compact` before the objective, which Claude queues

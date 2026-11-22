@@ -58,7 +58,8 @@ steps:
     next_hop: { on: { yes: merge, no: end } }
   - id: merge
     type: shell
-    run: gh pr merge {{ .steps.implement.out.pr }} --squash
+    env: { PR: "{{ .steps.implement.out.pr }}" }
+    run: gh pr merge "$PR" --squash
 loop_guards: { max_hops: 11 }
 timeouts: { step: 90m }
 on_finish: { success: destroy, failure: keep }
@@ -224,7 +225,26 @@ func TestLoadProblems(t *testing.T) {
 		}, "`env` is only for shell steps", 0, false},
 		{"env on a gate", func(s string) string { return strings.Replace(s, "type: gate\n", "type: gate\n    env: { X: y }\n", 1) }, "`env` is only for shell steps", 0, false},
 		{"secret in shell env", func(s string) string {
-			return strings.Replace(s, "--squash\n", "--squash\n    env: { GH_TOKEN: '{{ secret \"gh\" }}' }\n", 1)
+			return strings.Replace(s, `env: { PR: "{{ .steps.implement.out.pr }}" }`, `env: { PR: "{{ .steps.implement.out.pr }}", GH_TOKEN: '{{ secret "gh" }}' }`, 1)
+		}, "", 0, false},
+		// An agent's output runs as code in sh -c: it goes through env (#41).
+		{"agent output in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ .steps.implement.out.pr }}", 1)
+		}, "a step's output is an agent's text, which `run:` would execute", 0, false},
+		{"agent output in run through index", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge {{ index .steps "implement" }}`, 1)
+		}, "a step's output is an agent's text", 0, false},
+		{"agent output in run through $", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ with .inputs.issue }}{{ $.steps.implement.out.pr }}{{ end }}", 1)
+		}, "a step's output is an agent's text", 0, false},
+		{"whole data in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge {{ index . "steps" }}`, 1)
+		}, "`run:` can't use the whole template data", 0, false},
+		{"whole data in run through $", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ printf `%v` $ }}", 1)
+		}, "`run:` can't use the whole template data", 0, false},
+		{"exits, inputs and base in run are fine", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .steps.verify.exit }} {{ .inputs.issue }} {{ .base }} {{ .run.id }}`, 1)
 		}, "", 0, false},
 		{"secret in run", func(s string) string { return strings.Replace(s, "--squash", `--squash {{ secret "gh" }}`, 1) }, "`secret` is only allowed in `env`", 0, false},
 		{"shell exit not allowed", func(s string) string {
@@ -414,6 +434,10 @@ func TestMatrixErrors(t *testing.T) {
 			"each matrix copy needs its own worktree: seat dev has cwd ."},
 		"literal matrix over the cap": {strings.Replace(parallel, `task: "{{ .steps.plan.out.tasks }}"`, `task: [1, 2, 3, 4, 5, 6], b: [1, 2, 3, 4, 5, 6]`, 1),
 			"matrix makes more than 32 copies"},
+		"rendered matrix value in run": {strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [plan], matrix: { task: \"{{ .steps.plan.out.tasks }}\", n: [1] }, run: 'echo {{ .matrix.n }} {{ .matrix.task }}' }\n", 1),
+			".matrix.task: this matrix value is rendered from a template"},
+		"whole matrix in run": {strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [plan], matrix: { task: \"{{ .steps.plan.out.tasks }}\" }, run: 'echo {{ .matrix }}' }\n", 1),
+			".matrix: a matrix value is rendered from a template"},
 	}
 	for name, c := range bad {
 		t.Run(name, func(t *testing.T) {
@@ -428,6 +452,11 @@ func TestMatrixErrors(t *testing.T) {
 	dir, file := project(t, strings.Replace(parallel, "objective: integrate", "objective: '{{ range .steps.build.out }}{{ .pr }}{{ end }}'", 1))
 	if _, probs := Load(dir, file); HasErrors(probs) {
 		t.Errorf("range: %v", probs)
+	}
+	// In run:, a literal matrix value is the workflow's own, and a rendered one goes through env.
+	dir, file = project(t, strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [plan], matrix: { task: \"{{ .steps.plan.out.tasks }}\", n: [1] }, env: { T: \"{{ .matrix.task }}\" }, run: 'echo {{ .matrix.n }} \"$T\"' }\n", 1))
+	if _, probs := Load(dir, file); HasErrors(probs) {
+		t.Errorf("matrix in run: %v", probs)
 	}
 }
 
@@ -539,7 +568,7 @@ func TestProblemOrderStable(t *testing.T) {
 func TestEnvNumbersExact(t *testing.T) {
 	src := strings.Replace(issueCycle, "on_finish:", "env: { RECORD_ID: 9007199254740993, PORT: 8080, DEBUG: true, SMALL: 0.0000001, HUGE: 1000000000000000000000, HALF: 0.5 }\non_finish:", 1)
 	src = strings.Replace(src, `env: { GH_TOKEN: "{{ secret \"gh\" }}" }`, `env: { GH_TOKEN: "{{ secret \"gh\" }}", BIG: 123456789012345678 }`, 1)
-	src = strings.Replace(src, "    run: gh pr merge", "    env: { RECORD_ID: 9007199254740993 }\n    run: gh pr merge", 1)
+	src = strings.Replace(src, `env: { PR: "{{ .steps.implement.out.pr }}" }`, `env: { PR: "{{ .steps.implement.out.pr }}", RECORD_ID: 9007199254740993 }`, 1)
 	dir, file := project(t, src)
 	w, probs := Load(dir, file)
 	for _, p := range probs {
@@ -880,7 +909,7 @@ credentials:
 // ones too) and its shell steps: what the preflight looks up.
 func TestSecretNames(t *testing.T) {
 	src := strings.Replace(issueCycle, "base: dev", "base: dev\nenv: { A: '{{ secret \"aws-key\" }}{{ secret \"gh\" }}', B: plain }", 1)
-	src = strings.Replace(src, "    run: gh pr merge", "    env: { T: '{{ secret `npm.token` }}x{{ secret \"slack\" | printf \"%s\" }}' }\n    run: gh pr merge", 1)
+	src = strings.Replace(src, `env: { PR: "{{ .steps.implement.out.pr }}" }`, "env: { PR: \"{{ .steps.implement.out.pr }}\", T: '{{ secret `npm.token` }}x{{ secret \"slack\" | printf \"%s\" }}' }", 1)
 	dir, file := project(t, src)
 	w, probs := Load(dir, file)
 	if w == nil || HasErrors(probs) {

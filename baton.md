@@ -21,6 +21,12 @@ that.
   run-format version, naming freeze, Claude Code min version, README/packaging, release dry run,
   acceptance runs). **#115 (pinned) is the ordered checklist.** #82 moved after v0.1 (must stay
   optional); #48 re-scoped to failure redaction.
+- **#41 + #52 done**: `validate` rejects agent output in a shell step's `run:` (`.steps.<id>.out`;
+  `.steps`, `.` or `$` whole; a matrix value rendered from a template), an error, not a warning,
+  so it can be relaxed later without breaking anyone. Scaffold, README and spec §3 use
+  `env: { PR: … }` + `"$PR"`. New cases in `TestLoadProblems` / `TestMatrixErrors`, all checked
+  red with the check disabled. `TestEngineShellRenderFailure` now fails on `.steps.two.exit`
+  (a step that hasn't run), since `.out` in `run:` no longer gets past `validate`.
 
 ---
 
@@ -28,15 +34,21 @@ that.
 
 Work **#115** top to bottom: it is the order. Pick the first unchecked item that isn't the
 maintainer's decision; a `contract` change says in its PR how v1 files stay compatible.
+#64 waits on the maintainer's call on the default, so:
 
-### 1. #41 + #52, agent output through `env`, never spliced into `run:`
+### 1. #108, pin the editor schema URL to the binary's version
 
-The scaffold, README and spec §3 all splice `.steps.implement.out.pr` into a shell command.
+`laight init` writes `…/laight/main/schema/…`; write the version tag instead (`dev` builds keep
+`main`), and the schemas' `$id`.
 
-### 2. #64, the `human:` policy, v0.1 scope
+### 2. #109, version the run format
 
-`assume` and `fail`, gate `default:`, `assumptions` in `laight done`; no `wait`/`supervisor` in
-the enum yet. Needs the maintainer's call on the default first (see below).
+A format version in `run.json` and the events; `--from-failed` and `abort` refuse a format they
+don't know.
+
+### 3. #107, don't ship unbuilt or parked surface
+
+The parked `config.yaml` / `laight.yaml` schema, and anything still pointing users at the inbox.
 
 ---
 

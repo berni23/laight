@@ -23,6 +23,12 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **Agent output can't reach a shell command** (#41, #52): `validate` rejects a shell step's
+  `run:` that reads a step's output (`.steps.<id>.out`, or `.steps`, `.` or `$` whole) or a
+  matrix value rendered from a template, since whatever an agent wrote with `laight done` would
+  run as code. Pass it through the step's `env` and quote it: `env: { PR: "{{
+  .steps.implement.out.pr }}" }`, `run: gh pr merge "$PR"`. The workflow `laight init` writes,
+  the README and the spec now do so.
 - **The inbox is parked** (#67): `laight inbox` is gone from `laight --help` but still works,
   and `laight run` no longer opens the inbox pane under the engine. Until the `human:` policy
   (#64), a gate or a question an agent asks is answered with `laight inbox`, which the engine
