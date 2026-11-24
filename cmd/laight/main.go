@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 )
 
 // Set at build time by GoReleaser (-ldflags "-X main.version=… -X main.commit=… -X main.date=…").
@@ -14,6 +15,18 @@ var (
 	commit  = "none"
 	date    = "unknown"
 )
+
+// buildVersion is the version GoReleaser set, else the module version `go install …@v0.1.0`
+// stamps ("(devel)" or a pseudo-version for other builds), else "dev".
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		return bi.Main.Version
+	}
+	return version
+}
 
 const usage = `laight runs teams of coding agents in tmux from YAML workflow files.
 
@@ -62,7 +75,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "hook": // called by the agent runtime's hooks
 		return cmdHook(rest, os.Stdin, stdout, stderr)
 	case "version", "--version", "-v":
-		fmt.Fprintf(stdout, "laight %s (commit %s, built %s)\n", version, commit, date)
+		fmt.Fprintf(stdout, "laight %s (commit %s, built %s)\n", buildVersion(), commit, date)
 		return 0
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)

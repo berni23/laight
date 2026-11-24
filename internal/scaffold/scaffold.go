@@ -10,8 +10,10 @@ import (
 //go:embed files
 var files embed.FS
 
-// Files returns the starter files, relative to .laight/, with base filled in.
-func Files(base string) (map[string][]byte, error) {
+// Files returns the starter files, relative to .laight/, with base and the workflow schema's URL
+// filled in.
+func Files(base, schemaURL string) (map[string][]byte, error) {
+	fill := strings.NewReplacer("{{BASE}}", base, "{{SCHEMA}}", schemaURL)
 	out := map[string][]byte{}
 	err := fs.WalkDir(files, "files", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -21,7 +23,7 @@ func Files(base string) (map[string][]byte, error) {
 		if err != nil {
 			return err
 		}
-		out[strings.TrimPrefix(path, "files/")] = []byte(strings.ReplaceAll(string(b), "{{BASE}}", base))
+		out[strings.TrimPrefix(path, "files/")] = []byte(fill.Replace(string(b)))
 		return nil
 	})
 	return out, err

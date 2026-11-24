@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://raw.githubusercontent.com/berni23/laight/main/schema/workflow.schema.json
+# yaml-language-server: $schema={{SCHEMA}}
 #
 # One issue, implemented and independently reviewed, then merged after you say yes.
 #   implement → review → fix → verify ─(pass)→ approve ─(yes)→ merge

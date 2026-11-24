@@ -23,6 +23,10 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **`laight init` points the editor at its own version's schema** (#108): the workflow it writes
+  references the schema at the release's tag, not on `main`, so the editor and `laight
+  validate` agree after `main` moves on. `laight version` shows the module version for a
+  `go install …@vX.Y.Z` build instead of `dev`.
 - **Agent output can't reach a shell command** (#41, #52): `validate` rejects a shell step's
   `run:` that reads a step's output (`.steps.<id>.out`, or `.steps`, `.` or `$` whole) or a
   matrix value rendered from a template, since whatever an agent wrote with `laight done` would

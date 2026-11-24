@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/berni23/laight/schema"
 )
 
 func TestRun(t *testing.T) {
@@ -70,6 +72,10 @@ func TestInitValidate(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "base: main") {
 		t.Error("base not filled in")
+	}
+	// A test binary isn't a release: the editor reads main's schema (#108).
+	if first, _, _ := strings.Cut(string(b), "\n"); first != "# yaml-language-server: $schema="+schema.WorkflowURL {
+		t.Errorf("schema line: %s", first)
 	}
 	// No temporary folder left behind.
 	if m, _ := filepath.Glob(filepath.Join(dir, ".laight-init-*")); len(m) > 0 {
