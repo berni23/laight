@@ -56,7 +56,6 @@ The parked `config.yaml` / `laight.yaml` schema, and anything still pointing use
 
 - **v0.1 design calls** (#115 §1): the v1 naming/defaults pass (#110); `human.mode`'s default or
   a required `human:` (#64); deny-rule syntax vs non-Claude runtimes (#106).
-- Add the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret (#113).
 - Close #43? Obsolete since #63 (comment there).
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
   push protection? Still undecided (2026-11-14); `validate` rejects templates in rules for now.
