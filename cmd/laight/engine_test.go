@@ -368,7 +368,7 @@ steps:
 	}
 }
 
-// Shell steps: outputs through env, a mapped exit code, a routed failure, the step's env with a
+// Shell steps: outputs through env, an exit rendered into run:, a mapped exit code, a routed failure, the step's env with a
 // secret kept out of its log, run in the repo and not as a seat.
 func TestEngineShellSteps(t *testing.T) {
 	t.Setenv("LAIGHT_SECRET_TOK", "hunter2-xyz")
@@ -383,7 +383,7 @@ steps:
     objective: '"$L" done handoff n=3'
     next_hop: { on: { handoff: check } }
   - id: check
-    run: 'echo "token=$TOK greeting=$HELLO"; exit "$N"'
+    run: 'echo "token=$TOK greeting=$HELLO prev={{ .steps.one.exit }}"; exit "$N"'
     env: { TOK: '{{ secret "tok" }}', HELLO: hi, N: '{{ .steps.one.out.n }}' }
     exits: { "3": retry }
     next_hop: { on: { retry: boom, ok: end } }
@@ -412,7 +412,7 @@ steps:
 		}
 		logs[f] = string(b)
 	}
-	if want := "$ echo \"token=$TOK greeting=$HELLO\"; exit \"$N\"\ntoken=*** greeting=hi\n"; logs["check-2"] != want {
+	if want := "$ echo \"token=$TOK greeting=$HELLO prev=handoff\"; exit \"$N\"\ntoken=*** greeting=hi prev=handoff\n"; logs["check-2"] != want {
 		t.Errorf("check log:\n%s\nwant:\n%s", logs["check-2"], want)
 	}
 	if !strings.Contains(logs["boom-3"], "oops") {
