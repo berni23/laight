@@ -248,9 +248,13 @@ and the step's `env`. Whatever it leaves running is stopped when `sh` exits or t
 goes to `out/<step>-<hop>.log` with known secrets redacted; the exit code is `.steps.<id>.out.code`.
 **A step's `env` exists only on shell steps** (#16): an agent's env is its seat's. Secrets reach a
 shell command only through `env`, never spliced into `run:` (§12.4), and so does anything an
-agent wrote (#41): `validate` rejects `.steps.<id>.out` (or `.steps`, `.`, `$` whole) and a
-`.matrix` value rendered from a template in `run:`; pass them as `env: { PR: "{{ … }}" }` and
-quote them (`"$PR"`). `.exit`, `.inputs`, `.base`, `.run` and literal matrix lists are fine there. An unquoted env value is
+agent wrote (#41): `validate` rejects `.steps.<id>.out` (`.out.code` included: an agent can
+write its out file itself), `.steps`, `.` or `$` whole, and a `.matrix` value rendered from a
+template (`.matrix` whole counts as every value) in `run:`; pass them as
+`env: { PR: "{{ … }}" }` and quote them (`"$PR"`). `.exit` (the engine fails a hop whose exit the
+step doesn't allow), `.inputs`, `.base`, `.run` and literal matrix lists are fine there. An agent
+step on a `runtime: shell` seat gets its objective as shell input, outputs included: that runtime
+is for tests and trusted commands until #119. An unquoted env value is
 passed on as YAML read it: integers exactly, but `0x1F` as `31` and `1.10` as `1.1`, so quote a
 value you need verbatim (`validate` warns).
 **`compact: true`** on an agent step pastes `/compact` before the objective, which Claude queues

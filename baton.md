@@ -27,6 +27,12 @@ that.
   `env: { PR: … }` + `"$PR"`. New cases in `TestLoadProblems` / `TestMatrixErrors`, all checked
   red with the check disabled. `TestEngineShellRenderFailure` now fails on `.steps.two.exit`
   (a step that hasn't run), since `.out` in `run:` no longer gets past `validate`.
+- **#117 review answered** (`/cross:fix-cr`): the engine now fails a hop whose exit the step
+  doesn't allow (an agent can write its out file itself), so `.exit` in `run:` is safe; the
+  `run:` hint names one output and runs the validity checks first; pins for the template
+  walker; §3, CHANGELOG (marked Breaking) and schema say `.out.code` and `.matrix` whole are
+  rejected. Filed #119 (`runtime: shell` objectives are shell input) and #120 (gate `ask`
+  printed unscrubbed); flag injection noted on #82.
 
 ---
 
