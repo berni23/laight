@@ -430,17 +430,19 @@ func (c *checker) field(path []string, f []string, step *Step) {
 			c.add(Error, path, "%s: a matrix value is rendered from a template, maybe an agent's output, which `run:` would execute: pass each value through `env`", ref)
 		}
 	case "steps":
-		if c.inRun && (len(f) < 3 || f[2] != "exit") {
-			// What `laight done` wrote is the agent's to choose: in sh -c it would run as code (#41).
-			c.add(Error, path, "%s: a step's output is an agent's text, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
-			return
-		}
 		if len(f) > 1 && c.w.Step(f[1]) == nil {
 			c.add(Error, path, "%s: unknown step %q", ref, f[1])
 		} else if len(f) > 2 && f[2] != "out" && f[2] != "exit" {
 			c.add(Error, path, "%s: a step has .out.<key> and .exit", ref)
 		} else if len(f) > 3 && f[2] == "out" && len(c.w.Step(f[1]).Matrix) > 0 {
 			c.add(Error, path, "%s: a matrix step's .out is a list, one per copy: use {{ range .steps.%s.out }}{{ .%s }}{{ end }}", ref, f[1], f[3])
+		} else if c.inRun && (len(f) < 3 || f[2] != "exit") {
+			// What `laight done` wrote is the agent's to choose: in sh -c it would run as code (#41).
+			if len(f) >= 4 { // one output: it can go into env as it is
+				c.add(Error, path, "%s: a step's output is an agent's text, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
+			} else {
+				c.add(Error, path, "%s: a step's output is an agent's text, which `run:` would execute: name one output (.steps.<id>.out.<key>), pass it through `env` and quote it", ref)
+			}
 		}
 	default:
 		c.add(Error, path, "%s: templates see only .inputs, .steps, .matrix, .base and .run", ref)

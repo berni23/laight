@@ -233,7 +233,25 @@ func TestLoadProblems(t *testing.T) {
 		}, "a step's output is an agent's text, which `run:` would execute", 0, false},
 		{"agent output in run through index", func(s string) string {
 			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge {{ index .steps "implement" }}`, 1)
-		}, "a step's output is an agent's text", 0, false},
+		}, "a step's output is an agent's text, which `run:` would execute: name one output (.steps.<id>.out.<key>)", 0, false},
+		{"whole step in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ .steps.implement }}", 1)
+		}, ".steps.implement: a step's output is an agent's text, which `run:` would execute: name one output", 0, false},
+		{"all steps in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ .steps }}", 1)
+		}, ".steps: a step's output is an agent's text, which `run:` would execute: name one output", 0, false},
+		{"unknown step in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ .steps.nope.out.x }}", 1)
+		}, `.steps.nope.out.x: unknown step "nope"`, 0, false},
+		{"whole data in run through a variable", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ with $x := . }}{{ $x.steps }}{{ end }}", 1)
+		}, "`run:` can't use the whole template data", 0, false},
+		{"whole data in run through template", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge {{ define "t" }}{{ .steps.implement.out.pr }}{{ end }}{{ template "t" . }}`, 1)
+		}, "`run:` can't use the whole template data", 0, false},
+		{"output code in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .steps.merge.out.code }}`, 1)
+		}, ".steps.merge.out.code: a step's output is an agent's text", 0, false},
 		{"agent output in run through $", func(s string) string {
 			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ with .inputs.issue }}{{ $.steps.implement.out.pr }}{{ end }}", 1)
 		}, "a step's output is an agent's text", 0, false},
@@ -438,6 +456,8 @@ func TestMatrixErrors(t *testing.T) {
 			".matrix.task: this matrix value is rendered from a template"},
 		"whole matrix in run": {strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [plan], matrix: { task: \"{{ .steps.plan.out.tasks }}\" }, run: 'echo {{ .matrix }}' }\n", 1),
 			".matrix: a matrix value is rendered from a template"},
+		"matrix out key in run": {strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [build], run: 'echo {{ .steps.build.out.pr }}' }\n", 1),
+			"a matrix step's .out is a list, one per copy"},
 	}
 	for name, c := range bad {
 		t.Run(name, func(t *testing.T) {
@@ -457,6 +477,11 @@ func TestMatrixErrors(t *testing.T) {
 	dir, file = project(t, strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [plan], matrix: { task: \"{{ .steps.plan.out.tasks }}\", n: [1] }, env: { T: \"{{ .matrix.task }}\" }, run: 'echo {{ .matrix.n }} \"$T\"' }\n", 1))
 	if _, probs := Load(dir, file); HasErrors(probs) {
 		t.Errorf("matrix in run: %v", probs)
+	}
+	// .matrix whole counts as every value: all literal, it is fine; so are a matrix step's exits.
+	dir, file = project(t, strings.Replace(parallel, "objective: integrate\n", "objective: integrate\n  - { id: ship, needs: [build], matrix: { n: [1, 2] }, run: 'echo {{ .matrix }} {{ index .matrix \"n\" }} {{ .steps.build.exit }}' }\n", 1))
+	if _, probs := Load(dir, file); HasErrors(probs) {
+		t.Errorf("literal matrix in run: %v", probs)
 	}
 }
 
