@@ -241,6 +241,13 @@ func (e *Engine) advance(r *state.Run) (status, reason string, starts []start, s
 			continue
 		}
 		st := r.Spec.Step(h.Step)
+		if !st.Allows(d.Exit) {
+			// `laight done` checks the exit, but an agent can write the out file itself: routing on
+			// it, or rendering it into a later `run:`, would trust the agent's text (#41). The exit
+			// itself stays out of the report.
+			d = &state.Done{Step: h.Step, Hop: h.N, Exit: spec.ExitFailed, Engine: true, Kind: state.KindExit,
+				Out: map[string]any{"error": "it ended with an exit the step doesn't allow"}}
+		}
 		res := &state.StepResult{Hop: h.N, Exit: d.Exit, Out: d.Out}
 		data := map[string]any{"exit": d.Exit, "seconds": int(time.Since(h.Started).Seconds())}
 		if len(d.Out) > 0 {
