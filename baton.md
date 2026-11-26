@@ -11,38 +11,43 @@ that.
 
 ---
 
-## Last session — 2026-11-17
+## Last session — 2026-11-22
 
-- **#93 done**: seat windows start from the run's environment (the engine's), minus every
-  `LAIGHT_SECRET_*`, through their env file, which also unsets what laight's tmux server holds
-  and the run doesn't; the tmux client never hands the server a secret; a seat's `setup:` gets
-  no secret either. Spec §5 and §12.4 updated. Pinned by `TestSeatGetsRunEnv` (stale server) and
-  `TestServerEnv`, both checked red with the fix mutated away; verified on a real Haiku run.
-  Its review answered (all 6 findings fixed): the caller's Claude Code session and git's
-  repo-local variables no longer reach the engine or seats; `Stale` fails on a tmux error and
-  removes an old server's secrets; a seat's `setup:` gets no secret, now pinned. Filed #102
-  (`laight run`'s own git calls). Real Haiku run from inside Claude Code: the seat holds its own
-  session id, not the caller's.
-- **#96 done**: `rig.Down` scrubs its reason once, so `run.json`'s `error` and the run event are
-  redacted too. Pinned by `TestDownScrubsReason` (checked red without the fix).
+- **v0.1 release triage** (no code changed): the bar is bug-free for a first user **and no
+  breaking change after release**. `make check` green. Every open issue but #68 (the M3
+  umbrella, spans tiers) and #43 (up for closing) now has a tier label (`v0.1: blocker`,
+  `v0.1: should`, `after v0.1`); `contract` marks what users build on (YAML,
+  `laight done`, CLI, run files), where a change after release breaks them. New issues
+  #105–#114 for what had none (STABILITY.md, deny lists vs runtimes, unbuilt surface, schema URL,
+  run-format version, naming freeze, Claude Code min version, README/packaging, release dry run,
+  acceptance runs). **#115 (pinned) is the ordered checklist.** #82 moved after v0.1 (must stay
+  optional); #48 re-scoped to failure redaction.
 
 ---
 
 ## Do this next
 
-### 1. #82, declared step outputs
+Work **#115** top to bottom: it is the order. Pick the first unchecked item that isn't waiting
+on the maintainer (all of #115 §1 is, see below); a `contract` change says in its PR how v1 files stay compatible.
 
-Catch template errors before anything runs: `validate`, `laight done` in the producer's pane, and
-a dry render at `laight run` (and at `--from-failed`, against the carried outputs).
+### 1. #41 + #52, agent output through `env`, never spliced into `run:`
 
-### 2. #64, the `human:` policy and gate defaults
+The scaffold, README and spec §3 all splice `.steps.implement.out.pr` into a shell command.
 
-Next in §10's M3 order now that #66 is in.
+### 2. #64, the `human:` policy, v0.1 scope
+
+`assume` and `fail`, gate `default:`, `assumptions` in `laight done`; no `wait`/`supervisor` in
+the enum yet. Needs the maintainer's call on the default first (see below).
 
 ---
 
 ## Waiting on the user
 
+- **v0.1 design calls** (#115 §1): the v1 naming/defaults pass (#110); `human.mode`'s default or
+  a required `human:` (#64); deny-rule syntax vs non-Claude runtimes (#106); then STABILITY.md
+  (#105), written once #110 settles the vocabulary it describes.
+- Add the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret (#113).
+- Close #43? Obsolete since #63 (comment there).
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
   push protection? Still undecided (2026-11-14); `validate` rejects templates in rules for now.
 - Protect `dev` and `main` on GitHub (#76): they aren't today.

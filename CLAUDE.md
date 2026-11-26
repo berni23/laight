@@ -20,7 +20,7 @@ permission is denied at once and recorded, never an inbox item), and so is the f
 (#63: a failed run ends red, nobody is asked about a stuck step), and the inbox is parked in
 code (#67: hidden, no pane); the credentials preflight is in too (#62: `laight run` checks,
 and logs in, before the rig starts), and so is rerun from failed (#66: `laight run --from-failed`);
-the `human:` policy (#64) is next. Where this spec describes that model, the code catches up issue by issue: until #64 a
+the `human:` policy (#64) is next in M3; v0.1 work follows the ordered checklist in #115. Where this spec describes that model, the code catches up issue by issue: until #64 a
 question still goes to the inbox, and there is no `human:` policy yet (so no `wait` mode).
 **Starting a session? Read [`baton.md`](baton.md) after this file** (or run `/pickup`): what the
 last session finished and what to pick up next.
