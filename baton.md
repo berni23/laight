@@ -14,8 +14,9 @@ that.
 ## Last session — 2026-11-22
 
 - **v0.1 release triage** (no code changed): the bar is bug-free for a first user **and no
-  breaking change after release**. `make check` green. Every open issue now has a tier label
-  (`v0.1: blocker`, `v0.1: should`, `after v0.1`); `contract` marks what users build on (YAML,
+  breaking change after release**. `make check` green. Every open issue but #68 (the M3
+  umbrella, spans tiers) and #43 (up for closing) now has a tier label (`v0.1: blocker`,
+  `v0.1: should`, `after v0.1`); `contract` marks what users build on (YAML,
   `laight done`, CLI, run files), where a change after release breaks them. New issues
   #105–#114 for what had none (STABILITY.md, deny lists vs runtimes, unbuilt surface, schema URL,
   run-format version, naming freeze, Claude Code min version, README/packaging, release dry run,
@@ -26,8 +27,8 @@ that.
 
 ## Do this next
 
-Work **#115** top to bottom: it is the order. Pick the first unchecked item that isn't the
-maintainer's decision; a `contract` change says in its PR how v1 files stay compatible.
+Work **#115** top to bottom: it is the order. Pick the first unchecked item that isn't waiting
+on the maintainer (all of #115 §1 is, see below); a `contract` change says in its PR how v1 files stay compatible.
 
 ### 1. #41 + #52, agent output through `env`, never spliced into `run:`
 
@@ -43,7 +44,8 @@ the enum yet. Needs the maintainer's call on the default first (see below).
 ## Waiting on the user
 
 - **v0.1 design calls** (#115 §1): the v1 naming/defaults pass (#110); `human.mode`'s default or
-  a required `human:` (#64); deny-rule syntax vs non-Claude runtimes (#106).
+  a required `human:` (#64); deny-rule syntax vs non-Claude runtimes (#106); then STABILITY.md
+  (#105), written once #110 settles the vocabulary it describes.
 - Add the `HOMEBREW_TAP_GITHUB_TOKEN` Actions secret (#113).
 - Close #43? Obsolete since #63 (comment there).
 - Render `.base` in deny rules (`Bash(git push * {{ .base }})`), so a changed `base:` keeps its
