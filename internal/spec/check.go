@@ -413,6 +413,16 @@ func (c *checker) field(path []string, f []string, step *Step) {
 		if len(f) > 1 {
 			if _, ok := c.w.Inputs[f[1]]; !ok {
 				c.add(Error, path, "%s: no input %q is declared under `inputs`", ref, f[1])
+				return
+			}
+		}
+		if c.inRun {
+			// Inputs come from outside the workflow (a command line today, maybe a ticket later):
+			// in sh -c they would run as code, and split on spaces even when nobody means harm.
+			if len(f) > 1 {
+				c.add(Error, path, "%s: an input is text from outside the workflow, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
+			} else {
+				c.add(Error, path, "%s: an input is text from outside the workflow, which `run:` would execute: name one input (.inputs.<name>), pass it through `env` and quote it", ref)
 			}
 		}
 	case "matrix":

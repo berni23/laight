@@ -11,7 +11,16 @@ that.
 
 ---
 
-## Last session — 2026-11-22
+## Last session — 2026-11-27
+
+- **#117: `.inputs` rejected in `run:` too** (maintainer's call on the review's open question):
+  only what laight itself knows (`.exit`, `.base`, `.run`, literal matrix lists) is spliced into
+  `run:`; inputs go through `env` like outputs, since they may come from a ticket later and a
+  value with a space splits anyway. Same call kept the rule an error with no warning period, and
+  plain-string matrix values rejected. New rows in `TestLoadProblems`, red without the check;
+  §3, CHANGELOG and schema updated.
+
+## Session before — 2026-11-22
 
 - **v0.1 release triage** (no code changed): the bar is bug-free for a first user **and no
   breaking change after release**. `make check` green. Every open issue now has a tier label

@@ -25,9 +25,11 @@ All notable changes to laight are documented here. The format follows
 
 - **Breaking: agent output can't reach a shell step's `run:`** (#41, #52): `validate` rejects a
   `run:` that reads a step's output (`.steps.<id>.out`, `.out.code` included, or `.steps`, `.` or
-  `$` whole) or a matrix value rendered from a template (`.matrix` whole counts as every value),
-  since whatever an agent wrote with `laight done` would run as code. A workflow that spliced an
-  output into `run:`, as the old scaffold did, no longer validates: pass it through the step's
+  `$` whole), an input (`.inputs`) or a matrix value rendered from a template (`.matrix` whole
+  counts as every value), since whatever an agent wrote with `laight done`, or whatever filled an
+  input, would run as code. Only `.exit`, `.base`, `.run` and literal matrix lists stay. A
+  workflow that spliced an output or an input into `run:`, as the old scaffold did, no longer
+  validates: pass it through the step's
   `env` and quote it, `env: { PR: "{{ .steps.implement.out.pr }}" }`, `run: gh pr merge "$PR"`.
   The workflow `laight init` writes, the README and the spec now do so. The engine also fails a
   hop whose exit the step doesn't allow, so `.exit` stays safe in `run:` even when an agent

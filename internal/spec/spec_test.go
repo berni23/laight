@@ -253,7 +253,7 @@ func TestLoadProblems(t *testing.T) {
 			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .steps.merge.out.code }}`, 1)
 		}, ".steps.merge.out.code: a step's output is an agent's text", 0, false},
 		{"agent output in run through $", func(s string) string {
-			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ with .inputs.issue }}{{ $.steps.implement.out.pr }}{{ end }}", 1)
+			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ with .base }}{{ $.steps.implement.out.pr }}{{ end }}", 1)
 		}, "a step's output is an agent's text", 0, false},
 		{"whole data in run", func(s string) string {
 			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge {{ index . "steps" }}`, 1)
@@ -261,9 +261,19 @@ func TestLoadProblems(t *testing.T) {
 		{"whole data in run through $", func(s string) string {
 			return strings.Replace(s, `gh pr merge "$PR"`, "gh pr merge {{ printf `%v` $ }}", 1)
 		}, "`run:` can't use the whole template data", 0, false},
-		{"exits, inputs and base in run are fine", func(s string) string {
-			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .steps.verify.exit }} {{ .inputs.issue }} {{ .base }} {{ .run.id }}`, 1)
+		{"exits, base and run in run are fine", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .steps.verify.exit }} {{ .base }} {{ .run.id }}`, 1)
 		}, "", 0, false},
+		// Inputs come from outside the workflow: they go through env too.
+		{"input in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .inputs.issue }}`, 1)
+		}, ".inputs.issue: an input is text from outside the workflow, which `run:` would execute: pass it through `env`", 0, false},
+		{"all inputs in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ index .inputs "issue" }}`, 1)
+		}, ".inputs: an input is text from outside the workflow, which `run:` would execute: name one input", 0, false},
+		{"undeclared input in run", func(s string) string {
+			return strings.Replace(s, `gh pr merge "$PR"`, `gh pr merge "$PR" {{ .inputs.nope }}`, 1)
+		}, `.inputs.nope: no input "nope" is declared`, 0, false},
 		{"secret in run", func(s string) string { return strings.Replace(s, "--squash", `--squash {{ secret "gh" }}`, 1) }, "`secret` is only allowed in `env`", 0, false},
 		{"shell exit not allowed", func(s string) string {
 			return strings.Replace(s, "--squash\n", "--squash\n    exits: { \"3\": retry }\n    allowed_exits: [ok]\n", 1)
