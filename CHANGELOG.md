@@ -23,6 +23,18 @@ All notable changes to laight are documented here. The format follows
 
 ### Changed
 
+- **Breaking: agent output can't reach a shell step's `run:`** (#41, #52): `validate` rejects a
+  `run:` that reads a step's output (`.steps.<id>.out`, `.out.code` included, or `.steps`, `.` or
+  `$` whole), an input (`.inputs`) or a matrix value rendered from a template (`.matrix` whole
+  counts as every value), since whatever an agent wrote with `laight done`, or whatever filled an
+  input, would run as code. Only `.exit`, `.base`, `.run` and literal matrix lists stay. A
+  workflow that spliced an output or an input into `run:`, as the old scaffold did, no longer
+  validates: pass it through the step's
+  `env` and quote it, `env: { PR: "{{ .steps.implement.out.pr }}" }`, `run: gh pr merge "$PR"`.
+  The workflow `laight init` writes, the README and the spec now do so. The engine also fails a
+  hop whose exit the step doesn't allow, so `.exit` stays safe in `run:` even when an agent
+  writes its out file itself. An agent step on a `runtime: shell` seat still gets its objective
+  as shell input: that runtime is for tests and trusted commands (#119).
 - **The inbox is parked** (#67): `laight inbox` is gone from `laight --help` but still works,
   and `laight run` no longer opens the inbox pane under the engine. Until the `human:` policy
   (#64), a gate or a question an agent asks is answered with `laight inbox`, which the engine

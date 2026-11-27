@@ -11,7 +11,16 @@ that.
 
 ---
 
-## Last session — 2026-11-22
+## Last session — 2026-11-27
+
+- **#117: `.inputs` rejected in `run:` too** (maintainer's call on the review's open question):
+  only what laight itself knows (`.exit`, `.base`, `.run`, literal matrix lists) is spliced into
+  `run:`; inputs go through `env` like outputs, since they may come from a ticket later and a
+  value with a space splits anyway. Same call kept the rule an error with no warning period, and
+  plain-string matrix values rejected. New rows in `TestLoadProblems`, red without the check;
+  §3, CHANGELOG and schema updated.
+
+## Session before — 2026-11-22
 
 - **v0.1 release triage** (no code changed): the bar is bug-free for a first user **and no
   breaking change after release**. `make check` green. Every open issue but #68 (the M3
@@ -22,22 +31,40 @@ that.
   run-format version, naming freeze, Claude Code min version, README/packaging, release dry run,
   acceptance runs). **#115 (pinned) is the ordered checklist.** #82 moved after v0.1 (must stay
   optional); #48 re-scoped to failure redaction.
+- **#41 + #52 done**: `validate` rejects agent output in a shell step's `run:` (`.steps.<id>.out`;
+  `.steps`, `.` or `$` whole; a matrix value rendered from a template), an error, not a warning,
+  so it can be relaxed later without breaking anyone. Scaffold, README and spec §3 use
+  `env: { PR: … }` + `"$PR"`. New cases in `TestLoadProblems` / `TestMatrixErrors`, all checked
+  red with the check disabled. `TestEngineShellRenderFailure` now fails on `.steps.two.exit`
+  (a step that hasn't run), since `.out` in `run:` no longer gets past `validate`.
+- **#117 review answered** (`/cross:fix-cr`): the engine now fails a hop whose exit the step
+  doesn't allow (an agent can write its out file itself), so `.exit` in `run:` is safe; the
+  `run:` hint names one output and runs the validity checks first; pins for the template
+  walker; §3, CHANGELOG (marked Breaking) and schema say `.out.code` and `.matrix` whole are
+  rejected. Filed #119 (`runtime: shell` objectives are shell input) and #120 (gate `ask`
+  printed unscrubbed); flag injection noted on #82.
 
 ---
 
 ## Do this next
 
 Work **#115** top to bottom: it is the order. Pick the first unchecked item that isn't waiting
-on the maintainer (all of #115 §1 is, see below); a `contract` change says in its PR how v1 files stay compatible.
+on the maintainer (all of #115 §1 is, see below); a `contract` change says in its PR how v1 files
+stay compatible. #64 waits on the maintainer's call on the default, so:
 
-### 1. #41 + #52, agent output through `env`, never spliced into `run:`
+### 1. #108, pin the editor schema URL to the binary's version
 
-The scaffold, README and spec §3 all splice `.steps.implement.out.pr` into a shell command.
+`laight init` writes `…/laight/main/schema/…`; write the version tag instead (`dev` builds keep
+`main`), and the schemas' `$id`.
 
-### 2. #64, the `human:` policy, v0.1 scope
+### 2. #109, version the run format
 
-`assume` and `fail`, gate `default:`, `assumptions` in `laight done`; no `wait`/`supervisor` in
-the enum yet. Needs the maintainer's call on the default first (see below).
+A format version in `run.json` and the events; `--from-failed` and `abort` refuse a format they
+don't know.
+
+### 3. #107, don't ship unbuilt or parked surface
+
+The parked `config.yaml` / `laight.yaml` schema, and anything still pointing users at the inbox.
 
 ---
 

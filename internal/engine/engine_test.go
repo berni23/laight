@@ -203,6 +203,31 @@ func TestFailedRunEndsRed(t *testing.T) {
 	}
 }
 
+// An out file the agent wrote itself, with an exit the step doesn't allow, fails the hop: the
+// engine never routes on it, records it, or renders it into a later `run:` (#41).
+func TestExitNotAllowedFails(t *testing.T) {
+	e, id := hooked(t, two(map[string]string{"handoff": "two"}), "a")
+	ctx := context.Background()
+	if status, _, err := e.tick(ctx, id); status != "" || err != nil {
+		t.Fatalf("tick: %s %v", status, err)
+	}
+	forged := "$(touch pwned)"
+	if err := state.WriteDone(e.Home, id, state.Done{Step: "one", Hop: 1, Exit: forged, Engine: true}); err != nil {
+		t.Fatal(err)
+	}
+	status, reason, err := e.tick(ctx, id)
+	if status != state.Failed || err != nil || strings.Contains(reason, forged) {
+		t.Fatalf("tick: %s %q %v", status, reason, err)
+	}
+	r := load(t, e, id)
+	if f := r.Failure; f == nil || f.Step != "one" || f.Kind != state.KindExit {
+		t.Fatalf("failure: %+v", f)
+	}
+	if res := r.Steps["one"]; res == nil || res.Exit != spec.ExitFailed {
+		t.Errorf("result: %+v", res)
+	}
+}
+
 // Once a step fails, nothing new starts: running siblings finish and are recorded, their routes
 // and the steps that need them never start, and the run ends red once nothing runs (§12.3).
 func TestSiblingsFinishAfterFailure(t *testing.T) {

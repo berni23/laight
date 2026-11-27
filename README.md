@@ -69,7 +69,7 @@ steps:
   - { id: fix,       seat: impl,     objective: "Address the review on {{ .steps.implement.out.pr }}",       next_hop: { on: { handoff: verify } } }
   - { id: verify,    seat: reviewer, objective: "Verify each finding.", allowed_exits: [pass, fail],        next_hop: { on: { pass: approve, fail: fix } } }
   - { id: approve,   type: gate,     ask: "Merge {{ .steps.implement.out.pr }}?",                            next_hop: { on: { yes: merge, no: end } } }
-  - { id: merge,     type: shell,    run: "gh pr merge {{ .steps.implement.out.pr }} --squash" }
+  - { id: merge,     type: shell,    env: { PR: "{{ .steps.implement.out.pr }}" }, run: 'gh pr merge "$PR" --squash' }
 loop_guards: { max_hops: 11 }
 ```
 

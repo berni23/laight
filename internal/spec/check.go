@@ -37,6 +37,7 @@ type checker struct {
 	laightDir string
 	probs     []Problem
 	inMatrix  bool // checking a matrix value
+	inRun     bool // checking a shell step's `run:`
 }
 
 func (c *checker) add(sev Severity, path []string, format string, args ...any) {
@@ -176,7 +177,9 @@ func (c *checker) steps() {
 			if st.Run == "" {
 				c.add(Error, at(), "a shell step needs `run`")
 			}
+			c.inRun = true // agent output can't reach sh -c: see field
 			c.template(at("run"), st.Run, st, false)
+			c.inRun = false
 			for _, code := range sortedKeys(st.Exits) {
 				if !st.Allows(st.Exits[code]) {
 					c.add(Error, at("exits", code), "exit %q is not in allowed_exits %v", st.Exits[code], st.AllowedExits)
@@ -394,6 +397,12 @@ func (c *checker) template(path []string, text string, step *Step, secrets bool)
 
 func (c *checker) field(path []string, f []string, step *Step) {
 	ref := "." + strings.Join(f, ".")
+	if len(f) == 0 { // the whole data: .steps included
+		if c.inRun {
+			c.add(Error, path, "`run:` can't use the whole template data (. or $), which holds the agents' output: name the fields, and pass outputs through `env`")
+		}
+		return
+	}
 	switch f[0] {
 	case "base":
 	case "run":
@@ -404,6 +413,16 @@ func (c *checker) field(path []string, f []string, step *Step) {
 		if len(f) > 1 {
 			if _, ok := c.w.Inputs[f[1]]; !ok {
 				c.add(Error, path, "%s: no input %q is declared under `inputs`", ref, f[1])
+				return
+			}
+		}
+		if c.inRun {
+			// Inputs come from outside the workflow (a command line today, maybe a ticket later):
+			// in sh -c they would run as code, and split on spaces even when nobody means harm.
+			if len(f) > 1 {
+				c.add(Error, path, "%s: an input is text from outside the workflow, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
+			} else {
+				c.add(Error, path, "%s: an input is text from outside the workflow, which `run:` would execute: name one input (.inputs.<name>), pass it through `env` and quote it", ref)
 			}
 		}
 	case "matrix":
@@ -414,7 +433,11 @@ func (c *checker) field(path []string, f []string, step *Step) {
 		} else if len(f) > 1 {
 			if _, ok := step.Matrix[f[1]]; !ok {
 				c.add(Error, path, "%s: the step's matrix has no %q", ref, f[1])
+			} else if _, tmpl := step.Matrix[f[1]].(string); tmpl && c.inRun {
+				c.add(Error, path, "%s: this matrix value is rendered from a template, maybe an agent's output, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
 			}
+		} else if c.inRun && !all(sortedKeys(step.Matrix), func(k string) bool { _, tmpl := step.Matrix[k].(string); return !tmpl }) {
+			c.add(Error, path, "%s: a matrix value is rendered from a template, maybe an agent's output, which `run:` would execute: pass each value through `env`", ref)
 		}
 	case "steps":
 		if len(f) > 1 && c.w.Step(f[1]) == nil {
@@ -423,6 +446,13 @@ func (c *checker) field(path []string, f []string, step *Step) {
 			c.add(Error, path, "%s: a step has .out.<key> and .exit", ref)
 		} else if len(f) > 3 && f[2] == "out" && len(c.w.Step(f[1]).Matrix) > 0 {
 			c.add(Error, path, "%s: a matrix step's .out is a list, one per copy: use {{ range .steps.%s.out }}{{ .%s }}{{ end }}", ref, f[1], f[3])
+		} else if c.inRun && (len(f) < 3 || f[2] != "exit") {
+			// What `laight done` wrote is the agent's to choose: in sh -c it would run as code (#41).
+			if len(f) >= 4 { // one output: it can go into env as it is
+				c.add(Error, path, "%s: a step's output is an agent's text, which `run:` would execute: pass it through `env` and quote it (env: { V: \"{{ %s }}\" }, run: … \"$V\")", ref, ref)
+			} else {
+				c.add(Error, path, "%s: a step's output is an agent's text, which `run:` would execute: name one output (.steps.<id>.out.<key>), pass it through `env` and quote it", ref)
+			}
 		}
 	default:
 		c.add(Error, path, "%s: templates see only .inputs, .steps, .matrix, .base and .run", ref)
@@ -430,8 +460,9 @@ func (c *checker) field(path []string, f []string, step *Step) {
 }
 
 // walkTemplate calls fn with the identifiers of every field chain rooted at the top-level dot:
-// ".a.b" while dot is still the root (rootDot), and "$.a.b" anywhere. Inside range and with, dot
-// is the current element, so its fields aren't checked there.
+// ".a.b" while dot is still the root (rootDot), and "$.a.b" anywhere; a bare root dot or $ gives
+// no identifiers. Inside range and with, dot is the current element, so its fields aren't checked
+// there.
 func walkTemplate(n parse.Node, fn func([]string), rootDot bool) {
 	switch n := n.(type) {
 	case *parse.ListNode:
@@ -454,15 +485,22 @@ func walkTemplate(n parse.Node, fn func([]string), rootDot bool) {
 		if rootDot {
 			fn(n.Ident)
 		}
+	case *parse.DotNode:
+		if rootDot {
+			fn(nil)
+		}
 	case *parse.VariableNode:
-		if len(n.Ident) > 1 && n.Ident[0] == "$" {
+		if n.Ident[0] == "$" {
 			fn(n.Ident[1:])
 		}
 	case *parse.ChainNode:
-		if _, ok := n.Node.(*parse.DotNode); ok && rootDot {
-			fn(n.Field)
+		if _, ok := n.Node.(*parse.DotNode); ok {
+			if rootDot {
+				fn(n.Field)
+			}
+		} else {
+			walkTemplate(n.Node, fn, rootDot)
 		}
-		walkTemplate(n.Node, fn, rootDot)
 	case *parse.IfNode:
 		walkBranch(&n.BranchNode, fn, rootDot, rootDot)
 	case *parse.RangeNode:

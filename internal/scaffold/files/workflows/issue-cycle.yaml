@@ -81,7 +81,9 @@ steps:
 
   - id: merge
     type: shell
-    run: gh pr merge {{ .steps.implement.out.pr }} --squash --delete-branch
+    # What an agent wrote reaches a command only through env, quoted: in `run:` it would run as code.
+    env: { PR: "{{ .steps.implement.out.pr }}" }
+    run: gh pr merge "$PR" --squash --delete-branch
 
 loop_guards: { max_hops: 11 }     # 6 steps, plus up to 2 more fix → verify rounds
 timeouts: { step: 90m }

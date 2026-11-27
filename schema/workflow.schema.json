@@ -163,7 +163,7 @@
         "seat": { "$ref": "#/$defs/ident", "description": "agent steps: the seat that does the step." },
         "objective": { "type": "string", "description": "agent steps: the prompt, a Go template." },
         "compact": { "type": "boolean", "description": "agent steps on a claude-code seat with session: resume: compact its conversation (/compact) before pasting the objective." },
-        "run": { "type": "string", "description": "shell steps: the command, a Go template. Exit 0 → ok, else failed." },
+        "run": { "type": "string", "description": "shell steps: the command, a Go template. Exit 0 → ok, else failed. It can't read a step's output (.steps.<id>.out), an input (.inputs) or a matrix value rendered from a template: pass those through env and quote them (\"$V\"). Only .exit, .base, .run and literal matrix lists are fine." },
         "exits": {
           "type": "object",
           "description": "shell steps: exit code → exit name.",
